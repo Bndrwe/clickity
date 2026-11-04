@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Menu, Tray, nativeImage, nativeTheme, type NativeImage } from 'electron';
 import { PROVIDER_META } from '../shared/types';
-import { getSettings } from './settings-store';
+import { getSettings, updateSettings } from './settings-store';
 import { hotkeyLabel } from './hotkey';
 
 export interface TrayActions {
@@ -58,6 +58,15 @@ function buildMenu(a: TrayActions): Menu {
       type: 'checkbox',
       checked: paused,
       click: () => a.setPaused(!a.isPaused()),
+    },
+    {
+      label: 'appearance',
+      submenu: (['system', 'light', 'dark'] as const).map((t) => ({
+        label: t,
+        type: 'radio' as const,
+        checked: s.theme === t,
+        click: () => updateSettings({ theme: t }),
+      })),
     },
     { label: 'clear conversation', click: () => a.clearConversation() },
     { type: 'separator' },
