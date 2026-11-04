@@ -30,7 +30,7 @@ import { transcribe } from './speech/stt';
 import { synthesize } from './speech/tts';
 import { getProvider } from './providers/index';
 import { hotkeyLabel, setAgentKeysSuspended, setConfirmKeys } from './hotkey';
-import { describeAction, parseActionTags, stripActionTags, summarizeActions, type ParsedAction } from './action-tags';
+import { describeAction, parseActionTags, stripActionTags, summarizeActions, wantsAction, type ParsedAction } from './action-tags';
 import { agentInputStatus, performActions } from './agent-input';
 import {
   broadcastToOverlays,
@@ -272,7 +272,18 @@ Rules:
 - Never type passwords, card numbers or other secrets unless the user dictated them in this conversation.
 - If something unexpected happens (an error, a login wall, a captcha, the wrong window), stop and tell the user in one sentence, with [DONE].
 - ${approval}
-- Never mention the tags or coordinates in your words; the tags are never shown or spoken.`;
+- Never mention the tags or coordinates in your words; the tags are never shown or spoken.
+- If the user asked you to DO something, never answer with instructions for them ("click the icon in your dock…"). Do it yourself with the tags. Describing what to click without the tags does nothing.
+
+Examples (screenshot coordinates are made up):
+user: open apple music
+you: opening music from your dock. [CLICK:612,1046:music icon:screen1]
+user: search for cats
+you: i'll type it into the search box. [CLICK:540,88:search box] [TYPE:cats] [KEY:enter]
+user: save this
+you: saving. [KEY:${mod}+s]
+user: where is the save button?
+you: it's in the top right. [POINT:1180,64:save button]`;
 }
 
 /** Clickity persona (heyclicky-style) + pointing protocol + this turn's screen list + custom instructions. */
@@ -549,6 +560,32 @@ async function runTurn(turn: Turn, input: TurnInput): Promise<void> {
     await runAgent(turn, ctx, { history: prior, userMsg, screens, first: res });
     return;
   }
+  // Smaller / local models often answer a request to DO something with instructions
+  // ("click the music icon in your dock") instead of action tags, so nothing happens.
+  if (agentEnabled(settings, input, screens) && !res.done && wantsAction(input.userText)) {
+    log('agent', `${turn.id} asked to act but the reply had no actions — nudging once`);
+    const nudge: ChatMessage = { role: 'user', text: AGENT_NUDGE, images: screens.map((s) => s.image) };
+    const retry = await askModel(turn, ctx, [...prior, userMsg, { role: 'assistant', text: res.raw }, nudge], screens, {
+      thinking: { phase: 'thinking', transcript: input.userText },
+    });
+    if (!retry || !isTurnCurrent(turn)) return;
+    if (retry.actions.length) {
+      await runAgent(turn, ctx, { history: prior, userMsg, screens, first: retry });
+      return;
+    }
+    // Still nothing, but it pointed at the thing: offer to click that spot. Always ask first,
+    // even in automatic mode, since the model never actually decided to act.
+    const target = retry.points[0] ?? res.points[0];
+    if (target) {
+      log('agent', `${turn.id} no actions after nudge — offering to click the pointed spot "${target.label}"`);
+      const click: ParsedAction = { type: 'click', x: target.x, y: target.y, label: target.label || 'that', screen: target.screen, button: 'left', count: 1 };
+      const askCtx: ModelCtx = { ...ctx, settings: { ...settings, companion: { ...settings.companion, actions: 'ask' } } };
+      await runAgent(turn, askCtx, { history: prior, userMsg, screens, first: { ...retry, actions: [click] } });
+      return;
+    }
+    await finishReply(turn, input, settings, retry.reply, retry.points, screens);
+    return;
+  }
   await finishReply(turn, input, settings, res.reply, res.points, screens);
 }
 
@@ -707,6 +744,10 @@ const ACT_FLY_MS = 380;
 const ACT_SETTLE_MS = 700;
 const CONFIRM_TIMEOUT_MS = 60_000;
 const AGENT_FOLLOW_UP = 'done. here is the screen now. continue, or reply [DONE].';
+const AGENT_NUDGE =
+  "don't tell me what to click — do it yourself. reply with one short sentence and the action tags " +
+  '(e.g. [CLICK:x,y:label:screenN], [TYPE:text], [KEY:enter]) using coordinates from this screenshot.';
+
 
 type ConfirmOutcome = 'allowed' | 'cancelled' | 'timeout';
 

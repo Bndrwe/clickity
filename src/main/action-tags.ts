@@ -344,3 +344,16 @@ export function summarizeActions(actions: ParsedAction[], tense: 'plan' | 'past'
   const shown = actions.filter((a) => a.type !== 'wait');
   return (shown.length ? shown : actions).map((a) => describeAction(a, tense)).join(' · ');
 }
+
+/**
+ * Does the user's message ask clickity to DO something (vs. ask a question)?
+ * Used only to decide whether to nudge a model that answered with words instead of actions.
+ */
+export function wantsAction(text: string | undefined): boolean {
+  const t = (text ?? '').trim().toLowerCase().replace(/^(hey |ok |okay )?(clickity|clicky)[,:]?\s*/, '');
+  if (!t || /^(where|what|why|how|which|who|when|is |are |does |do i|can i|should i)\b/.test(t)) return false;
+  const verbs =
+    'open|click|double[- ]click|right[- ]click|tap|press|hit|type|write|enter|fill( in)?|go to|navigate|scroll|close|quit|exit|launch|start|play|pause|resume|skip|stop|mute|unmute|switch to|select|choose|pick|check|uncheck|tick|toggle|turn (on|off)|enable|disable|minimize|maximize|bring up|search( for)?|find and|save|copy|paste|undo|redo|refresh|reload|log ?in|sign in|submit|send|download|install|bookmark|zoom|do it|agent';
+  const lead = '(please |pls |can you |could you |would you |will you |just |now |go ahead and |agent:? )*';
+  return new RegExp(`^${lead}(${verbs})\\b`).test(t);
+}
