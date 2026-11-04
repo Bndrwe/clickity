@@ -2,7 +2,7 @@
 // One signature moment — the mark's three "click" ticks fire whenever clickity
 // starts answering — and otherwise quiet, quick entrances. Everything is skipped
 // (final state applied instantly) under prefers-reduced-motion.
-import { animate, createSpring, stagger } from 'animejs';
+import { animate, spring, stagger } from 'animejs';
 
 const reduced = (): boolean => matchMedia('(prefers-reduced-motion: reduce)').matches;
 const EASE = 'outExpo';
@@ -78,7 +78,7 @@ export function pressSend(btn: HTMLElement): void {
   if (reduced()) return;
   animate(btn, {
     scale: [0.84, 1],
-    ease: createSpring({ stiffness: 320, damping: 14 }),
+    ease: spring({ stiffness: 320, damping: 14 }),
   });
 }
 

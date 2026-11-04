@@ -4,13 +4,9 @@
 // down/up events are fed into the same chord engine as the 'Fn' key.
 import type { HotkeySettings, KeyName } from '../shared/types';
 import { fnStatus, onFn, restartFnWatch, startFnWatch, stopFnWatch } from './fn-key';
+import { ChordEngine, type HotkeyHandlers } from './chord-engine';
 
-export interface HotkeyHandlers {
-  onTalkDown(): void;
-  onTalkUp(): void;
-  onType(): void;
-  onEscape(): void;
-}
+export { ChordEngine, type HotkeyHandlers };
 
 /** Modifier order for labels. 'Fn' is the mac fn / globe key (only reported on macOS). */
 const MODIFIERS = ['Control', 'Alt', 'Shift', 'Meta', 'Fn'];
@@ -22,8 +18,6 @@ export function orderKeys(keys: Iterable<KeyName>): KeyName[] {
 }
 
 export const chordUsesFn = (h: Pick<HotkeySettings, 'talk' | 'type'>): boolean => h.talk.includes('Fn') || h.type.includes('Fn');
-const SUBSET_DELAY_MS = 120;
-const MAX_HOLD_MS = 5 * 60 * 1000;
 
 /* ───────────────────────── keycode mapping ───────────────────────── */
 
@@ -61,150 +55,6 @@ export function buildKeycodeMap(K: UiohookKeyTable): Map<number, KeyName> {
   for (const k of ['Shift', 'ShiftRight']) set(K[k], 'Shift');
   for (const k of ['Meta', 'MetaRight']) set(K[k], 'Meta');
   return m;
-}
-
-/* ───────────────────────── chord state machine (pure) ───────────────────────── */
-
-function sameSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
-  if (a.size !== b.size) return false;
-  for (const x of a) if (!b.has(x)) return false;
-  return true;
-}
-function isSuperset(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
-  for (const x of b) if (!a.has(x)) return false;
-  return true;
-}
-function isStrictSubset(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
-  return a.size < b.size && isSuperset(b, a);
-}
-
-export class ChordEngine {
-  private talk = new Set<string>();
-  private type = new Set<string>();
-  private mode: 'hold' | 'toggle' = 'hold';
-  private held = new Set<string>();
-  private talkActive = false;
-  private pending: ReturnType<typeof setTimeout> | null = null;
-  private holdWatchdog: ReturnType<typeof setTimeout> | null = null;
-  private suspended = false;
-
-  constructor(private handlers: HotkeyHandlers, cfg: HotkeySettings, private delayMs = SUBSET_DELAY_MS) {
-    this.configure(cfg);
-  }
-
-  configure(cfg: HotkeySettings): void {
-    this.talk = new Set(cfg.talk);
-    this.type = new Set(cfg.type);
-    this.mode = cfg.mode;
-    this.reset();
-  }
-
-  setSuspended(s: boolean): void {
-    this.suspended = s;
-    this.reset();
-  }
-
-  /** Clear all held state; releases an active talk. */
-  reset(): void {
-    this.clearPending();
-    this.held.clear();
-    if (this.talkActive) this.endTalk();
-  }
-
-  /** Drop modifiers the OS says are no longer down (stuck-key guard). */
-  reconcileModifiers(flags: { ctrl: boolean; alt: boolean; shift: boolean; meta: boolean }, except?: KeyName): void {
-    const pairs: Array<[string, boolean]> = [['Control', flags.ctrl], ['Alt', flags.alt], ['Shift', flags.shift], ['Meta', flags.meta]];
-    let changed = false;
-    for (const [name, down] of pairs) {
-      if (!down && name !== except && this.held.delete(name)) changed = true;
-    }
-    if (changed) this.afterRelease();
-  }
-
-  keyDown(key: KeyName): void {
-    if (this.suspended) return;
-    if (this.held.has(key)) return; // autorepeat
-    this.held.add(key);
-    if (key === 'Escape' && this.held.size === 1) {
-      this.safe(() => this.handlers.onEscape());
-      return;
-    }
-    if (this.type.size && sameSet(this.held, this.type) && !sameSet(this.type, this.talk)) {
-      this.clearPending();
-      if (this.talkActive) this.endTalk();
-      this.safe(() => this.handlers.onType());
-      return;
-    }
-    if (this.talk.size && sameSet(this.held, this.talk)) {
-      this.onTalkChord();
-    }
-  }
-
-  keyUp(key: KeyName): void {
-    if (this.suspended) return;
-    if (!this.held.delete(key)) return;
-    this.afterRelease();
-  }
-
-  dispose(): void {
-    this.clearPending();
-    if (this.holdWatchdog) clearTimeout(this.holdWatchdog);
-    this.holdWatchdog = null;
-  }
-
-  private afterRelease(): void {
-    // hold mode: talk ends when any chord key is released
-    if (this.pending && !sameSet(this.held, this.talk)) this.clearPending();
-    if (this.mode === 'hold' && this.talkActive && !isSuperset(this.held, this.talk)) this.endTalk();
-  }
-
-  private onTalkChord(): void {
-    if (this.mode === 'hold' && this.talkActive) return;
-    const delayed = this.type.size > 0 && isStrictSubset(this.talk, this.type);
-    const fire = () => {
-      this.pending = null;
-      if (this.suspended || !sameSet(this.held, this.talk)) return;
-      if (this.mode === 'toggle') {
-        if (this.talkActive) this.endTalk();
-        else this.startTalk();
-      } else this.startTalk();
-    };
-    this.clearPending();
-    if (delayed) this.pending = setTimeout(fire, this.delayMs);
-    else fire();
-  }
-
-  private startTalk(): void {
-    this.talkActive = true;
-    if (this.holdWatchdog) clearTimeout(this.holdWatchdog);
-    this.holdWatchdog = setTimeout(() => {
-      this.holdWatchdog = null;
-      this.held.clear();
-      if (this.talkActive) this.endTalk();
-    }, MAX_HOLD_MS);
-    this.holdWatchdog.unref?.();
-    this.safe(() => this.handlers.onTalkDown());
-  }
-
-  private endTalk(): void {
-    this.talkActive = false;
-    if (this.holdWatchdog) clearTimeout(this.holdWatchdog);
-    this.holdWatchdog = null;
-    this.safe(() => this.handlers.onTalkUp());
-  }
-
-  private clearPending(): void {
-    if (this.pending) clearTimeout(this.pending);
-    this.pending = null;
-  }
-
-  private safe(fn: () => void): void {
-    try {
-      fn();
-    } catch (e) {
-      console.warn('[hotkey] handler threw:', e);
-    }
-  }
 }
 
 /* ───────────────────────── accelerator conversion (fallback) ───────────────────────── */
@@ -329,7 +179,11 @@ function startUiohook(cfg: HotkeySettings, handlers: HotkeyHandlers): boolean {
     const hook = mod.uIOhook;
     hook.on('keydown', (e: any) => {
       const name = codeMap.get(e.keycode);
-      if (!name) return;
+      if (!name) {
+        // keycode 0 = VC_UNDEFINED (e.g. mac fn): never a real "other key"
+        if (e.keycode) eng.foreignKeyDown();
+        return;
+      }
       emitRaw(name, true);
       eng.reconcileModifiers({ ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, meta: e.metaKey }, name);
       eng.keyDown(name);
@@ -392,7 +246,9 @@ function startGlobalShortcut(cfg: HotkeySettings, handlers: HotkeyHandlers): voi
   };
   reg(talk, () => {
     try {
-      talking = !talking;
+      // no key-up here: every press toggles. Ask the conversation when we can, so a turn that was
+      // cancelled elsewhere (escape, error) doesn't leave us one press out of step.
+      talking = handlers.isTalking ? !handlers.isTalking() : !talking;
       if (talking) handlers.onTalkDown();
       else handlers.onTalkUp();
     } catch (e) { console.warn('[hotkey] handler threw:', e); }
