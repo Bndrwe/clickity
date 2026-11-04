@@ -27,11 +27,11 @@
     "typescript": "^5.7.2"
   },
   "author": {
-    "name": "clickyclone contributors"
+    "name": "clickity contributors"
   },
-  "homepage": "https://github.com/bndrwe/clickyclone",
+  "homepage": "https://github.com/Bndrwe/clickity",
   "repository": {
     "type": "git",
-    "url": "https://github.com/bndrwe/clickyclone.git"
+    "url": "https://github.com/Bndrwe/clickity.git"
   }
 }

@@ -133,7 +133,7 @@ const OPENROUTER: CompatOptions = {
   name: 'openrouter',
   baseUrl: () => 'https://openrouter.ai/api/v1',
   keyRequired: true,
-  extraHeaders: { 'HTTP-Referer': 'https://github.com/Bndrwe/clickyclone', 'X-Title': 'clickity' },
+  extraHeaders: { 'HTTP-Referer': 'https://github.com/Bndrwe/clickity', 'X-Title': 'clickity' },
   shapeBody(body) {
     body.max_tokens = 1024;
   },

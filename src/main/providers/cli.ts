@@ -353,7 +353,7 @@ export async function cliVersion(bin: string): Promise<string | null> {
 /* ───────────── temp files ───────────── */
 
 export function makeTempDir(prefix: string): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), `clickyclone-${prefix}-`));
+  return fs.mkdtempSync(path.join(os.tmpdir(), `clickity-${prefix}-`));
 }
 
 export function removeDir(dir: string): void {
@@ -459,7 +459,7 @@ export async function openTerminal(command: string): Promise<void> {
   }
   if (isWin) {
     // start "<title>" cmd /k "<command>"  — the outer quotes are stripped by cmd /k
-    const line = `/d /c start "clickyclone" cmd /k "${command}"`;
+    const line = `/d /c start "clickity" cmd /k "${command}"`;
     const ok = await trySpawnDetached(process.env.ComSpec || 'cmd.exe', [line], env, {
       windowsVerbatimArguments: true,
       windowsHide: false,
