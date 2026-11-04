@@ -40,7 +40,7 @@ const isMac = process.platform === 'darwin';
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => openSettingsWindow());
+  app.on('second-instance', () => openMainWindow());
   void bootstrap();
 }
 
@@ -95,6 +95,14 @@ function handleSettingsChanged(s: Settings, prev: Settings): void {
   }
   if (s.theme !== prev.theme) applySettingsTheme(s.theme);
   if (s.launchAtLogin !== prev.launchAtLogin) applyLaunchAtLogin(s.launchAtLogin);
+  // finishing onboarding takes you to the main window
+  if (!prev.onboarded && s.onboarded) openChatsWindow();
+}
+
+/** The window to show when the app icon is clicked: chats once set up, settings before. */
+function openMainWindow(): void {
+  if (getSettings().onboarded) openChatsWindow();
+  else openSettingsWindow();
 }
 
 /* ───────────────────────── IPC ───────────────────────── */
@@ -180,7 +188,7 @@ function registerIpc(): void {
   ipcMain.handle(IPC.appQuit, () => app.quit());
 
   ipcMain.handle(IPC.openChats, () => void openChatsWindow());
-  ipcMain.handle(IPC.openSettings, () => void openSettingsWindow());
+  ipcMain.handle(IPC.openSettings, (_e, section?: string) => void openSettingsWindow(section));
 
   ipcMain.handle(IPC.chatsList, () => listChats());
   ipcMain.handle(IPC.chatsGet, (_e, id: unknown) => getChat(assertId(id)));
@@ -224,7 +232,7 @@ async function bootstrap(): Promise<void> {
     }
   });
   // mac: clicking the dock icon or re-launching from Finder / Launchpad.
-  app.on('activate', () => openSettingsWindow());
+  app.on('activate', () => openMainWindow());
 
   await app.whenReady();
 
@@ -275,5 +283,7 @@ async function bootstrap(): Promise<void> {
 
   // Opening the app from its icon shows the settings window, like any app.
   // Started by the OS at login: stay quiet in the menu bar / tray.
-  if (!settings.onboarded || !launchedAtLogin()) openSettingsWindow();
+  // Chats is the main window; settings (with onboarding) opens first until setup is done.
+  if (!settings.onboarded) openSettingsWindow();
+  else if (!launchedAtLogin()) openChatsWindow();
 }

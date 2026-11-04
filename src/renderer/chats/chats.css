@@ -195,6 +195,7 @@ kbd {
 
 .main { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; position: relative; }
 .topbar {
+  position: relative;
   height: 40px; flex: none; display: flex; align-items: center; justify-content: center;
   -webkit-app-region: drag; padding: 0 140px;
 }
@@ -459,3 +460,20 @@ button, input, textarea, a, .composer, .popover, .row { -webkit-app-region: no-d
 
 /* anime.js animates the mark's parts in place */
 .mark line, .mark polygon { transform-box: fill-box; transform-origin: center; }
+
+/* top-right: back to the main (settings) window */
+.top-btn {
+  position: absolute; right: 12px; top: 6px; height: 28px; padding: 0 10px 0 8px; border-radius: 8px;
+  display: inline-flex; align-items: center; gap: 6px; font-size: 13px;
+  color: rgba(255, 255, 255, 0.6); -webkit-app-region: no-drag;
+  transition: color 0.2s, background 0.2s;
+}
+.top-btn:hover { color: #fff; background: var(--surface-2); }
+
+/* settings menu at the foot of the sidebar */
+.side-menu { display: flex; flex-wrap: wrap; gap: 2px 4px; padding: 0 6px 8px; margin-bottom: 8px; border-bottom: 1px solid var(--line); }
+.menu-item {
+  height: 28px; padding: 0 9px; border-radius: 8px; font-size: 13px;
+  color: rgba(255, 255, 255, 0.55); transition: color 0.2s, background 0.2s;
+}
+.menu-item:hover { color: #fff; background: var(--surface-2); }

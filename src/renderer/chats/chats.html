@@ -31,13 +31,14 @@
     </label>
     <nav class="chat-list" id="chat-list" aria-label="chat history"></nav>
     <div class="side-foot">
+      <nav class="side-menu" id="side-menu" aria-label="settings"></nav>
       <button class="side-link" id="open-settings" type="button"></button>
     </div>
   </aside>
   <div class="scrim" id="scrim" aria-hidden="true"></div>
 
   <main class="main" id="main" data-mode="empty">
-    <header class="topbar"><div class="topbar-title" id="chat-title"></div></header>
+    <header class="topbar"><div class="topbar-title" id="chat-title"></div><button class="top-btn" id="top-settings" type="button" title="back to settings (⌘,)"></button></header>
 
     <section class="thread" id="thread" aria-label="conversation">
       <div class="thread-inner" id="turns"></div>

@@ -25,7 +25,7 @@ const api: ChatsApi = {
     ipcRenderer.on(IPC.settingsChanged, (_e: IpcRendererEvent, s: Settings) => cb(s));
   },
   providerModels: (kind) => ipcRenderer.invoke(IPC.providersModels, kind),
-  openSettings: () => ipcRenderer.invoke(IPC.openSettings),
+  openSettings: (section?: string) => ipcRenderer.invoke(IPC.openSettings, section),
 };
 
 contextBridge.exposeInMainWorld('chats', api);

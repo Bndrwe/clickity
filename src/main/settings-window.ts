@@ -1,4 +1,5 @@
 // The settings / onboarding window. A single instance, opened or focused on demand.
+import { IPC } from '../shared/ipc';
 import path from 'node:path';
 import { app, BrowserWindow, nativeTheme, shell } from 'electron';
 import type { Theme } from '../shared/types';
@@ -21,8 +22,13 @@ export function getSettingsWindow(): BrowserWindow | null {
   return win && !win.isDestroyed() ? win : null;
 }
 
-export function openSettingsWindow(): BrowserWindow {
+const SECTIONS = new Set(['model', 'voice', 'keys', 'companion', 'permissions', 'about']);
+
+/** Open (or focus) settings; with a section, scroll it into view. */
+export function openSettingsWindow(section?: string): BrowserWindow {
+  const goto = typeof section === 'string' && SECTIONS.has(section) ? section : null;
   const existing = getSettingsWindow();
+  if (existing && goto) existing.webContents.send(IPC.settingsGoto, goto);
   if (existing) {
     if (existing.isMinimized()) existing.restore();
     existing.show();
@@ -75,6 +81,7 @@ export function openSettingsWindow(): BrowserWindow {
     win = null;
   });
 
+  if (goto) w.webContents.once('did-finish-load', () => setTimeout(() => w.webContents.send(IPC.settingsGoto, goto), 300));
   void w.loadFile(path.join(__dirname, '../renderer/settings/settings.html'));
   return w;
 }

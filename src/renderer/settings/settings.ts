@@ -1162,3 +1162,11 @@ async function boot(): Promise<void> {
 }
 
 void boot();
+
+// the chats window can open settings at a section
+api.onGoto((section) => {
+  const target = document.getElementById(section);
+  if (!target) return;
+  target.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+  target.classList.add('is-in');
+});

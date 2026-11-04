@@ -114,6 +114,7 @@ export const IPC = {
 
   /* main → settings window */
   settingsChanged: 'settings:changed', // Settings
+  settingsGoto: 'settings:goto', // string — section id to scroll to (model, voice, keys, companion, permissions, about)
   recordKeys: 'hotkey:record-keys', // KeyRecordEvent
   hotkeyHeard: 'hotkey:heard', // HotkeyHeard — a chord fired
   hotkeyStatusChanged: 'hotkey:status-changed', // HotkeyStatus
@@ -153,6 +154,8 @@ export interface SettingsApi {
   setSettings(patch: DeepPartial<Settings>): Promise<Settings>;
   resetSettings(): Promise<Settings>;
   onSettingsChanged(cb: (s: Settings) => void): void;
+  /** main asks the settings window to show a section */
+  onGoto(cb: (section: string) => void): void;
   providerStatus(kind: ProviderKind): Promise<ProviderStatus>;
   providerModels(kind: ProviderKind): Promise<ModelInfo[]>;
   providerTest(kind: ProviderKind): Promise<ProviderTestResult>;
@@ -197,7 +200,8 @@ export interface ChatsApi {
   setSettings(patch: DeepPartial<Settings>): Promise<Settings>;
   onSettingsChanged(cb: (s: Settings) => void): void;
   providerModels(kind: ProviderKind): Promise<ModelInfo[]>;
-  openSettings(): Promise<void>;
+  /** open the settings window, optionally at a section (model, voice, keys, companion, permissions, about) */
+  openSettings(section?: string): Promise<void>;
 }
 
 declare global {

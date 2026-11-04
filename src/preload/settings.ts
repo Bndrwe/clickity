@@ -10,6 +10,9 @@ const api: SettingsApi = {
   onSettingsChanged: (cb) => {
     ipcRenderer.on(IPC.settingsChanged, (_e: IpcRendererEvent, s: Settings) => cb(s));
   },
+  onGoto: (cb) => {
+    ipcRenderer.on(IPC.settingsGoto, (_e: IpcRendererEvent, section: string) => cb(section));
+  },
   providerStatus: (kind) => ipcRenderer.invoke(IPC.providersStatus, kind),
   providerModels: (kind) => ipcRenderer.invoke(IPC.providersModels, kind),
   providerTest: (kind) => ipcRenderer.invoke(IPC.providersTest, kind),

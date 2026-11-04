@@ -597,6 +597,23 @@ el.scrim.addEventListener('click', () => toggleSidebar(false));
 $('new-chat').addEventListener('click', () => void newChat());
 $('new-chat-mini').addEventListener('click', () => void newChat());
 $('open-settings').addEventListener('click', () => void api.openSettings());
+// settings, right in the sidebar: each opens the settings window at that section
+const MENU: Array<{ id: string; label: string }> = [
+  { id: 'model', label: 'model' },
+  { id: 'voice', label: 'voice' },
+  { id: 'keys', label: 'keys' },
+  { id: 'companion', label: 'companion' },
+  { id: 'permissions', label: 'permissions' },
+  { id: 'about', label: 'about' },
+];
+for (const m of MENU) {
+  const b = h('button', { class: 'menu-item', type: 'button', 'data-section': m.id }, h('span', { text: m.label }));
+  b.addEventListener('click', () => void api.openSettings(m.id));
+  $('side-menu').append(b);
+}
+// always-visible way back to settings, even with the sidebar hidden
+$('top-settings').append(icon('settings', 'ic sm'), h('span', { text: 'settings' }));
+$('top-settings').addEventListener('click', () => void api.openSettings());
 
 /* ───────────── chats ───────────── */
 
@@ -881,6 +898,9 @@ document.addEventListener('keydown', (e) => {
   } else if (k === 'b') {
     e.preventDefault();
     toggleSidebar();
+  } else if (k === ',') {
+    e.preventDefault();
+    void api.openSettings();
   }
 });
 
