@@ -52,6 +52,8 @@ function createOverlay(display: Display): BrowserWindow {
       nodeIntegration: false,
       sandbox: false,
       backgroundThrottling: false,
+      // TTS audio starts without a user gesture (the hotkey happens outside the page).
+      autoplayPolicy: 'no-user-gesture-required',
       spellcheck: false,
     },
   });
