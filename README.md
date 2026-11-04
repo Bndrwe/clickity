@@ -5,6 +5,8 @@
   </picture>
 </p>
 
+<h3 align="center"><i>clicky, but free &amp; open source.</i></h3>
+
 <p align="center">
   a small ai companion that lives next to your cursor.<br>
   hold a key, ask out loud — it looks at your screen, answers, and points the way.
@@ -23,7 +25,7 @@
 
 clickity is a little ink triangle that follows your mouse. hold the talk key, say what you need, and let go. it looks at your screens, answers in a short bubble, says it out loud, and — when the answer is something on screen — flies over and points at it.
 
-it's an open-source take on [heyclicky.com](https://heyclicky.com), with one big difference: **you bring your own brain.** use the claude, chatgpt or gemini plan you already pay for, an api key, openrouter, or a model running on your own machine — and pick the model.
+it's [clicky](https://heyclicky.com), but free and open source — no subscription to clickity itself, no message limits, MIT licensed. and one big difference: **you bring your own brain.** use the claude, chatgpt or gemini plan you already pay for, an api key, openrouter, or a model running on your own machine — and pick the model.
 
 ## download
 

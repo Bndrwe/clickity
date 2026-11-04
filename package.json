@@ -2,7 +2,7 @@
   "name": "clickity",
   "productName": "Clickity",
   "version": "0.1.0",
-  "description": "An AI companion that lives next to your cursor. Hold a key, talk, and it looks at your screen and points the way. Bring your own Claude, ChatGPT, Gemini, OpenRouter or local model.",
+  "description": "Clicky, but free & open source: an AI companion that lives next to your cursor. Hold a key, talk, and it looks at your screen and points the way. Bring your own Claude, ChatGPT, Gemini, OpenRouter or local model.",
   "main": "dist/main/index.js",
   "license": "MIT",
   "scripts": {
