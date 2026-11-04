@@ -470,10 +470,3 @@ button, input, textarea, a, .composer, .popover, .row { -webkit-app-region: no-d
 }
 .top-btn:hover { color: #fff; background: var(--surface-2); }
 
-/* settings menu at the foot of the sidebar */
-.side-menu { display: flex; flex-wrap: wrap; gap: 2px 4px; padding: 0 6px 8px; margin-bottom: 8px; border-bottom: 1px solid var(--line); }
-.menu-item {
-  height: 28px; padding: 0 9px; border-radius: 8px; font-size: 13px;
-  color: rgba(255, 255, 255, 0.55); transition: color 0.2s, background 0.2s;
-}
-.menu-item:hover { color: #fff; background: var(--surface-2); }
