@@ -373,6 +373,7 @@ async function runTurn(turn: Turn, userText: string, screens: CapturedScreen[]):
 
   const reply = stripPointTags(buffer);
   const points = settings.companion.pointing ? parsePointTags(buffer) : [];
+  if (process.env.CLICKY_DEBUG) console.log(`[clicky] raw reply: ${JSON.stringify(buffer)} points: ${JSON.stringify(points)}`);
   if (!reply && points.length === 0) throw new Error('the model returned an empty reply');
 
   sendState(turn.overlay, { phase: 'speaking', reply });
@@ -385,8 +386,16 @@ async function runTurn(turn: Turn, userText: string, screens: CapturedScreen[]):
 
   // Point and speak concurrently.
   const pointing = points.length ? walkPoints(turn, points, screens) : Promise.resolve();
+  const spokeAt = Date.now();
   await speak(turn, reply, settings);
   await pointing.catch(() => undefined);
+  // If speech ended early (muted, no system voices, very short clip), keep the companion
+  // on its target long enough to actually see where it is pointing.
+  if (points.length && isTurnCurrent(turn)) {
+    const minLinger = Math.min(12_000, Math.max(3000, reply.length * 55));
+    const left = minLinger - (Date.now() - spokeAt);
+    if (left > 0) await delay(left, turn.controller.signal).catch(() => undefined);
+  }
   if (!isTurnCurrent(turn)) return;
   endTurn(turn);
 }
