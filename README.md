@@ -53,7 +53,7 @@ all builds: [releases page](https://github.com/Bndrwe/clickity/releases).
 
 1. pick a brain in the window that opens (see [choosing a brain](#choosing-a-brain)). for a subscription, click **sign in** next to it once.
 2. on mac, grant **microphone**, **screen recording** and **accessibility** in settings › permissions, then click **restart clickity**.
-3. hold **ctrl + option** (mac) or **ctrl + alt** (windows / linux), say hi, and let go.
+3. hold **cmd + option** (mac) or **ctrl + alt** (windows / linux), say hi, and let go.
 
 clickity behaves like any app: clicking its icon opens settings, the companion keeps running while the window is closed, and you quit with cmd + q, the dock menu, or the menu-bar / tray icon. turn on *launch at login* to have it start quietly.
 
@@ -117,9 +117,9 @@ the speaking rate is adjustable in settings.
 
 ## keys
 
-- **talk key**: default ctrl + option on mac, ctrl + alt on windows. change it in settings by recording a new chord.
+- **talk key**: default cmd + option on mac, ctrl + alt on windows / linux. change it in settings by recording a new chord.
 - **hold or toggle**: in *hold* mode, the companion listens while you hold the chord and sends when you let go. in *toggle* mode, press once to start and again to send.
-- **type instead**: ctrl + alt + space opens a small text box next to the companion, for when you would rather type.
+- **type instead**: cmd + option + space on mac (ctrl + alt + space elsewhere) opens a small text box next to the companion, for when you would rather type.
 - **escape** cancels the current turn.
 
 ## permissions

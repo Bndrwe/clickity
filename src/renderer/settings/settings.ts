@@ -722,7 +722,10 @@ function initKeys(): void {
   $('reset-keys').addEventListener('click', () => {
     recording?.cancel();
     const d = DEFAULT_SETTINGS.hotkeys;
-    void save({ hotkeys: { talk: [...d.talk], type: [...d.type], mode: d.mode } });
+    const mac = platform === 'darwin';
+    const talk: KeyName[] = mac ? ['Meta', 'Alt'] : [...d.talk];
+    const type: KeyName[] = mac ? ['Meta', 'Alt', 'Space'] : [...d.type];
+    void save({ hotkeys: { talk, type, mode: d.mode } });
     flash($('reset-keys'), 'defaults restored');
   });
 }

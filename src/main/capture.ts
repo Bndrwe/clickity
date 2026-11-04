@@ -132,3 +132,11 @@ export function cleanupCaptures(): void {
     }
   }
 }
+
+/** Writes an image (e.g. a chats-window attachment) to the capture temp dir so CLI providers get a path. */
+export async function writeTempImage(data: Buffer, ext: 'png' | 'jpg', tag = 'attachment'): Promise<string> {
+  await fs.promises.mkdir(TEMP_DIR, { recursive: true });
+  const file = path.join(TEMP_DIR, `${tag}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`);
+  await fs.promises.writeFile(file, data);
+  return file;
+}

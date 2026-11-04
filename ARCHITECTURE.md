@@ -1,4 +1,4 @@
-# Architecture
+# Clickity architecture
 
 Electron app (TypeScript, bundled by esbuild via `scripts/build.mjs`). Target: macOS 14+, Windows 10+, Linux (X11) best-effort.
 
@@ -6,7 +6,7 @@ Shared contract: `src/shared/types.ts` (data shapes, defaults, provider metadata
 
 ## How a turn works
 
-1. User holds the talk chord (default `Control + Alt`). `hotkey.ts` → `conversation.onTalkDown()`.
+1. User holds the talk chord (default `Meta + Alt` on mac, `Control + Alt` elsewhere). `hotkey.ts` → `conversation.onTalkDown()`.
 2. Conversation sends `IPC.overlayPttStart` to the overlay on the cursor's display; overlay records the mic and shows the *listening* state.
 3. Chord released → `conversation.onTalkUp()` → `IPC.overlayPttStop` with `{ stt }`. In parallel, `capture.captureScreens()` grabs every display.
 4. Overlay replies `IPC.pttResult`: either `text` (on-device whisper, `renderer/overlay/stt-local.ts`) or a 16 kHz mono `wav` that main transcribes with `speech/stt.ts`.
