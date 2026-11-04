@@ -237,6 +237,10 @@ function initChrome(): void {
       scrollToId(a.dataset.scroll!);
     }),
   );
+  $('open-chats').addEventListener('click', (e) => {
+    e.preventDefault();
+    void api.openChats?.();
+  });
   document.querySelectorAll<HTMLAnchorElement>('[data-ext]').forEach((a) =>
     a.addEventListener('click', (e) => {
       e.preventDefault();

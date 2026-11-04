@@ -1,8 +1,9 @@
 <p align="center">
-  <img src="assets/icon.png" width="112" alt="clickity icon">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+    <img src="assets/logo.svg" width="320" alt="clickity">
+  </picture>
 </p>
-
-<h1 align="center"><i>clickity</i></h1>
 
 <p align="center">
   a small ai companion that lives next to your cursor.<br>
