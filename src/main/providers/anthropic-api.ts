@@ -8,10 +8,10 @@ const NAME = 'anthropic api';
 const BASE = 'https://api.anthropic.com/v1';
 
 const FALLBACK: ModelInfo[] = [
-  { id: 'claude-sonnet-4-5', label: 'claude sonnet 4.5' },
-  { id: 'claude-opus-4-1', label: 'claude opus 4.1' },
-  { id: 'claude-haiku-4-5', label: 'claude haiku 4.5' },
-  { id: 'claude-sonnet-4-0', label: 'claude sonnet 4' },
+  { id: 'claude-sonnet-5-5', label: 'claude sonnet 5.5' },
+  { id: 'claude-opus-5-5', label: 'claude opus 5.5' },
+  { id: 'claude-haiku-5-5', label: 'claude haiku 5.5' },
+  { id: 'claude-fable-5-1', label: 'claude fable 5.1' },
 ];
 
 function headers(cfg: ProviderConfig): Record<string, string> {
@@ -47,7 +47,10 @@ async function* stream(req: ChatRequest, cfg: ProviderConfig): AsyncGenerator<st
     signal: req.signal,
     body: JSON.stringify({
       model: req.model,
-      max_tokens: 1024,
+      // 5.x models think adaptively; leave room for thinking + a short reply,
+      // and ask for low effort so the companion answers quickly.
+      max_tokens: 16000,
+      ...(/^claude-(fable|opus|sonnet|haiku)-5/.test(req.model) ? { output_config: { effort: 'low' } } : {}),
       system: req.system || undefined,
       messages: buildMessages(req),
       stream: true,

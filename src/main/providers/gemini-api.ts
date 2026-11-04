@@ -8,10 +8,10 @@ const NAME = 'gemini api';
 const BASE = 'https://generativelanguage.googleapis.com/v1beta';
 
 const FALLBACK: ModelInfo[] = [
-  { id: 'gemini-2.5-flash', label: 'gemini 2.5 flash', vision: true },
-  { id: 'gemini-2.5-pro', label: 'gemini 2.5 pro', vision: true },
-  { id: 'gemini-2.5-flash-lite', label: 'gemini 2.5 flash-lite', vision: true },
-  { id: 'gemini-2.0-flash', label: 'gemini 2.0 flash', vision: true },
+  { id: 'gemini-3.8-flash', label: 'gemini 3.8 flash', vision: true },
+  { id: 'gemini-4-argon', label: 'gemini 4 argon (most capable)', vision: true },
+  { id: 'gemini-3.5-flash-lite', label: 'gemini 3.5 flash-lite (fastest)', vision: true },
+  { id: 'gemini-3.1-pro-preview', label: 'gemini 3.1 pro (preview)', vision: true },
 ];
 
 function key(cfg: ProviderConfig): string {

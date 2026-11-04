@@ -1,63 +1,79 @@
-# clickity
+<p align="center">
+  <img src="assets/icon.png" width="112" alt="clickity icon">
+</p>
 
-a small companion that lives next to your cursor.
+<h1 align="center"><i>clickity</i></h1>
 
-it is a little ink-black triangle that follows the mouse. hold a key, ask it something out loud, and it looks at your screens, answers in a short bubble, and speaks back. when the answer is about something on screen, it flies over and points at it.
+<p align="center">
+  a small ai companion that lives next to your cursor.<br>
+  hold a key, ask out loud — it looks at your screen, answers, and points the way.
+</p>
 
-clickity is an open-source clone of heyclicky.com. the difference is that you bring your own brain: a Claude, ChatGPT or Google AI subscription, an API key, or a local model.
+<p align="center">
+  <a href="https://github.com/Bndrwe/clickity/releases/latest/download/Clickity-mac-arm64.dmg"><b>download for mac (m1–m4)</b></a> ·
+  <a href="https://github.com/Bndrwe/clickity/releases/latest/download/Clickity-mac-x64.dmg"><b>mac (intel)</b></a> ·
+  <a href="https://github.com/Bndrwe/clickity/releases/latest/download/Clickity-win-x64.exe"><b>windows</b></a> ·
+  <a href="https://github.com/Bndrwe/clickity/releases/latest/download/Clickity-linux-x86_64.AppImage"><b>linux</b></a>
+</p>
 
-![the companion pointing at a button, with its reply bubble](docs/screenshots/pointing.png)
+<p align="center">
+  <img src="docs/screenshots/pointing.png" width="720" alt="the companion pointing at a button, with its reply bubble">
+</p>
 
-## how it works
+clickity is a little ink triangle that follows your mouse. hold the talk key, say what you need, and let go. it looks at your screens, answers in a short bubble, says it out loud, and — when the answer is something on screen — flies over and points at it.
 
-1. you hold the talk key (ctrl + option on mac, ctrl + alt on windows).
-2. the companion listens while you hold it. your voice is turned into text on your machine by default.
-3. when you let go, it takes a screenshot of each display and sends your words and the screenshots to the model you picked.
-4. the reply streams into a bubble, and the companion reads it out loud.
-5. if the model points at something, the companion flies there and lands next to it.
+it's an open-source take on [heyclicky.com](https://heyclicky.com), with one big difference: **you bring your own brain.** use the claude, chatgpt or gemini plan you already pay for, an api key, openrouter, or a model running on your own machine — and pick the model.
 
 ## download
 
-grab the installer for your computer from the [releases page](https://github.com/Bndrwe/clickity/releases):
-
-| computer | file |
+| your computer | installer |
 |---|---|
-| mac with apple silicon (m1–m4) | `Clickity-…-mac-arm64.dmg` |
-| mac with intel | `Clickity-…-mac-x64.dmg` |
-| windows 10 / 11 | `Clickity-…-win-x64.exe` |
-| linux | `Clickity-…-linux-x86_64.AppImage` or `.deb` |
+| mac with apple silicon (m1, m2, m3, m4) | [Clickity-mac-arm64.dmg](https://github.com/Bndrwe/clickity/releases/latest/download/Clickity-mac-arm64.dmg) |
+| mac with intel | [Clickity-mac-x64.dmg](https://github.com/Bndrwe/clickity/releases/latest/download/Clickity-mac-x64.dmg) |
+| windows 10 / 11 | [Clickity-win-x64.exe](https://github.com/Bndrwe/clickity/releases/latest/download/Clickity-win-x64.exe) |
+| linux (any distro) | [Clickity-linux-x86_64.AppImage](https://github.com/Bndrwe/clickity/releases/latest/download/Clickity-linux-x86_64.AppImage) |
+| linux (debian / ubuntu) | [Clickity-linux-amd64.deb](https://github.com/Bndrwe/clickity/releases/latest/download/Clickity-linux-amd64.deb) |
 
-on mac, open the dmg and drag clickity into applications. clickity isn't notarized by apple yet, so macos blocks the first launch ("apple could not verify…"). click **done**, then either:
+not sure which mac you have? apple menu › **about this mac** › if "chip" says *apple m…*, get the apple silicon one; if it says *intel*, get intel.
+
+all builds: [releases page](https://github.com/Bndrwe/clickity/releases).
+
+### installing
+
+**mac** — open the dmg and drag clickity into applications. clickity isn't notarized by apple yet, so the first launch is blocked ("apple could not verify…"). click **done**, then either:
 
 - open **system settings › privacy & security**, scroll down, click **open anyway** next to clickity, and confirm; or
-- run this once in terminal: `xattr -dr com.apple.quarantine /Applications/Clickity.app`
+- run once in terminal: `xattr -dr com.apple.quarantine /Applications/Clickity.app`
 
-on windows, smartscreen may warn: more info › run anyway.
+**windows** — run the installer. if smartscreen warns, click **more info › run anyway**. you get a start menu and desktop shortcut.
 
-clickity then behaves like any app: it has a dock / taskbar / start-menu icon, clicking the icon opens its settings, the companion keeps running while the window is closed, and you quit it with cmd + q, the dock menu, or quit in the menu-bar / tray icon. turn on "launch at login" in settings to have it start quietly when you log in.
+**linux** — make the AppImage executable (`chmod +x Clickity-linux-x86_64.AppImage`) and run it, or install the `.deb`.
 
-installers are built by github actions (`.github/workflows/release.yml`) whenever a `v*` tag is pushed, or on demand from the actions tab.
+### first run
 
-## install and run from source
+1. pick a brain in the window that opens (see [choosing a brain](#choosing-a-brain)). for a subscription, click **sign in** next to it once.
+2. on mac, grant **microphone**, **screen recording** and **accessibility** in settings › permissions, then click **restart clickity**.
+3. hold **ctrl + option** (mac) or **ctrl + alt** (windows / linux), say hi, and let go.
 
-you need node.js and npm.
+clickity behaves like any app: clicking its icon opens settings, the companion keeps running while the window is closed, and you quit with cmd + q, the dock menu, or the menu-bar / tray icon. turn on *launch at login* to have it start quietly.
 
-```sh
-npm install
-npm run dev
-```
+## how it works
 
-`npm run dev` builds the app and starts it in electron. the companion appears near the cursor, and the menu bar (mac) or tray (windows, linux) icon opens settings.
+1. you hold the talk key. the companion listens — your voice is turned into text on your machine by default.
+2. when you let go, it screenshots each display and sends your words and the screenshots to the model you picked.
+3. the reply streams into a bubble and is read out loud.
+4. if the model points at something, the companion flies there and lands next to it.
 
-to package an installer:
+## make it yours
 
-```sh
-npm run dist
-```
+- **look** — light, dark, or follow the system. pick the companion's color and size (0.5×–2.5×).
+- **keys** — record any chord for talking and for typing; hold-to-talk or tap-to-toggle.
+- **voice** — on-device whisper, openai, groq, gemini or a local server to listen; your system voice, openai or elevenlabs to speak.
+- **behavior** — follow the cursor or park in a corner, show or hide the bubble, pointing on or off, custom instructions.
 
-the builds land in `release/`: a dmg and zip on mac, an nsis installer on windows, and an AppImage on linux.
-
-the icons are generated, not hand-drawn. to regenerate them after changing the shape, run `node scripts/make-icons.mjs`.
+<p align="center">
+  <img src="docs/screenshots/dark-settings.png" width="560" alt="clickity settings in dark mode">
+</p>
 
 ## choosing a brain
 
@@ -133,6 +149,21 @@ the model can end a reply with pointing tags, such as `[POINT:x,y:label:screen1]
 - **the cli works in a terminal but not when the app is opened from finder or the dock**: on mac, apps started from finder do not inherit the path from your shell profile. a cli installed through nvm or a global npm prefix is often missing from that path. set the cli path, as above.
 - **the talk key does nothing on linux**: global key handling works best on x11. on wayland, the compositor may block global shortcuts entirely, or only deliver key presses and not releases. in that case the chord acts as a toggle, or it may not trigger at all. linux support is best-effort and targets x11.
 - **the companion can talk but cannot see the screen**: check screen recording permission on mac. on other systems, check that your model is a vision model.
+
+## build from source
+
+you need node.js 20+ and npm.
+
+```sh
+git clone https://github.com/Bndrwe/clickity.git
+cd clickity
+npm install
+npm run dev
+```
+
+`npm run dev` builds the app and starts it in electron. to package an installer for your own system, run `npm run dist` — the builds land in `release/`. installers for every platform are built by github actions (`.github/workflows/release.yml`) on each `v*` tag, or on demand from the actions tab.
+
+the icons are generated: run `node scripts/make-icons.mjs` after changing the shape.
 
 ## credits
 

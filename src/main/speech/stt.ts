@@ -56,7 +56,7 @@ export async function transcribe(wav: Buffer, settings: Settings, signal?: Abort
       const key = stt.apiKey || settings.providers['openai-api']?.apiKey;
       if (!key) throw MISSING('openai');
       return openaiStyle('openai', 'https://api.openai.com/v1/audio/transcriptions', key,
-        stt.model || 'gpt-4o-mini-transcribe', lang, wav, signal);
+        stt.model || 'gpt-transcribe', lang, wav, signal);
     }
     case 'groq': {
       if (!stt.apiKey) throw MISSING('groq');
@@ -71,7 +71,7 @@ export async function transcribe(wav: Buffer, settings: Settings, signal?: Abort
     case 'gemini': {
       const key = stt.apiKey || settings.providers['gemini-api']?.apiKey;
       if (!key) throw MISSING('gemini');
-      const model = 'gemini-2.5-flash';
+      const model = 'gemini-3.8-flash';
       const prompt = 'transcribe verbatim, output only the words' + (lang ? ` (language: ${lang})` : '');
       const res = await postFetch('gemini', `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: 'POST',
