@@ -515,7 +515,9 @@ function renderRow(c: ChatSummary, now: number): HTMLElement {
     'button',
     { class: 'row-main', type: 'button', 'aria-current': active ? 'true' : undefined, title: c.title || 'new chat' },
     h('span', { class: 'row-title', text: c.title || 'new chat' }),
-    h('span', { class: 'row-time', text: streaming.has(c.id) ? '•••' : relTime(c.updatedAt, now) }),
+    streaming.has(c.id)
+      ? h('span', { class: 'row-live', 'aria-label': 'replying', title: 'replying' })
+      : h('span', { class: 'row-time', text: relTime(c.updatedAt, now) }),
   );
   open.addEventListener('click', () => void openChat(c.id));
   const more = h('button', { class: 'row-more', type: 'button', 'aria-label': `options for ${c.title || 'chat'}`, 'aria-haspopup': 'menu' }, icon('more'));

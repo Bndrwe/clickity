@@ -160,6 +160,12 @@ kbd {
 .row-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13.5px; color: rgba(255, 255, 255, 0.72); }
 .row.active .row-title { color: rgba(255, 255, 255, 0.95); }
 .row-time { flex: none; font-size: 11.5px; color: rgba(255, 255, 255, 0.32); font-variant-numeric: tabular-nums; transition: opacity 0.15s; }
+.row-live {
+  flex: none; width: 7px; height: 7px; margin-right: 4px; border-radius: 50%;
+  background: #9fd0f0; box-shadow: 0 0 10px rgba(140, 200, 240, 0.8);
+  animation: blink 1.4s ease-in-out infinite; transition: opacity 0.15s;
+}
+.row:hover .row-live, .row.menu-open .row-live { opacity: 0; }
 .row-more {
   position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
   width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center;
