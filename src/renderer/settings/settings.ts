@@ -594,10 +594,13 @@ function initVoice(): void {
 
   $('test-voice').addEventListener('click', async () => {
     await flushPending();
+    let label = 'speaking…';
     try {
       await api.testSpeak();
-    } catch {}
-    flash($('test-voice'), 'speaking…');
+    } catch {
+      label = 'could not speak';
+    }
+    flash($('test-voice'), label);
   });
 
   const visibility = () => {
@@ -694,6 +697,8 @@ function initKeys(): void {
       if (chord.length === 1 && chord[0] === 'Escape') return finish(null);
       const err = validateChord(chord, platform);
       if (err) return showError(err); // keep recording: try again
+      const other = settings.hotkeys[d.which === 'talk' ? 'type' : 'talk'];
+      if (orderChord(chord).join('+') === orderChord(other).join('+')) return showError('already used by the other shortcut');
       finish(orderChord(chord));
     }
 
@@ -944,14 +949,17 @@ function initCompanion(): void {
   initColor();
   bindText($<HTMLTextAreaElement>('instructions'), () => settings.customInstructions, (v) => ({ customInstructions: v }));
   bindText($<HTMLInputElement>('turns'), () => String(settings.historyTurns), (v) => {
-    const n = Math.max(0, Math.min(50, Math.round(Number(v))));
+    const n = Math.max(0, Math.min(20, Math.round(Number(v))));
     return Number.isFinite(n) && v !== '' ? { historyTurns: n } : null;
   });
   $('clear-chat').addEventListener('click', async () => {
+    let label = 'cleared';
     try {
       await api.clearHistory();
-    } catch {}
-    flash($('clear-chat'), 'cleared');
+    } catch {
+      label = 'could not clear';
+    }
+    flash($('clear-chat'), label);
   });
 }
 
@@ -1122,7 +1130,10 @@ function initOnboarding(): void {
     }
   };
   const go = (n: number) => {
+    const prev = step;
     step = Math.max(0, Math.min(2, n));
+    // the permissions step only has something to grant on macOS
+    if (step === 1 && platform !== 'darwin') step = n >= prev ? 2 : 0;
     render();
   };
   next.addEventListener('click', async () => {

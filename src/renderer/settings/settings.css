@@ -269,5 +269,6 @@ dialog::backdrop { background: color-mix(in srgb, var(--bg) 55%, transparent); -
 .swatch-ink { background: var(--ink); }
 .swatch-custom-wrap { overflow: hidden; background: conic-gradient(from 0deg, #ff3b30, #ffcc00, #1fbf5b, #14b8b0, #2f6bff, #7c4dff, #ff4f9a, #ff3b30); }
 .swatch-custom-wrap.on { background: var(--sw); }
+.swatch-custom-wrap:focus-within { box-shadow: 0 0 0 2px var(--bg), 0 0 0 3px var(--ink); }
 .swatch-custom { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; border: 0; padding: 0; }
 .perm-note { margin: 0; color: var(--ink-2); font-size: 14px; line-height: 1.55; max-width: 34em; }
