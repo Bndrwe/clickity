@@ -3,7 +3,9 @@
 //
 //   node scripts/make-icons.mjs
 //
-// The companion is a rounded, cursor-tilted triangle in ink (#111111).
+// The mark: the companion's rounded, cursor-tilted triangle with short "click"
+// ticks radiating from its tip, in ink (#111111). The same geometry also writes
+// assets/logo-mark.svg, assets/logo.svg and assets/logo-dark.svg.
 //  - assets/icon.png            1024x1024, triangle on an off-white (#fafafa) rounded square, soft shadow
 //  - assets/tray.png            32x32, ink triangle on transparent
 //  - assets/tray-template.png   16x16, pure black + alpha (macOS template image)
@@ -163,84 +165,125 @@ const smoothstep = (e0, e1, x) => {
   return t * t * (3 - 2 * t);
 };
 
-/* ───────────────────────── rasterizer ───────────────────────── */
+/* ───────────────────────── the mark ───────────────────────── */
 
-const SUB = 4; // 4x4 supersampling
+const THETA = (-32 * Math.PI) / 180; // tip leans up-left, like a cursor
+const CORNER = 0.1; // rounding of the triangle corners (canvas units, before fit)
 
 /**
- * Render a companion icon.
- * opts:
- *   size        output width and height in px
- *   color       [r,g,b] of the triangle
- *   scale       triangle scale in canvas units
- *   roundBg     [r,g,b] of an opaque rounded-square background, or null
- *   shadow      draw a soft gray shadow under the triangle (needs roundBg)
+ * Build the mark in canvas units, centred and fitted so its bounding box
+ * (including stroke) spans `extent` (0..2).
+ *  ticks: 3 = full mark, 2 = simplified for tiny sizes.
+ *  tickW: tick stroke width (canvas units, before fit).
  */
-function render({ size, color, scale, roundBg = null, shadow = false }) {
-  const theta = (-32 * Math.PI) / 180; // tip leans up-left, like a cursor
-  const cornerRadius = 0.1; // rounding of the triangle corners, canvas units
-  const outer = companionVertices(scale, theta);
-  const inner = insetTriangle(outer, cornerRadius);
+function buildMark({ extent, ticks = 3, tickW = 0.1 }) {
+  const tri = companionVertices(1, THETA);
+  const tip = tri[0];
+  const phi = Math.atan2(-Math.cos(THETA), Math.sin(THETA)); // direction of the tip
+  const spread = ticks === 3 ? [-0.62, 0, 0.62] : [-0.42, 0.42];
+  const segs = spread.map((off, i) => {
+    const a = phi + off;
+    const mid = ticks === 3 && off === 0;
+    const gap = 0.2 + CORNER * 0.2;
+    const len = mid ? 0.3 : 0.24;
+    const sx = tip[0] + Math.cos(a) * gap, sy = tip[1] + Math.sin(a) * gap;
+    return [sx, sy, sx + Math.cos(a) * len, sy + Math.sin(a) * len];
+  });
+  const inner = insetTriangle(tri, CORNER);
+  // bounding box of the whole thing
+  const pts = [];
+  for (const [x, y] of inner) pts.push([x - CORNER, y - CORNER], [x + CORNER, y + CORNER]);
+  for (const [a, b, c, d] of segs) pts.push([a - tickW / 2, b - tickW / 2], [c + tickW / 2, d + tickW / 2], [a + tickW / 2, b + tickW / 2], [c - tickW / 2, d - tickW / 2]);
+  const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+  const w = Math.max(...xs) - Math.min(...xs), h = Math.max(...ys) - Math.min(...ys);
+  const cx = (Math.max(...xs) + Math.min(...xs)) / 2, cy = (Math.max(...ys) + Math.min(...ys)) / 2;
+  const f = extent / Math.max(w, h);
+  const T = ([x, y]) => [(x - cx) * f, (y - cy) * f];
+  return {
+    tri: inner.map(T),
+    r: CORNER * f,
+    segs: segs.map(([a, b, c, d]) => [...T([a, b]), ...T([c, d])]),
+    w: tickW * f,
+  };
+}
 
+/** Signed distance to the whole mark (negative inside). */
+function sdMark(m, x, y) {
+  let d = sdTriangle(x, y, m.tri) - m.r;
+  for (const [a, b, c, e] of m.segs) d = Math.min(d, sdSegment(x, y, a, b, c, e) - m.w / 2);
+  return d;
+}
+
+/** SVG for the mark inside a 0..100 box, fitted to `extent` (0..100). */
+function markSvgBody(fill) {
+  const m = buildMark({ extent: 2 * 0.86, ticks: 3, tickW: 0.1 });
+  const P = (v) => (v * 50 + 50).toFixed(2);
+  const S = (v) => (v * 50).toFixed(2);
+  const poly = m.tri.map(([x, y]) => `${P(x)},${P(y)}`).join(' ');
+  const lines = m.segs
+    .map(([a, b, c, d]) => `<line x1="${P(a)}" y1="${P(b)}" x2="${P(c)}" y2="${P(d)}"/>`)
+    .join('');
+  return (
+    `<polygon points="${poly}" fill="${fill}" stroke="${fill}" stroke-width="${S(m.r * 2)}" stroke-linejoin="round"/>` +
+    `<g stroke="${fill}" stroke-width="${S(m.w)}" stroke-linecap="round">${lines}</g>`
+  );
+}
+
+function writeLogos() {
+  const mk = (fill) =>
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100" role="img" aria-label="clickity">${markSvgBody(fill)}</svg>\n`;
+  writeFileSync(join(ASSETS, 'logo-mark.svg'), mk('#111111'));
+  const full = (fill) =>
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 100" width="420" height="100" role="img" aria-label="clickity">` +
+    markSvgBody(fill) +
+    `<text x="116" y="70" fill="${fill}" font-family="'Instrument Serif', 'Iowan Old Style', 'Palatino Linotype', Georgia, serif" font-style="italic" font-size="78" letter-spacing="-1.5">clickity</text></svg>\n`;
+  writeFileSync(join(ASSETS, 'logo.svg'), full('#111111'));
+  writeFileSync(join(ASSETS, 'logo-dark.svg'), full('#f2f2f0'));
+  console.log('logo-mark.svg, logo.svg, logo-dark.svg');
+}
+
+/* ───────────────────────── rasterizer ───────────────────────── */
+
+const SUB = 4; // 4x4 supersampling (8 for the tiny sizes)
+
+/**
+ * opts: size, color [r,g,b], extent (mark size in canvas units, 0..2),
+ *       ticks, tickW, roundBg [r,g,b]|null, shadow bool, sub
+ */
+function render({ size, color, extent, ticks = 3, tickW = 0.1, roundBg = null, shadow = false, sub = SUB }) {
+  const mark = buildMark({ extent, ticks, tickW });
   const bgRadius = 0.44; // 22% of the 2-unit canvas
-  const shadowOffset = [0, 0.04];
-  const shadowBlur = 0.09;
-  const shadowAlpha = 0.24;
+  const shadowOffset = [0, 0.045];
+  const shadowBlur = 0.1;
+  const shadowAlpha = 0.22;
 
   const out = Buffer.alloc(size * size * 4);
-  const samples = SUB * SUB;
+  const samples = sub * sub;
 
   for (let py = 0; py < size; py++) {
     for (let px = 0; px < size; px++) {
-      let pr = 0, pg = 0, pb = 0, pa = 0; // premultiplied accumulators
-
-      for (let sy = 0; sy < SUB; sy++) {
-        for (let sx = 0; sx < SUB; sx++) {
-          const x = ((px + (sx + 0.5) / SUB) / size) * 2 - 1;
-          const y = ((py + (sy + 0.5) / SUB) / size) * 2 - 1;
-
-          // layer 0: opaque background (only inside the rounded square)
+      let pr = 0, pg = 0, pb = 0, pa = 0;
+      for (let sy = 0; sy < sub; sy++) {
+        for (let sx = 0; sx < sub; sx++) {
+          const x = ((px + (sx + 0.5) / sub) / size) * 2 - 1;
+          const y = ((py + (sy + 0.5) / sub) / size) * 2 - 1;
           let cr = 0, cg = 0, cb = 0, ca = 0;
           let inBackground = true;
           if (roundBg) {
             inBackground = sdRoundedSquare(x, y, bgRadius) <= 0;
-            if (inBackground) {
-              cr = roundBg[0];
-              cg = roundBg[1];
-              cb = roundBg[2];
-              ca = 1;
-            }
+            if (inBackground) { cr = roundBg[0]; cg = roundBg[1]; cb = roundBg[2]; ca = 1; }
           }
-
           if (inBackground) {
-            // layer 1: soft shadow, composited over the background
             if (shadow) {
-              const d = sdTriangle(x - shadowOffset[0], y - shadowOffset[1], inner) - cornerRadius;
+              const d = sdMark(mark, x - shadowOffset[0], y - shadowOffset[1]);
               const sa = shadowAlpha * (1 - smoothstep(-shadowBlur * 0.5, shadowBlur, d));
-              if (sa > 0) {
-                cr = cr * (1 - sa);
-                cg = cg * (1 - sa);
-                cb = cb * (1 - sa); // background stays opaque
-              }
+              if (sa > 0) { cr *= 1 - sa; cg *= 1 - sa; cb *= 1 - sa; }
             }
-
-            // layer 2: the triangle (binary per sub-sample, averaged below)
-            if (sdTriangle(x, y, inner) - cornerRadius <= 0) {
-              cr = color[0];
-              cg = color[1];
-              cb = color[2];
-              ca = 1;
-            }
+            if (sdMark(mark, x, y) <= 0) { cr = color[0]; cg = color[1]; cb = color[2]; ca = 1; }
           }
-
-          // accumulate premultiplied
-          pr += cr * ca;
-          pg += cg * ca;
-          pb += cb * ca;
-          pa += ca;
+          pr += cr * ca; pg += cg * ca; pb += cb * ca; pa += ca;
         }
       }
-
       const i = (py * size + px) * 4;
       const alpha = pa / samples;
       if (alpha > 0) {
@@ -261,19 +304,13 @@ const OFF_WHITE = [0xfa, 0xfa, 0xfa];
 const BLACK = [0, 0, 0];
 
 const outputs = [
-  {
-    file: 'icon.png',
-    size: 1024,
-    color: INK,
-    scale: 0.56,
-    roundBg: OFF_WHITE,
-    shadow: true,
-  },
-  { file: 'tray.png', size: 32, color: INK, scale: 0.86 },
-  { file: 'tray-template.png', size: 16, color: BLACK, scale: 0.86 },
-  { file: 'tray-template@2x.png', size: 32, color: BLACK, scale: 0.86 },
+  { file: 'icon.png', size: 1024, color: INK, extent: 1.12, roundBg: OFF_WHITE, shadow: true },
+  { file: 'tray.png', size: 32, color: INK, extent: 1.84, tickW: 0.15, sub: 8 },
+  { file: 'tray-template.png', size: 16, color: BLACK, extent: 1.9, ticks: 2, tickW: 0.22, sub: 8 },
+  { file: 'tray-template@2x.png', size: 32, color: BLACK, extent: 1.84, tickW: 0.15, sub: 8 },
 ];
 
+writeLogos();
 for (const o of outputs) {
   const started = Date.now();
   const rgba = render(o);
