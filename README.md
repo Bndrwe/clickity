@@ -6,6 +6,8 @@ it is a little ink-black triangle that follows the mouse. hold a key, ask it som
 
 clickyclone is an open-source clone of heyclicky.com. the difference is that you bring your own brain: a Claude, ChatGPT or Google AI subscription, an API key, or a local model.
 
+![the companion pointing at a button, with its reply bubble](docs/screenshots/pointing.png)
+
 ## how it works
 
 1. you hold the talk key (ctrl + option on mac, ctrl + alt on windows).
