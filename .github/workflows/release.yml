@@ -1,13 +1,21 @@
 # Builds the installable app on real mac, windows and linux machines and attaches
 # the installers to a GitHub Release.
 #   - push a tag like v0.1.0  → release "v0.1.0"
-#   - run manually (actions tab › build app › run workflow) → release "latest-build" (marked latest, so /releases/latest/download/… links work)
+#   - every push to main (code changes) or a manual run → release "latest-build"
+#     (marked latest, so /releases/latest/download/… links always get the newest app)
 name: build app
 
 on:
   push:
     tags: ['v*']
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**']
   workflow_dispatch:
+
+# a newer push replaces a build still in progress, so latest-build is always the newest main
+concurrency:
+  group: build-app-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
