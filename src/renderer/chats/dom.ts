@@ -60,7 +60,8 @@ export function icon(name: IconName, cls = 'ic'): SVGSVGElement {
 /** The brand mark (rounded cursor arrow). Placeholder — swap here when the new logo lands. */
 export function markSvg(size = 18): SVGSVGElement {
   const wrap = document.createElement('span');
-  wrap.innerHTML = `<svg class="mark" width="${size}" height="${size}" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3 L26 27 L16 21.5 L6 27 Z" transform="rotate(-28 16 16)" fill="currentColor" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"/></svg>`;
+  // Clickity mark (same geometry as assets/logo-mark.svg): cursor arrow + three click ticks.
+  wrap.innerHTML = `<svg class="mark" width="${size}" height="${size}" viewBox="0 0 100 100" aria-hidden="true"><polygon points="40.60,38.01 82.41,68.89 50.02,89.13" fill="currentColor" stroke="currentColor" stroke-width="7.75" stroke-linejoin="round"/><g stroke="currentColor" stroke-width="4.26" stroke-linecap="round"><line x1="25.43" y1="25.98" x2="15.85" y2="22.88"/><line x1="29.68" y1="20.53" x2="23.52" y2="10.68"/><line x1="36.43" y1="19.10" x2="37.86" y2="9.13"/></g></svg>`;
   return wrap.firstElementChild as SVGSVGElement;
 }
 
