@@ -163,7 +163,7 @@ function registerIpc(): void {
 /* ───────────────────────── lifecycle ───────────────────────── */
 
 async function bootstrap(): Promise<void> {
-  if (process.platform === 'win32') app.setAppUserModelId('com.clickyclone.app');
+  if (process.platform === 'win32') app.setAppUserModelId('com.clickity.app');
 
   // Keep running with no visible windows: we live in the tray and the overlays.
   app.on('window-all-closed', () => {

@@ -1,5 +1,5 @@
-appId: com.clickyclone.app
-productName: Clicky Clone
+appId: com.clickity.app
+productName: Clickity
 copyright: Copyright © 2026 the clickyclone contributors
 directories:
   output: release
@@ -28,10 +28,10 @@ mac:
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
-    NSMicrophoneUsageDescription: clicky listens while you hold the talk key.
-    NSAppleEventsUsageDescription: clicky uses apple events for system integration.
+    NSMicrophoneUsageDescription: clickity listens while you hold the talk key.
+    NSAppleEventsUsageDescription: clickity uses apple events for system integration.
 dmg:
-  title: Clicky Clone
+  title: Clickity
   contents:
     - { x: 150, y: 190 }
     - { x: 390, y: 190, type: link, path: /Applications }
@@ -47,7 +47,7 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: always
   createStartMenuShortcut: true
-  shortcutName: Clicky Clone
+  shortcutName: Clickity
   runAfterFinish: true
 
 linux:

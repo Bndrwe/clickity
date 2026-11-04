@@ -1,16 +1,16 @@
 # providers
 
-this page goes deeper than the table in the readme. for each brain: how to install and sign in, how clickyclone calls it, example model ids, what it needs to see the screen, and what it costs.
+this page goes deeper than the table in the readme. for each brain: how to install and sign in, how clickity calls it, example model ids, what it needs to see the screen, and what it costs.
 
 the readme table is the short version. the defaults and setup commands here match the app's provider list.
 
 ## how the subscription CLIs are called
 
-the three subscription providers (`claude-subscription`, `chatgpt-subscription`, `gemini-subscription`) do not use an API key. clickyclone starts the vendor's CLI on your machine in headless mode, sends it the system prompt, recent turns, and the current turn with its screenshots, and reads the streamed text back. the CLI uses the sign-in you already made, so the request counts against your plan.
+the three subscription providers (`claude-subscription`, `chatgpt-subscription`, `gemini-subscription`) do not use an API key. clickity starts the vendor's CLI on your machine in headless mode, sends it the system prompt, recent turns, and the current turn with its screenshots, and reads the streamed text back. the CLI uses the sign-in you already made, so the request counts against your plan.
 
-if clickyclone cannot find the binary, set the CLI path under the provider in settings. use the full path, for example `/opt/homebrew/bin/claude`.
+if clickity cannot find the binary, set the CLI path under the provider in settings. use the full path, for example `/opt/homebrew/bin/claude`.
 
-because the CLI is a separate program, its own terms apply. clickyclone runs it as you would from a terminal, under your own sign-in.
+because the CLI is a separate program, its own terms apply. clickity runs it as you would from a terminal, under your own sign-in.
 
 ## claude (subscription)
 
@@ -23,7 +23,7 @@ npm i -g @anthropic-ai/claude-code
 claude
 ```
 
-the first run walks you through signing in with your claude account. after that, clickyclone can use the `claude` binary.
+the first run walks you through signing in with your claude account. after that, clickity can use the `claude` binary.
 
 **model ids:** the default is `sonnet`. the claude cli also accepts the aliases `opus` and `haiku`, and full model names.
 
@@ -79,7 +79,7 @@ the first run asks you to sign in with google.
 
 **vision:** claude models accept images. each screenshot is sent as an image block.
 
-**cost:** billed per token by anthropic. screenshots are the largest input in each turn. clickyclone scales each screenshot so its longest side is at most 1568 px, which keeps the image token count predictable. with several displays, each screen adds an image.
+**cost:** billed per token by anthropic. screenshots are the largest input in each turn. clickity scales each screenshot so its longest side is at most 1568 px, which keeps the image token count predictable. with several displays, each screen adds an image.
 
 ## openai api
 
