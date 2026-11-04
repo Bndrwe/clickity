@@ -40,7 +40,7 @@ export function openSettingsWindow(): BrowserWindow {
     minWidth: 560,
     minHeight: 560,
     show: false,
-    title: 'clicky',
+    title: 'clickity',
     backgroundColor: themeBackground(settings.theme),
     titleBarStyle: isMac ? 'hiddenInset' : 'default',
     trafficLightPosition: isMac ? { x: 18, y: 18 } : undefined,

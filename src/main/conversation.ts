@@ -230,7 +230,7 @@ function platformName(): string {
   return 'Linux';
 }
 
-/** Clicky-style persona + pointing protocol + this turn's screen list + custom instructions. */
+/** Clickity persona (heyclicky-style) + pointing protocol + this turn's screen list + custom instructions. */
 export function buildSystemPrompt(settings: Settings, screens: CapturedScreen[]): string {
   const screenLines = screens.length
     ? screens
@@ -255,7 +255,7 @@ Pointing is turned off: never output [POINT:...] tags.`;
 
   const custom = settings.customInstructions.trim();
 
-  return `You are Clicky, a friendly little AI companion that lives next to the user's mouse cursor on their ${platformName()} computer. The user holds a key, talks to you, and you can see their screen(s) through the screenshots attached to their latest message.
+  return `You are Clickity, a friendly little AI companion that lives next to the user's mouse cursor on their ${platformName()} computer. The user holds a key, talks to you, and you can see their screen(s) through the screenshots attached to their latest message.
 
 HOW TO REPLY
 - Your reply is read aloud by a voice and shown in a small speech bubble, so keep it short: one to three sentences unless the user asks for more detail.
@@ -592,7 +592,7 @@ export async function testSpeak(): Promise<void> {
   const cursor = screen.getCursorScreenPoint();
   const turn = beginTurn(overlayForPoint(cursor), 'processing');
   const label = hotkeyLabel(settings.hotkeys.talk, process.platform);
-  const line = `hi! i'm your clicky companion. hold ${label} and ask me anything.`;
+  const line = `hi! i'm clickity, your companion. hold ${label} and ask me anything.`;
   try {
     if (settings.speech.tts.provider === 'off') {
       sendState(turn.overlay, { phase: 'speaking', reply: 'voice is off — turn it on to hear me.' });

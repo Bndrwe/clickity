@@ -1,5 +1,5 @@
 // The application menu (mac menu bar / keyboard shortcuts) and the mac dock menu.
-// Clicky behaves like a normal app: it has a dock / taskbar icon, clicking the icon
+// Clickity behaves like a normal app: it has a dock / taskbar icon, clicking the icon
 // opens the settings window, and quitting (cmd+q, dock › quit, tray › quit) stops it.
 import { app, Menu, type MenuItemConstructorOptions } from 'electron';
 
@@ -34,7 +34,7 @@ export function installAppMenu(a: AppMenuActions): void {
         ] as MenuItemConstructorOptions[])
       : []),
     {
-      label: 'clicky',
+      label: 'clickity',
       submenu: [
         ...(isMac ? [] : ([{ label: 'settings…', accelerator: 'Ctrl+,', click: () => a.openSettings() }] as MenuItemConstructorOptions[])),
         {

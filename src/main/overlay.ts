@@ -45,7 +45,7 @@ function createOverlay(display: Display): BrowserWindow {
     alwaysOnTop: true,
     enableLargerThanScreen: true,
     roundedCorners: false,
-    title: 'clicky overlay',
+    title: 'clickity overlay',
     webPreferences: {
       preload: path.join(__dirname, '../preload/overlay.js'),
       contextIsolation: true,

@@ -824,7 +824,7 @@ function permRows(container: HTMLElement): () => void {
       container.append(
         h('div', { class: 'row' }, h('span', { class: 'row-label', text: 'heads up' }), h('div', { class: 'row-value' }, h('p', {
           class: 'perm-note',
-          text: "you're running clicky from a terminal (npm run dev), so macos asks on behalf of that terminal — turn the switches on for terminal, iterm or vs code, not clicky. the installed app shows up as itself.",
+          text: "you're running clickity from a terminal (npm run dev), so macos asks on behalf of that terminal — turn the switches on for terminal, iterm or vs code, not clickity. the installed app shows up as itself.",
         }))),
       );
     }
@@ -854,7 +854,7 @@ function permRows(container: HTMLElement): () => void {
 }
 /** Screen recording and accessibility only take effect after a relaunch on macOS. */
 function restartRow(): HTMLElement {
-  const btn = h('button', { class: 'text-btn', type: 'button' }, h('span', { text: 'restart clicky' }));
+  const btn = h('button', { class: 'text-btn', type: 'button' }, h('span', { text: 'restart clickity' }));
   btn.addEventListener('click', () => void api.relaunch());
   return h('div', { class: 'row' }, h('span', { class: 'row-label', text: 'granted something?' }), h('div', { class: 'row-value' }, h('span', { class: 'muted', text: 'macos applies screen recording and accessibility after a restart. ' }), btn));
 }
@@ -930,7 +930,7 @@ function initOnboarding(): void {
       );
     } else if (step === 1) {
       $('ob-title').textContent = 'A few permissions.';
-      $('ob-sub').textContent = platform === 'darwin' ? 'clicky needs these to hear and see.' : '';
+      $('ob-sub').textContent = platform === 'darwin' ? 'clickity needs these to hear and see.' : '';
       const box = h('div', { class: 'sheet' });
       body.append(box);
       removePerm = permRows(box);

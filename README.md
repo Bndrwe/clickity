@@ -1,10 +1,10 @@
-# clickyclone
+# clickity
 
 a small companion that lives next to your cursor.
 
 it is a little ink-black triangle that follows the mouse. hold a key, ask it something out loud, and it looks at your screens, answers in a short bubble, and speaks back. when the answer is about something on screen, it flies over and points at it.
 
-clickyclone is an open-source clone of heyclicky.com. the difference is that you bring your own brain: a Claude, ChatGPT or Google AI subscription, an API key, or a local model.
+clickity is an open-source clone of heyclicky.com. the difference is that you bring your own brain: a Claude, ChatGPT or Google AI subscription, an API key, or a local model.
 
 ![the companion pointing at a button, with its reply bubble](docs/screenshots/pointing.png)
 
@@ -22,14 +22,14 @@ grab the installer for your computer from the [releases page](https://github.com
 
 | computer | file |
 |---|---|
-| mac with apple silicon (m1–m4) | `Clicky Clone-…-mac-arm64.dmg` |
-| mac with intel | `Clicky Clone-…-mac-x64.dmg` |
-| windows 10 / 11 | `Clicky Clone-…-win-x64.exe` |
-| linux | `Clicky Clone-…-linux-x86_64.AppImage` or `.deb` |
+| mac with apple silicon (m1–m4) | `Clickity-…-mac-arm64.dmg` |
+| mac with intel | `Clickity-…-mac-x64.dmg` |
+| windows 10 / 11 | `Clickity-…-win-x64.exe` |
+| linux | `Clickity-…-linux-x86_64.AppImage` or `.deb` |
 
-on mac, open the dmg and drag clicky clone into applications. the app isn't notarized by apple, so the first time you open it: right-click it › open › open. on windows, smartscreen may warn: more info › run anyway.
+on mac, open the dmg and drag clickity into applications. the app isn't notarized by apple, so the first time you open it: right-click it › open › open. on windows, smartscreen may warn: more info › run anyway.
 
-clicky clone then behaves like any app: it has a dock / taskbar / start-menu icon, clicking the icon opens its settings, the companion keeps running while the window is closed, and you quit it with cmd + q, the dock menu, or quit in the menu-bar / tray icon. turn on "launch at login" in settings to have it start quietly when you log in.
+clickity then behaves like any app: it has a dock / taskbar / start-menu icon, clicking the icon opens its settings, the companion keeps running while the window is closed, and you quit it with cmd + q, the dock menu, or quit in the menu-bar / tray icon. turn on "launch at login" in settings to have it start quietly when you log in.
 
 installers are built by github actions (`.github/workflows/release.yml`) whenever a `v*` tag is pushed, or on demand from the actions tab.
 
@@ -56,7 +56,7 @@ the icons are generated, not hand-drawn. to regenerate them after changing the s
 
 ## choosing a brain
 
-pick one in settings. the setup column is the command or step you need before clickyclone can use it.
+pick one in settings. the setup column is the command or step you need before clickity can use it.
 
 | provider | what you need | setup |
 |---|---|---|
@@ -69,7 +69,7 @@ pick one in settings. the setup column is the command or step you need before cl
 | openrouter | an openrouter key | paste the key in settings (openrouter.ai) |
 | local | ollama, lm studio, or any openai-compatible server | start the server; the default base url is `http://localhost:11434/v1` |
 
-the three subscription options run the vendor's own cli on your machine, in headless mode. that means each request counts against your plan's usage, and it is subject to each vendor's terms. clickyclone does not get a separate allowance or bypass any limit.
+the three subscription options run the vendor's own cli on your machine, in headless mode. that means each request counts against your plan's usage, and it is subject to each vendor's terms. clickity does not get a separate allowance or bypass any limit.
 
 see [docs/PROVIDERS.md](docs/PROVIDERS.md) for sign-in steps, model ids and cost notes.
 
@@ -131,7 +131,7 @@ the model can end a reply with pointing tags, such as `[POINT:x,y:label:screen1]
 
 ## credits
 
-inspired by [heyclicky.com](https://heyclicky.com). clickyclone is not affiliated with it.
+inspired by [heyclicky.com](https://heyclicky.com). clickity is not affiliated with it.
 
 ## license
 

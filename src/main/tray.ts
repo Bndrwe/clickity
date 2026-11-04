@@ -78,7 +78,7 @@ export function createTray(a: TrayActions): Tray {
   actions = a;
   if (tray && !tray.isDestroyed()) return tray;
   tray = new Tray(loadIcon());
-  tray.setToolTip('clicky');
+  tray.setToolTip('clickity');
   refreshTray();
   // Windows: left click should open the menu too (mac/linux already do).
   if (process.platform === 'win32') tray.on('click', () => tray?.popUpContextMenu());
@@ -89,7 +89,7 @@ export function createTray(a: TrayActions): Tray {
 export function refreshTray(): void {
   if (!tray || tray.isDestroyed() || !actions) return;
   tray.setContextMenu(buildMenu(actions));
-  tray.setToolTip(actions.isPaused() ? 'clicky (paused)' : 'clicky');
+  tray.setToolTip(actions.isPaused() ? 'clickity (paused)' : 'clickity');
 }
 
 export function destroyTray(): void {
