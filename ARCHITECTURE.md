@@ -118,3 +118,9 @@ Renderers are bundled as IIFE for the browser; they talk to main **only** throug
 ## Build
 
 `npm run build` → `dist/`. `npm run typecheck` must pass. `npm run dev` builds and launches Electron.
+
+## Diagnostics
+
+`src/main/log.ts` appends timestamped lines to `app.getPath('logs')/clickity.log` (rotated at ~1 MB to `clickity.old.log`; settings › about › "open logs"). Every voice-turn stage is logged (talk down/up, mic permission, mic device / duration / peak level, stt engine + ms, provider/model + ms, errors shown in the bubble); overlay console warnings/errors and `OverlayApi.log()` lines are forwarded to it. Voice-path failures always end in a short lowercase bubble message saying what to do; while on-device whisper downloads/loads, the overlay shows `OverlayState`-independent progress ("downloading the voice model… 42%") and reports it to main via `IPC.pttProgress`, which keeps main's result timeout alive.
+
+`CLICKITY_TEST=1` installs `src/main/test-hook.ts` (`globalThis.__clickityTest`: onTalkDown/onTalkUp, settings, chats, log path, denyMedia) so Playwright can drive a voice turn under xvfb with Chromium's fake audio capture.

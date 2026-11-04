@@ -1029,6 +1029,7 @@ async function pollPerms(): Promise<void> {
 
 async function initAbout(): Promise<void> {
   $('quit').addEventListener('click', () => void api.quit());
+  document.getElementById('open-logs')?.addEventListener('click', () => void api.openLogs().catch(() => undefined));
   try {
     const info = await api.appInfo();
     platform = info.platform;

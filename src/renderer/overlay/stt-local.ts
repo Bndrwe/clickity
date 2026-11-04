@@ -94,7 +94,11 @@ function create(model: string, device: Device): Promise<Asr> {
 
 /** Tiny warm-up so a broken backend fails here (where we can fall back), not on the user's words. */
 async function warmUp(asr: Asr): Promise<void> {
-  await asr(new Float32Array(16000 / 2), { task: 'transcribe' });
+  await asr(new Float32Array(16000 / 2), {});
+}
+
+function englishOnly(model: string): boolean {
+  return /\.en$/i.test(model);
 }
 
 function load(model: string): Promise<Loaded> {
@@ -158,8 +162,13 @@ export async function transcribeLocal(pcm16k: Float32Array, model: string, langu
   } catch (e) {
     throw new ModelLoadError(e instanceof Error ? e.message : String(e));
   }
-  const opts: Record<string, unknown> = { task: 'transcribe' };
-  if (!/\.en$/i.test(model) && language && language.trim()) opts.language = language.trim().toLowerCase();
+  const opts: Record<string, unknown> = {};
+  // English-only checkpoints (*.en) reject `task` / `language` outright ("cannot specify `task` or
+  // `language` for an english-only model"): only multilingual models get them.
+  if (!englishOnly(model)) {
+    opts.task = 'transcribe';
+    if (language && language.trim()) opts.language = language.trim().toLowerCase();
+  }
   if (seconds > 28) {
     opts.chunk_length_s = 30;
     opts.stride_length_s = 5;

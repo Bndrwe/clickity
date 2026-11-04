@@ -214,7 +214,11 @@ export class MicRecorder {
 
   async stop(): Promise<Recording> {
     const starting = this.starting;
-    if (!starting) throw new Error('not recording');
+    if (!starting) {
+      // start() already failed (and released everything): report why, not "not recording"
+      if (this.startError) throw this.startError;
+      throw new Error('microphone never started — try again');
+    }
     try {
       await starting;
     } catch (e) {

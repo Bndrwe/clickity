@@ -957,7 +957,8 @@ async function processVoiceTurn(turn: Turn): Promise<void> {
     'voice',
     `ptt result: turn ${turn.id}, ${result.durationMs}ms recorded, peak ${result.peak?.toFixed(4) ?? '?'}` +
       (result.error ? `, error (${result.errorKind ?? '?'}): ${result.error}` : '') +
-      (result.text !== undefined ? `, on-device${result.sttDevice ? ` ${result.sttDevice}` : ''} ${result.sttMs ?? Date.now() - t0}ms → ${result.text.length} chars` : '') +
+      (result.sttMs !== undefined ? `, on-device${result.sttDevice ? ` ${result.sttDevice}` : ''} stt ${result.sttMs}ms → ${result.text?.length ?? 0} chars` : '') +
+      `, waited ${Date.now() - t0}ms` +
       (result.wav ? `, wav ${result.wav.byteLength} bytes` : ''),
   );
   if (result.error) throw userError(result.error);

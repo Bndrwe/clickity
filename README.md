@@ -191,6 +191,18 @@ the model can end a reply with pointing tags, such as `[POINT:x,y:label:screen1]
 - **the talk key does nothing on linux**: global key handling works best on x11. on wayland, the compositor may block global shortcuts entirely, or only deliver key presses and not releases. in that case the chord acts as a toggle, or it may not trigger at all. linux support is best-effort and targets x11.
 - **the companion can talk but cannot see the screen**: check screen recording permission on mac. on other systems, check that your model is a vision model.
 
+### talking doesn't work
+
+typing works but holding the talk key does nothing, or the companion says it didn't catch you? go through these in order. the companion's bubble usually says what went wrong, such as *microphone blocked*, *heard only silence* or *voice model failed to load*.
+
+1. **does clickity hear the keys?** open settings › keys. the status line should say *heard … ✓* when you press the talk chord. if it doesn't, the key handling is blocked. on mac, allow accessibility (and input monitoring if your chord uses fn), then restart clickity.
+2. **hold, don't tap.** in *hold* mode, keep the chord down while you speak and let go when you're done. a quick tap shows *didn't catch that — hold the keys while you talk*.
+3. **check the permissions, then restart.** on mac, microphone, screen recording and accessibility are under system settings › privacy & security. after you change any of them, quit clickity from the menu bar and open it again.
+4. **after installing a new version on mac, toggle the permissions.** the mac builds are ad-hoc signed, so macOS treats every new version as a new app. system settings can still show clickity as allowed while macOS ignores the old permission. this usually shows up as *heard only silence* or a talk key that does nothing. to fix it, open privacy & security › microphone, accessibility and screen recording, turn clickity **off and on again** in each list (or remove it with **–** and add it back), then restart clickity.
+5. **the first talk is slow.** on-device speech to text downloads its voice model (about 80 MB) once, shortly after the app starts. the bubble shows *downloading the voice model… 42%* while it does. after that it works offline. if the download fails (for example behind a firewall that blocks huggingface.co or cdn.jsdelivr.net), pick another speech-to-text option in settings › voice.
+6. **check the mic itself.** *heard only silence* means the microphone delivered no sound at all. check that the right input is selected and not muted (system settings › sound › input on mac), then see step 4.
+7. **send the log.** settings › about › **open logs** opens `clickity.log`. it records every step of a voice turn: the key press, the microphone (device, length, loudness), speech to text (which engine and how long it took), the model's reply, and any error. attach it when you report a problem. it never contains your screenshots or api keys.
+
 ## build from source
 
 you need node.js 20+ and npm.

@@ -585,11 +585,16 @@ function refreshNote(): void {
   renderBubble();
 }
 
+let lastLoggedQuarter = -1;
 function onModelStatus(st: LocalSttStatus): void {
   if (config.stt?.provider !== 'on-device' || st.model !== config.stt.model) return;
   if (st.state === 'downloading') modelNote = `downloading the voice model… ${st.progress}%`;
   else if (st.state === 'loading') modelNote = awaitingResult ? 'loading the voice model…' : '';
   else modelNote = '';
+  if (st.state === 'downloading' && Math.floor(st.progress / 25) !== lastLoggedQuarter) {
+    lastLoggedQuarter = Math.floor(st.progress / 25);
+    log('info', `downloading voice model ${st.model}: ${st.progress}%`);
+  }
   if (st.state === 'ready') log('info', `voice model ready: ${st.model} on ${st.device} in ${st.ms}ms`);
   if (st.state === 'error') log('error', `voice model failed: ${st.model}: ${st.message}`);
   refreshNote();
