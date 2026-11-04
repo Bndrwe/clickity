@@ -51,6 +51,27 @@ export interface HotkeyHeard {
   keys: KeyName[];
 }
 
+/** In-app updater state (src/main/updater.ts), broadcast to the settings and chats windows. */
+export interface UpdateState {
+  status: 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'installing' | 'error' | 'up-to-date' | 'unsupported';
+  /** running version, e.g. "1.0.41" */
+  current: string;
+  /** newest release's version (no leading v) */
+  latest?: string;
+  /** that release's notes (commit subjects), plain lines */
+  notes?: string;
+  /** 0..1 while downloading */
+  progress?: number;
+  /** short lowercase reason (error / unsupported) */
+  error?: string;
+  /** short lowercase hint about what happens next ("finish the install in the window that opened") */
+  message?: string;
+  /** set for the first launch after an update: the version we came from */
+  updatedFrom?: string;
+  /** ms epoch of the last finished check */
+  checkedAt?: number;
+}
+
 export const IPC = {
   /* main → overlay (webContents.send) */
   overlayConfig: 'overlay:config', // OverlayConfig
@@ -98,6 +119,10 @@ export const IPC = {
   openLogs: 'app:open-logs', // () => void — open clickity.log (settings › about)
   appRelaunch: 'app:relaunch', // () => void — restart (macOS applies some permissions only after a relaunch)
   inputStatus: 'input:status', // () => InputStatus — agent mode: can clickity click / type here?
+  updateGet: 'update:get', // () => UpdateState
+  updateCheck: 'update:check', // () => UpdateState — check github now
+  updateInstall: 'update:install', // () => UpdateState — download, install, restart
+  updateDismissNote: 'update:dismiss-note', // () => void — hide the "updated to …" note
 
   openChats: 'app:open-chats', // () => void — from settings (and tray / app menu in main)
   openSettings: 'app:open-settings', // () => void — from the chats window
@@ -125,7 +150,22 @@ export const IPC = {
   recordKeys: 'hotkey:record-keys', // KeyRecordEvent
   hotkeyHeard: 'hotkey:heard', // HotkeyHeard — a chord fired
   hotkeyStatusChanged: 'hotkey:status-changed', // HotkeyStatus
+
+  /* main → settings + chats windows */
+  updateChanged: 'update:changed', // UpdateState
 } as const;
+
+/** The updater calls both windows expose. */
+export interface UpdateApi {
+  getUpdate(): Promise<UpdateState>;
+  /** check github now (resolves with the state after the check) */
+  checkForUpdate(): Promise<UpdateState>;
+  /** download the update, install it and restart */
+  installUpdate(): Promise<UpdateState>;
+  /** forget the one-time "updated to …" note */
+  dismissUpdateNote(): Promise<void>;
+  onUpdate(cb: (s: UpdateState) => void): void;
+}
 
 /** Exposed as `window.overlay` by src/preload/overlay.ts */
 export interface OverlayApi {
@@ -160,7 +200,7 @@ export interface OverlayLogEntry {
 }
 
 /** Exposed as `window.clicky` by src/preload/settings.ts */
-export interface SettingsApi {
+export interface SettingsApi extends UpdateApi {
   getSettings(): Promise<Settings>;
   setSettings(patch: DeepPartial<Settings>): Promise<Settings>;
   resetSettings(): Promise<Settings>;
@@ -198,7 +238,7 @@ export interface SettingsApi {
 }
 
 /** Exposed as `window.chats` by src/preload/chats.ts */
-export interface ChatsApi {
+export interface ChatsApi extends UpdateApi {
   list(): Promise<ChatSummary[]>;
   get(id: string): Promise<Chat | null>;
   create(): Promise<Chat>;

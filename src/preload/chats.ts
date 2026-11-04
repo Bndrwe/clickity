@@ -1,9 +1,11 @@
 // Preload for the chats window: exposes `window.chats` (ChatsApi) over IPC.
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
+import { updateApi } from './update';
 import { IPC, type ChatsApi } from '../shared/ipc';
 import type { ChatEvent, ChatSummary, Settings } from '../shared/types';
 
 const api: ChatsApi = {
+  ...updateApi,
   list: () => ipcRenderer.invoke(IPC.chatsList),
   get: (id) => ipcRenderer.invoke(IPC.chatsGet, id),
   create: () => ipcRenderer.invoke(IPC.chatsNew),

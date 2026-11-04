@@ -1,9 +1,11 @@
 // Preload for the settings window: exposes `window.clicky` (SettingsApi) over IPC.
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
+import { updateApi } from './update';
 import { IPC, type HotkeyHeard, type HotkeyStatus, type KeyRecordEvent, type SettingsApi } from '../shared/ipc';
 import type { Settings } from '../shared/types';
 
 const api: SettingsApi = {
+  ...updateApi,
   getSettings: () => ipcRenderer.invoke(IPC.settingsGet),
   setSettings: (patch) => ipcRenderer.invoke(IPC.settingsSet, patch),
   resetSettings: () => ipcRenderer.invoke(IPC.settingsReset),

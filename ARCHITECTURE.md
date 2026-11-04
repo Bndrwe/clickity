@@ -113,6 +113,16 @@ export async function openLogin(kind: ProviderKind, cfg: ProviderConfig): Promis
 ### `src/main/conversation.ts`, `overlay.ts`, `index.ts`, `permissions.ts`, `tray.ts`
 Core/integration (app lifecycle, overlay windows per display, cursor polling, settings window, tray menu, IPC handlers, the turn orchestrator, system prompt).
 
+### `src/main/updater.ts`, `update-core.ts` (in-app updates)
+```ts
+export function initUpdater(): void;                 // first check ~10s after start, then every 4 h (packaged builds only)
+export function checkForUpdate(manual?: boolean): Promise<UpdateState>;
+export function installUpdate(): Promise<UpdateState>; // download → install → restart
+export function getUpdateState(): UpdateState;
+export function onUpdateState(cb: (s: UpdateState) => void): () => void; // index.ts → IPC.updateChanged to settings + chats, tray refresh
+```
+Reads `api.github.com/repos/Bndrwe/clickity/releases/latest` (`tag_name` minus the `v` is the version; `build.json` adds notes), numeric compare with `app.getVersion()`. CI (`release.yml`) versions every main build `1.0.<run number>` (`-c.extraMetadata.version`) and publishes it as release `v1.0.N`, marked latest; asset names carry no version. Assets: mac → `-mac-<arch>.zip`, unzipped with `ditto`, a detached shell script replaces the bundle after we exit (`xattr -dr com.apple.quarantine`, `open`), falling back to revealing the new app when the bundle isn't writable / translocated; windows → NSIS `.exe /S --force-run`; linux → AppImage swapped in place next to `$APPIMAGE` and relaunched after we exit, else the `.deb` opened with the system installer. Not electron-updater: Squirrel.Mac needs a Developer ID signature. A one-time "updated to vX" note (`UpdateState.updatedFrom`) reminds mac users to reset permissions (TCC grants follow the signature, which changes every build). `update-core.ts` is pure node and unit tested (`test/updater.test.ts`, incl. a local-server download + AppImage swap); `CLICKITY_UPDATE_API` overrides the api base for tests.
+
 ## Renderer
 
 - `src/renderer/overlay/` — `overlay.html`, `overlay.css`, `overlay.ts` (+ helper modules). Full-screen transparent click-through window per display. Draws the companion, reply bubble, waveform, pointing flight; records mic; plays `SpeakCommand`s.

@@ -39,6 +39,7 @@ import { applySettingsTheme, openSettingsWindow, sendToSettings } from './settin
 import { log, logPath, logStartup } from './log';
 import { installTestHook } from './test-hook';
 import { agentInputStatus } from './agent-input';
+import { checkForUpdate, dismissUpdateNote, getUpdateState, initUpdater, installUpdate, onUpdateState, stopUpdater } from './updater';
 
 const isMac = process.platform === 'darwin';
 
@@ -240,6 +241,11 @@ function registerIpc(): void {
   ipcMain.handle(IPC.chatsDeny, (_e, turnId: unknown) => answerConfirm(assertId(turnId), false));
   ipcMain.handle(IPC.inputStatus, () => agentInputStatus());
 
+  ipcMain.handle(IPC.updateGet, () => getUpdateState());
+  ipcMain.handle(IPC.updateCheck, () => checkForUpdate(true));
+  ipcMain.handle(IPC.updateInstall, () => installUpdate());
+  ipcMain.handle(IPC.updateDismissNote, () => dismissUpdateNote());
+
   ipcMain.handle(IPC.openLogs, async () => {
     log('app', 'open logs');
     const err = await shell.openPath(logPath());
@@ -257,6 +263,7 @@ async function bootstrap(): Promise<void> {
     /* stay alive */
   });
   app.on('before-quit', () => {
+    stopUpdater();
     try {
       stopHotkeys();
     } catch {
@@ -329,6 +336,19 @@ async function bootstrap(): Promise<void> {
 
   onSettingsChanged(handleSettingsChanged);
   onChatsChanged((list) => sendToChats(IPC.chatsChanged, list));
+
+  // in-app updates: broadcast to both windows, keep the tray's "update to …" item current
+  let lastTrayKey = '';
+  onUpdateState((u) => {
+    sendToSettings(IPC.updateChanged, u);
+    sendToChats(IPC.updateChanged, u);
+    const key = `${u.status}:${u.latest ?? ''}`;
+    if (key !== lastTrayKey) {
+      lastTrayKey = key;
+      refreshTray();
+    }
+  });
+  initUpdater();
 
   // Opening the app from its icon shows the settings window, like any app.
   // Started by the OS at login: stay quiet in the menu bar / tray.

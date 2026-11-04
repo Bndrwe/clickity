@@ -34,6 +34,7 @@
       <a href="#companion" data-scroll="companion">companion</a>
       <a href="#permissions" data-scroll="permissions">permissions</a>
       <a href="#about" data-scroll="about">about</a>
+      <button class="update-pill" id="update-pill" type="button" hidden><i class="update-dot" aria-hidden="true"></i><span>update</span></button>
       <button class="icon-btn" id="theme-toggle" type="button" aria-label="theme: system" title="theme"></button>
     </nav>
   </div>
@@ -51,6 +52,8 @@
     <h1 class="h2 rise" style="--d:90ms">A friend that lives by your cursor.</h1>
     <p class="muted rise" style="--d:180ms">hold <span class="tnum" id="hero-hotkey">cmd + option</span> and talk.</p>
   </section>
+
+  <div class="update-note" id="update-note" role="status" hidden></div>
 
   <section class="section reveal" id="model" aria-labelledby="model-h">
     <header class="section-head">
@@ -287,6 +290,14 @@
       <div class="row">
         <span class="row-label">version</span>
         <div class="row-value"><div><span class="tnum" id="app-version">·</span> <span class="muted" id="app-platform"></span></div></div>
+      </div>
+      <div class="row">
+        <span class="row-label">updates</span>
+        <div class="row-value">
+          <div><span id="update-status" aria-live="polite">·</span> <button class="text-btn" type="button" id="update-check"><span>check for updates</span></button></div>
+          <button class="btn primary" type="button" id="update-install" hidden><span>update</span></button>
+          <p class="hint update-notes" id="update-notes" hidden></p>
+        </div>
       </div>
       <div class="row">
         <span class="row-label">license</span>

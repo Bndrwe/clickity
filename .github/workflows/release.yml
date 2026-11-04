@@ -1,8 +1,10 @@
 # Builds the installable app on real mac, windows and linux machines and attaches
-# the installers to a GitHub Release.
-#   - push a tag like v0.1.0  → release "v0.1.0"
-#   - every push to main (code changes) or a manual run → release "latest-build"
-#     (marked latest, so /releases/latest/download/… links always get the newest app)
+# the installers to a GitHub Release. Every build is its own versioned release:
+#   - every push to main (code changes) or a manual run → version 1.0.<run number>, release "v1.0.N"
+#   - push a tag like v1.2.0 → that version, release "v1.2.0"
+# Releases are marked latest, so /releases/latest/download/<name> links (asset names carry no
+# version) always get the newest app, and the in-app updater (src/main/updater.ts) reads
+# /releases/latest → tag_name and compares it with app.getVersion().
 name: build app
 
 on:
@@ -35,6 +37,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      # the app's version (app.getVersion()); tag builds use the tag, main builds 1.0.<run number>
+      APP_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('1.0.{0}', github.run_number) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -63,7 +67,9 @@ jobs:
           chmod +x resources/mac/clickity-input
           codesign -s - -f resources/mac/clickity-input
           lipo -info resources/mac/clickity-input
-      - run: npm run ${{ matrix.script }}
+      - name: package v${{ env.APP_VERSION }}
+        shell: bash
+        run: npm run ${{ matrix.script }} -- -c.extraMetadata.version="${APP_VERSION#v}"
       - uses: actions/upload-artifact@v4
         with:
           name: clickity-${{ runner.os }}
@@ -78,30 +84,61 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
+    env:
+      APP_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('1.0.{0}', github.run_number) }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags + history for the changelog
       - uses: actions/download-artifact@v4
         with:
           path: out
           merge-multiple: true
-      - name: replace previous latest-build
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      - name: version, changelog and build.json
+        id: meta
+        shell: bash
+        run: |
+          VERSION="${APP_VERSION#v}"
+          TAG="v$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # commit subjects since the previous v* release (else just this commit)
+          PREV=$(git tag --list 'v*' --sort=-v:refname --merged HEAD | grep -vx "$TAG" | head -n1 || true)
+          if [ -n "$PREV" ]; then
+            NOTES=$(git log --no-merges -n 30 --format='- %s' "$PREV..HEAD")
+          fi
+          [ -n "${NOTES:-}" ] || NOTES="- $(git log -1 --format=%s)"
+          {
+            echo "$NOTES"
+            echo
+            echo "<!-- install -->"
+            cat <<'BODY'
+          download the installer for your computer:
+          - **mac (apple silicon, m1–m4):** `Clickity-mac-arm64.dmg`
+          - **mac (intel):** `Clickity-mac-x64.dmg`
+          - **windows:** `Clickity-win-x64.exe`
+          - **linux:** `Clickity-linux-x86_64.AppImage` or `Clickity-linux-amd64.deb`
+
+          already have clickity? it updates itself: look for the small "update" button in the corner.
+
+          mac: the app isn't notarized by apple, so macos blocks the first launch. click "done", then system settings › privacy & security › scroll down › "open anyway". or run once in terminal: `xattr -dr com.apple.quarantine /Applications/Clickity.app`
+          windows: smartscreen may warn — click "more info" › "run anyway".
+          BODY
+          } > release-notes.md
+          jq -n --arg version "$VERSION" --arg commit "$GITHUB_SHA" --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg notes "$NOTES" \
+            '{version: $version, commit: $commit, date: $date, notes: $notes}' > out/build.json
+          cat out/build.json
+      # one-time cleanup: main used to overwrite a single "latest-build" release
+      - name: remove the old latest-build release
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release delete latest-build --cleanup-tag --yes --repo "$GITHUB_REPOSITORY" || true
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'latest-build' }}
-          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'latest build' }}
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: Clickity ${{ steps.meta.outputs.tag }}
           prerelease: false
           make_latest: true
           target_commitish: ${{ github.sha }}
           files: out/*
-          body: |
-            download the installer for your computer:
-            - **mac (apple silicon, m1–m4):** `…-mac-arm64.dmg`
-            - **mac (intel):** `…-mac-x64.dmg`
-            - **windows:** `…-win-x64.exe`
-            - **linux:** `…-linux-x86_64.AppImage` or `.deb`
-
-            mac: the app isn't notarized by apple, so macos blocks the first launch. click "done", then system settings › privacy & security › scroll down › "open anyway". or run once in terminal: `xattr -dr com.apple.quarantine /Applications/Clickity.app`
-            windows: smartscreen may warn — click "more info" › "run anyway".
+          body_path: release-notes.md

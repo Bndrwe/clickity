@@ -294,3 +294,39 @@ dialog#onboard .ob-actions { margin-top: 32px; }
 .agent-hint { margin-top: 8px; max-width: 44ch; }
 .agent-status { padding-top: 6px; font-size: 14px; }
 .agent-status[hidden], #agent-steps-row[hidden] { display: none; }
+
+/* in-app update: a quiet pill in the top bar, only while an update exists */
+.update-pill {
+  display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 12px 0 10px; border-radius: 999px;
+  background: var(--bg-sunken); color: var(--ink); font-size: 13px; text-transform: lowercase; white-space: nowrap; flex: none;
+  box-shadow: 0 0 0 1px var(--line); font-variant-numeric: tabular-nums;
+  transition: background-color .3s var(--ease), transform .3s var(--ease);
+  animation: pill-in .6s var(--ease) both;
+}
+.update-pill:hover { background: color-mix(in srgb, var(--bg-sunken) 70%, var(--faint)); }
+.update-pill:active { transform: scale(.97); }
+.update-pill[disabled] { cursor: default; color: var(--ink-muted); }
+.update-pill[disabled]:hover { background: var(--bg-sunken); }
+.update-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink); flex: none; animation: dot-breathe 2.4s var(--ease-soft) infinite; }
+.update-pill.busy .update-dot { animation: none; opacity: .35; }
+.update-pill.err .update-dot { background: var(--danger); animation: none; }
+@keyframes pill-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+@keyframes dot-breathe { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+.update-pill .pill-v { white-space: pre; }
+.topbar-inner:has(.update-pill:not([hidden])) { max-width: 900px; }
+@media (max-width: 940px) { .update-pill .pill-v { display: none; } }
+@media (max-width: 820px) {
+  .topbar-inner:has(.update-pill:not([hidden])) .nav { gap: 10px; }
+  .topbar-inner:has(.update-pill:not([hidden])) .nav a { font-size: 14px; }
+}
+.update-notes { white-space: pre-line; max-width: 44ch; }
+#update-status.err { color: var(--danger); }
+.update-note {
+  display: flex; flex-wrap: wrap; align-items: baseline; justify-content: center; gap: 4px 14px; text-align: center;
+  margin: -28px auto 8px; padding: 12px 16px; max-width: 560px; border-radius: 14px; background: var(--bg-sunken);
+  color: var(--ink-2); font-size: 14px;
+}
+.update-note b { color: var(--ink); font-weight: 600; }
+@media (prefers-reduced-motion: reduce) {
+  .update-pill, .update-dot { animation: none !important; }
+}

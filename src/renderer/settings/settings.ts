@@ -15,7 +15,7 @@ import {
   type Theme,
   type TtsProvider,
 } from '../../shared/types';
-import type { HotkeyStatus, KeyRecordEvent } from '../../shared/ipc';
+import type { HotkeyStatus, KeyRecordEvent, UpdateState } from '../../shared/ipc';
 import { canonicalCode, chordLabel, orderChord, validateChord } from './keys';
 
 const api = window.clicky;
@@ -1179,6 +1179,145 @@ async function initAbout(): Promise<void> {
   } catch {}
 }
 
+/* ───────────── updates ───────────── */
+
+let update: UpdateState | null = null;
+
+/** the pill's text for a state, or null when it shouldn't show */
+function pillText(u: UpdateState): string | null {
+  const v = u.latest ? `v${u.latest}` : '';
+  switch (u.status) {
+    case 'available':
+      return `update to ${v}`;
+    case 'downloading':
+      return `downloading ${Math.round((u.progress ?? 0) * 100)}%`;
+    case 'installing':
+      return 'restarting…';
+    case 'ready':
+      return u.message ? 'finish update' : 'restarting…';
+    case 'error':
+      return u.latest && u.latest !== u.current ? 'retry update' : null;
+    default:
+      return null;
+  }
+}
+
+function statusText(u: UpdateState): string {
+  const v = u.latest ? `v${u.latest}` : '';
+  switch (u.status) {
+    case 'checking':
+      return 'checking…';
+    case 'available':
+      return `${v} is available`;
+    case 'downloading':
+      return `downloading ${v} · ${Math.round((u.progress ?? 0) * 100)}%`;
+    case 'ready':
+      return u.message ?? `installing ${v}…`;
+    case 'installing':
+      return 'restarting…';
+    case 'up-to-date':
+      return `v${u.current} is the newest version`;
+    case 'error':
+    case 'unsupported':
+      return u.error ?? 'updates are unavailable';
+    default:
+      return `checks for updates on its own`;
+  }
+}
+
+function renderUpdate(u: UpdateState): void {
+  update = u;
+  const pill = $<HTMLButtonElement>('update-pill');
+  const text = pillText(u);
+  pill.hidden = !text;
+  if (text) {
+    // "update to v1.0.42"; the " to v…" part folds away when the top bar is tight
+    const [head, tail] = u.status === 'available' ? ['update', ` to v${u.latest}`] : [text, ''];
+    pill.replaceChildren(h('i', { class: 'update-dot', 'aria-hidden': 'true' }), h('span', {}, head, tail ? h('span', { class: 'pill-v', text: tail }) : null));
+    const busy = u.status === 'downloading' || u.status === 'installing' || (u.status === 'ready' && !u.message);
+    pill.disabled = busy;
+    pill.classList.toggle('busy', busy);
+    pill.classList.toggle('err', u.status === 'error');
+    pill.title = u.status === 'error' ? (u.error ?? '') : u.message ?? (u.notes ? u.notes : `a new version of clickity is ready`);
+    pill.setAttribute('aria-label', u.status === 'available' ? `update clickity to v${u.latest}` : text);
+  }
+
+  const status = $('update-status');
+  status.textContent = statusText(u);
+  status.classList.toggle('err', u.status === 'error');
+  const install = $<HTMLButtonElement>('update-install');
+  const canInstall = u.status === 'available' || (u.status === 'error' && !!u.latest && u.latest !== u.current);
+  install.hidden = !canInstall;
+  install.querySelector('span')!.textContent = `update to v${u.latest ?? ''}`;
+  const notes = $('update-notes');
+  const showNotes = !!u.notes && (u.status === 'available' || u.status === 'downloading' || u.status === 'up-to-date');
+  notes.hidden = !showNotes;
+  notes.textContent = showNotes ? (u.status === 'up-to-date' ? `in this version:\n${u.notes}` : u.notes!) : '';
+
+  const note = $('update-note');
+  note.hidden = !u.updatedFrom;
+  if (u.updatedFrom && !note.dataset.for) {
+    note.dataset.for = u.current;
+    const reset = h('button', { class: 'text-btn', type: 'button' }, h('span', { text: 'reset permissions' }));
+    reset.addEventListener('click', () => {
+      (reset.firstElementChild as HTMLElement).textContent = 'resetting…';
+      void api.dismissUpdateNote();
+      void api.resetPermissions();
+    });
+    const ok = h('button', { class: 'text-btn', type: 'button' }, h('span', { text: 'got it' }));
+    ok.addEventListener('click', () => void api.dismissUpdateNote());
+    const mac = platform === 'darwin';
+    note.replaceChildren(
+      h('span', {}, 'updated to ', h('b', { class: 'tnum', text: `v${u.current}` }), mac ? ' — if keys or the mic stop working, reset permissions.' : '.'),
+      ...(mac ? [reset, ok] : [ok]),
+    );
+  }
+  if (!u.updatedFrom) delete note.dataset.for;
+}
+
+function startInstall(): void {
+  if (!update) return;
+  // instant feedback; main's broadcasts take over from here
+  renderUpdate({ ...update, status: 'downloading', progress: update.progress ?? 0, error: undefined });
+  void api.installUpdate().then(renderUpdate).catch(() => undefined);
+}
+
+async function initUpdates(): Promise<void> {
+  $('update-pill').addEventListener('click', () => {
+    if (update?.status === 'ready') return scrollToId('about');
+    startInstall();
+  });
+  $('update-install').addEventListener('click', startInstall);
+  const check = $<HTMLButtonElement>('update-check');
+  check.addEventListener('click', async () => {
+    const span = check.querySelector('span')!;
+    span.textContent = 'checking…';
+    check.disabled = true;
+    let u: UpdateState | null = null;
+    try {
+      u = await api.checkForUpdate();
+    } catch {}
+    check.disabled = false;
+    span.textContent = 'check for updates';
+    if (!u) return flash(check, "couldn't check");
+    renderUpdate(u);
+    flash(
+      check,
+      u.status === 'available'
+        ? `v${u.latest} available`
+        : u.status === 'up-to-date'
+          ? "you're up to date"
+          : u.status === 'error' || u.status === 'unsupported'
+            ? (u.error ?? "couldn't check")
+            : 'check for updates',
+    );
+  });
+  api.onUpdate(renderUpdate);
+  try {
+    renderUpdate(await api.getUpdate());
+  } catch {}
+}
+
 /* ───────────── onboarding ───────────── */
 
 function initOnboarding(): void {
@@ -1282,6 +1421,7 @@ async function boot(): Promise<void> {
     settings = (await api.getSettings()) as Settings;
   } catch {}
   await initAbout();
+  void initUpdates();
   syncers.push(() => {
     $('hero-hotkey').textContent = chordLabel(settings.hotkeys.talk, platform);
   });

@@ -6,6 +6,8 @@ import { Menu, Tray, nativeImage, nativeTheme, type NativeImage } from 'electron
 import { PROVIDER_META } from '../shared/types';
 import { getSettings, updateSettings } from './settings-store';
 import { hotkeyLabel } from './hotkey';
+import { getUpdateState, installUpdate } from './updater';
+import { isNewer } from './update-core';
 
 export interface TrayActions {
   openSettings(): void;
@@ -87,7 +89,20 @@ function buildMenu(a: TrayActions): Menu {
   const meta = PROVIDER_META[s.provider];
   const model = s.models[s.provider] || meta.defaultModel;
   const paused = a.isPaused();
+  const u = getUpdateState();
+  const update: Electron.MenuItemConstructorOptions[] =
+    u.latest && (u.status === 'available' || u.status === 'downloading' || u.status === 'installing' || (u.status === 'error' && isNewer(u.latest, u.current)))
+      ? [
+          {
+            label: u.status === 'downloading' ? `downloading v${u.latest}…` : u.status === 'installing' ? 'restarting…' : `update to v${u.latest}…`,
+            enabled: u.status === 'available' || u.status === 'error',
+            click: () => void installUpdate(),
+          },
+          { type: 'separator' },
+        ]
+      : [];
   return Menu.buildFromTemplate([
+    ...update,
     { label: `hold ${hotkeyLabel(s.hotkeys.talk, process.platform)} to talk`, enabled: false },
     { label: `${meta.label} · ${model}`, enabled: false },
     { type: 'separator' },

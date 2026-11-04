@@ -12,6 +12,7 @@ import {
   type ProviderKind,
   type Settings,
 } from '../../shared/types';
+import type { UpdateState } from '../../shared/ipc';
 import { $, h, icon, logo, markSvg, type IconName } from './dom';
 import { renderMarkdown } from './markdown';
 import { GROUPS, clock, groupOf, relTime } from './time';
@@ -617,6 +618,47 @@ $('open-settings').addEventListener('click', () => void api.openSettings());
 // always-visible way back to settings, even with the sidebar hidden
 $('top-settings').append(icon('settings', 'ic sm'), h('span', { text: 'settings' }));
 $('top-settings').addEventListener('click', () => void api.openSettings());
+
+/* ───────────── update pill ───────────── */
+
+let update: UpdateState | null = null;
+const updatePill = $<HTMLButtonElement>('update-pill');
+
+function renderUpdate(u: UpdateState): void {
+  update = u;
+  const v = u.latest ? `v${u.latest}` : '';
+  const text =
+    u.status === 'available'
+      ? `update to ${v}`
+      : u.status === 'downloading'
+        ? `downloading ${Math.round((u.progress ?? 0) * 100)}%`
+        : u.status === 'installing' || (u.status === 'ready' && !u.message)
+          ? 'restarting…'
+          : u.status === 'ready'
+            ? 'finish update'
+            : u.status === 'error' && u.latest && u.latest !== u.current
+              ? 'retry update'
+              : null;
+  updatePill.hidden = !text;
+  if (!text) return;
+  const busy = u.status === 'downloading' || u.status === 'installing' || (u.status === 'ready' && !u.message);
+  updatePill.disabled = busy;
+  updatePill.classList.toggle('busy', busy);
+  updatePill.classList.toggle('err', u.status === 'error');
+  updatePill.title = u.status === 'error' ? (u.error ?? '') : u.message ?? (u.notes || 'a new version of clickity is ready');
+  updatePill.setAttribute('aria-label', u.status === 'available' ? `update clickity to ${v}` : text);
+  updatePill.replaceChildren(h('i', { class: 'update-dot', 'aria-hidden': 'true' }), h('span', { text }));
+}
+
+updatePill.addEventListener('click', () => {
+  if (!update) return;
+  // "finish update" (mac couldn't swap in place / .deb): the details live in settings › about
+  if (update.status === 'ready') return void api.openSettings('about');
+  renderUpdate({ ...update, status: 'downloading', progress: update.progress ?? 0, error: undefined });
+  void api.installUpdate().then(renderUpdate).catch(() => undefined);
+});
+api.onUpdate(renderUpdate);
+void api.getUpdate().then(renderUpdate).catch(() => undefined);
 
 /* ───────────── chats ───────────── */
 

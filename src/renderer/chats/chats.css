@@ -480,11 +480,33 @@ button, input, textarea, a, .composer, .popover, .row { -webkit-app-region: no-d
 .mark line, .mark polygon { transform-box: fill-box; transform-origin: center; }
 
 /* top-right: back to the main (settings) window */
+.top-right { position: absolute; right: 12px; top: 6px; display: flex; align-items: center; gap: 6px; -webkit-app-region: no-drag; }
 .top-btn {
-  position: absolute; right: 12px; top: 6px; height: 28px; padding: 0 10px 0 8px; border-radius: 8px;
+  height: 28px; padding: 0 10px 0 8px; border-radius: 8px;
   display: inline-flex; align-items: center; gap: 6px; font-size: 13px;
   color: rgba(255, 255, 255, 0.6); -webkit-app-region: no-drag;
   transition: color 0.2s, background 0.2s;
 }
 .top-btn:hover { color: #fff; background: var(--surface-2); }
 
+
+/* in-app update: small pill left of "settings", only while an update exists */
+.update-pill {
+  color: var(--text); background: var(--glass); box-shadow: inset 0 0 0 1px var(--line-2);
+  padding: 0 11px 0 10px; border-radius: 999px; font-variant-numeric: tabular-nums; white-space: nowrap;
+  animation: pill-in 0.5s var(--ease) both;
+}
+.update-pill:hover { background: var(--glass-hi); color: #fff; }
+.update-pill[disabled] { cursor: default; color: var(--muted); }
+.update-pill[disabled]:hover { background: var(--glass); color: var(--muted); }
+.update-dot { width: 6px; height: 6px; border-radius: 50%; background: #fff; flex: none; animation: dot-breathe 2.4s ease-in-out infinite; }
+.update-pill.busy .update-dot { animation: none; opacity: 0.35; }
+.update-pill.err .update-dot { background: var(--danger); animation: none; }
+@keyframes pill-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+@keyframes dot-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) {
+  .update-pill, .update-dot { animation: none !important; }
+}
+/* keep the centered chat title clear of the wider top-right group */
+.topbar:has(.update-pill:not([hidden])) { padding-right: 260px; padding-left: 260px; }
+@media (max-width: 640px) { .topbar:has(.update-pill:not([hidden])) .topbar-title { display: none; } }

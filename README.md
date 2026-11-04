@@ -29,6 +29,10 @@ it's [clicky](https://heyclicky.com), but free and open source — no subscripti
 
 ## download
 
+[![latest release](https://img.shields.io/github/v/release/Bndrwe/clickity?label=latest%20release&color=111)](https://github.com/Bndrwe/clickity/releases/latest)
+
+these links always download the latest release. every change to clickity ships as a new version (v1.0.N), and the app [updates itself](#updates).
+
 | your computer | installer |
 |---|---|
 | mac with apple silicon (m1, m2, m3, m4) | [Clickity-mac-arm64.dmg](https://github.com/Bndrwe/clickity/releases/latest/download/Clickity-mac-arm64.dmg) |
@@ -39,7 +43,7 @@ it's [clicky](https://heyclicky.com), but free and open source — no subscripti
 
 not sure which mac you have? apple menu › **about this mac** › if "chip" says *apple m…*, get the apple silicon one; if it says *intel*, get intel.
 
-all builds: [releases page](https://github.com/Bndrwe/clickity/releases).
+every version: [releases page](https://github.com/Bndrwe/clickity/releases).
 
 ### installing
 
@@ -89,6 +93,14 @@ after it opens, grant **microphone**, **screen recording** and **accessibility**
 3. hold **control + fn** (mac; fn is the globe key on newer keyboards) or **ctrl + alt** (windows / linux), say hi, and let go.
 
 clickity behaves like any app: clicking its icon opens settings, the companion keeps running while the window is closed, and you quit with cmd + q, the dock menu, or the menu-bar / tray icon. turn on *launch at login* to have it start quietly.
+
+### updates
+
+no need to come back here for new versions. clickity checks github for the latest release a few seconds after it starts and every 4 hours after that. when there's a newer one, a small **update to v1.0.N** button appears in the top-right corner of the settings and chats windows (and in the tray menu). click it: clickity downloads the new version, swaps it in and restarts — that's it. settings › about shows your version, a **check for updates** button and what changed.
+
+- **mac** — the new app replaces the old one where it lives (usually applications). macos ties privacy permissions to the app's signature, and every clickity build has a new one, so after an update the talk key or the mic may stop working even though the switches look on. settings › permissions › **reset permissions** fixes it (clickity reminds you once after each update). if clickity runs straight from the dmg or downloads, move it to applications first.
+- **windows** — the installer runs silently and reopens clickity.
+- **linux** — the AppImage is replaced in place and reopened. with the .deb, the new package opens in your software installer; finish it there.
 
 ## how it works
 
@@ -253,7 +265,7 @@ npm install
 npm run dev
 ```
 
-`npm run dev` builds the app and starts it in electron. to package an installer for your own system, run `npm run dist` — the builds land in `release/`. installers for every platform are built by github actions (`.github/workflows/release.yml`) on each `v*` tag, or on demand from the actions tab.
+`npm run dev` builds the app and starts it in electron. to package an installer for your own system, run `npm run dist` — the builds land in `release/`. installers for every platform are built by github actions (`.github/workflows/release.yml`) on every push to main (released as v1.0.&lt;run number&gt;), on each `v*` tag (that version), or on demand from the actions tab. each one becomes the latest release, which the in-app updater picks up.
 
 the icons are generated: run `node scripts/make-icons.mjs` after changing the shape.
 
