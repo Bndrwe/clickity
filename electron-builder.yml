@@ -1,0 +1,34 @@
+appId: com.clickyclone.app
+productName: Clicky Clone
+directories:
+  output: release
+files:
+  - dist/**
+  - package.json
+  - node_modules/**
+  - "!**/{test,tests,__tests__,docs,doc,*.md,*.map,*.ts}"
+  - "!**/node_modules/*/{README.md,readme.md,CHANGELOG.md,LICENSE.txt,.github,example,examples}"
+asarUnpack:
+  - node_modules/uiohook-napi/**
+mac:
+  category: public.app-category.productivity
+  target:
+    - dmg
+    - zip
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  icon: assets/icon.png
+  extendInfo:
+    NSMicrophoneUsageDescription: clicky listens while you hold the talk key.
+    NSAppleEventsUsageDescription: clicky uses apple events for system integration.
+    LSUIElement: true
+win:
+  target:
+    - nsis
+  icon: assets/icon.png
+linux:
+  target:
+    - AppImage
+  category: Utility
+  icon: assets/icon.png
