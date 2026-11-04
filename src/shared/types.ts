@@ -67,7 +67,7 @@ export const PROVIDER_META: Record<ProviderKind, ProviderMeta> = {
     group: 'subscription',
     description: 'uses your chatgpt plus / pro plan through codex cli',
     fields: ['cliPath'],
-    defaultModel: 'gpt-5',
+    defaultModel: 'gpt-6.1-sol',
     setupCommand: 'npm i -g @openai/codex && codex login',
     docsUrl: 'https://github.com/openai/codex',
   },
@@ -77,7 +77,7 @@ export const PROVIDER_META: Record<ProviderKind, ProviderMeta> = {
     group: 'subscription',
     description: 'uses your google account / ai pro plan through gemini cli',
     fields: ['cliPath'],
-    defaultModel: 'gemini-2.5-flash',
+    defaultModel: 'gemini-3.8-flash',
     setupCommand: 'npm i -g @google/gemini-cli && gemini',
     docsUrl: 'https://github.com/google-gemini/gemini-cli',
   },
@@ -87,7 +87,7 @@ export const PROVIDER_META: Record<ProviderKind, ProviderMeta> = {
     group: 'api',
     description: 'claude models with an anthropic api key',
     fields: ['apiKey'],
-    defaultModel: 'claude-sonnet-4-5',
+    defaultModel: 'claude-sonnet-5-5',
     docsUrl: 'https://console.anthropic.com/settings/keys',
   },
   'openai-api': {
@@ -96,7 +96,7 @@ export const PROVIDER_META: Record<ProviderKind, ProviderMeta> = {
     group: 'api',
     description: 'gpt models with an openai api key',
     fields: ['apiKey'],
-    defaultModel: 'gpt-4.1',
+    defaultModel: 'gpt-6.1-sol',
     docsUrl: 'https://platform.openai.com/api-keys',
   },
   'gemini-api': {
@@ -105,7 +105,7 @@ export const PROVIDER_META: Record<ProviderKind, ProviderMeta> = {
     group: 'api',
     description: 'gemini models with a google ai studio key',
     fields: ['apiKey'],
-    defaultModel: 'gemini-2.5-flash',
+    defaultModel: 'gemini-3.8-flash',
     docsUrl: 'https://aistudio.google.com/apikey',
   },
   openrouter: {
@@ -114,7 +114,7 @@ export const PROVIDER_META: Record<ProviderKind, ProviderMeta> = {
     group: 'api',
     description: 'hundreds of models behind one key',
     fields: ['apiKey'],
-    defaultModel: 'anthropic/claude-sonnet-4.5',
+    defaultModel: 'anthropic/claude-sonnet-5.5',
     docsUrl: 'https://openrouter.ai/keys',
   },
   local: {
@@ -123,7 +123,7 @@ export const PROVIDER_META: Record<ProviderKind, ProviderMeta> = {
     group: 'local',
     description: 'ollama, lm studio or any openai-compatible server',
     fields: ['baseUrl', 'apiKey'],
-    defaultModel: 'qwen2.5vl:7b',
+    defaultModel: 'gemma4:12b',
   },
 };
 
@@ -193,7 +193,7 @@ export type TtsProvider = 'system' | 'openai' | 'elevenlabs' | 'off';
 export interface SpeechSettings {
   stt: {
     provider: SttProvider;
-    /** on-device: Xenova/whisper-base.en etc; openai: gpt-4o-mini-transcribe; groq: whisper-large-v3-turbo */
+    /** on-device: Xenova/whisper-base.en etc; openai: gpt-transcribe; groq: whisper-large-v3-turbo */
     model: string;
     apiKey?: string; // optional override (else reuse matching provider key)
     baseUrl?: string; // for 'local'

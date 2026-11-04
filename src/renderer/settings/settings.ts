@@ -526,9 +526,9 @@ function initModel(): void {
 
 const STT_DEFAULT_MODEL: Record<SttProvider, string> = {
   'on-device': 'Xenova/whisper-base.en',
-  openai: 'gpt-4o-mini-transcribe',
+  openai: 'gpt-transcribe',
   groq: 'whisper-large-v3-turbo',
-  gemini: 'gemini-2.5-flash',
+  gemini: 'gemini-3.8-flash',
   local: 'whisper-1',
 };
 const OPENAI_VOICES = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer', 'verse'];

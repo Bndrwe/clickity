@@ -11,13 +11,10 @@ const LABEL = 'codex';
 const LOGIN_HINT = 'click sign in, or run `codex login` in a terminal';
 
 const MODELS: ModelInfo[] = [
-  { id: 'gpt-5', label: 'gpt-5', vision: true },
-  { id: 'gpt-5.1', label: 'gpt-5.1', vision: true },
-  { id: 'gpt-5-codex', label: 'gpt-5-codex', vision: true },
-  { id: 'gpt-5.1-codex', label: 'gpt-5.1-codex', vision: true },
-  { id: 'gpt-5.1-codex-mini', label: 'gpt-5.1-codex mini', vision: true },
-  { id: 'gpt-5-mini', label: 'gpt-5 mini', vision: true },
-  { id: 'o3', label: 'o3', vision: true },
+  { id: 'gpt-6.1-sol', label: 'gpt-6.1 sol (balanced)', vision: true },
+  { id: 'gpt-6-astra', label: 'gpt-6 astra (most capable)', vision: true },
+  { id: 'gpt-6.1-terra', label: 'gpt-6.1 terra (fast)', vision: true },
+  { id: 'gpt-6-luna', label: 'gpt-6 luna (lightest)', vision: true },
 ];
 
 async function binary(cfg: ProviderConfig): Promise<string> {

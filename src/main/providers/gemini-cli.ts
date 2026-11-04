@@ -13,11 +13,10 @@ const LABEL = 'gemini cli';
 const LOGIN_HINT = 'click sign in, or run `gemini` in a terminal and choose "login with google"';
 
 const MODELS: ModelInfo[] = [
-  { id: 'gemini-2.5-flash', label: 'gemini 2.5 flash', vision: true },
-  { id: 'gemini-2.5-pro', label: 'gemini 2.5 pro', vision: true },
-  { id: 'gemini-2.5-flash-lite', label: 'gemini 2.5 flash-lite', vision: true },
-  { id: 'gemini-3-pro-preview', label: 'gemini 3 pro (preview)', vision: true },
-  { id: 'gemini-3-flash-preview', label: 'gemini 3 flash (preview)', vision: true },
+  { id: 'gemini-3.8-flash', label: 'gemini 3.8 flash', vision: true },
+  { id: 'gemini-4-argon', label: 'gemini 4 argon (most capable)', vision: true },
+  { id: 'gemini-3.5-flash-lite', label: 'gemini 3.5 flash-lite (fastest)', vision: true },
+  { id: 'gemini-3.1-pro-preview', label: 'gemini 3.1 pro (preview)', vision: true },
 ];
 
 type OutputMode = 'stream-json' | 'json' | 'text';

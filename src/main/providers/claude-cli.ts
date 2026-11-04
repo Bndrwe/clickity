@@ -16,9 +16,10 @@ const MODELS: ModelInfo[] = [
   { id: 'sonnet', label: 'sonnet (latest)', vision: true },
   { id: 'opus', label: 'opus (latest)', vision: true },
   { id: 'haiku', label: 'haiku (latest)', vision: true },
-  { id: 'claude-sonnet-4-5', label: 'claude sonnet 4.5', vision: true },
-  { id: 'claude-opus-4-1', label: 'claude opus 4.1', vision: true },
-  { id: 'claude-haiku-4-5', label: 'claude haiku 4.5', vision: true },
+  { id: 'claude-fable-5-1', label: 'claude fable 5.1 (most capable)', vision: true },
+  { id: 'claude-opus-5-5', label: 'claude opus 5.5', vision: true },
+  { id: 'claude-sonnet-5-5', label: 'claude sonnet 5.5', vision: true },
+  { id: 'claude-haiku-5-5', label: 'claude haiku 5.5 (fastest)', vision: true },
 ];
 
 // built-in tools to deny on older versions that lack `--tools ""`

@@ -79,7 +79,7 @@ const OPENAI: CompatOptions = {
   baseUrl: () => 'https://api.openai.com/v1',
   keyRequired: true,
   shapeBody(body, model) {
-    const reasoning = /^(o\d|gpt-5)/.test(model) && !/chat/.test(model);
+    const reasoning = /^(o\d|gpt-[5-9])/.test(model) && !/chat/.test(model);
     if (reasoning) {
       // reasoning tokens count against max_completion_tokens; keep effort low for snappy replies
       body.reasoning_effort = 'low';
@@ -90,14 +90,10 @@ const OPENAI: CompatOptions = {
 };
 
 const OPENAI_FALLBACK: ModelInfo[] = [
-  { id: 'gpt-4.1', label: 'gpt-4.1' },
-  { id: 'gpt-4.1-mini', label: 'gpt-4.1 mini' },
-  { id: 'gpt-4o', label: 'gpt-4o' },
-  { id: 'gpt-4o-mini', label: 'gpt-4o mini' },
-  { id: 'gpt-5', label: 'gpt-5' },
-  { id: 'gpt-5-mini', label: 'gpt-5 mini' },
-  { id: 'o4-mini', label: 'o4-mini' },
-  { id: 'o3', label: 'o3' },
+  { id: 'gpt-6.1-sol', label: 'gpt-6.1 sol' },
+  { id: 'gpt-6-astra', label: 'gpt-6 astra' },
+  { id: 'gpt-6.1-terra', label: 'gpt-6.1 terra' },
+  { id: 'gpt-6-luna', label: 'gpt-6 luna' },
 ];
 
 function isOpenAIChatModel(id: string): boolean {
@@ -140,13 +136,15 @@ const OPENROUTER: CompatOptions = {
 };
 
 const OPENROUTER_FALLBACK: ModelInfo[] = [
-  { id: 'anthropic/claude-sonnet-4.5', label: 'claude sonnet 4.5', vision: true },
-  { id: 'anthropic/claude-haiku-4.5', label: 'claude haiku 4.5', vision: true },
-  { id: 'openai/gpt-4.1', label: 'gpt-4.1', vision: true },
-  { id: 'openai/gpt-5', label: 'gpt-5', vision: true },
-  { id: 'google/gemini-2.5-flash', label: 'gemini 2.5 flash', vision: true },
-  { id: 'google/gemini-2.5-pro', label: 'gemini 2.5 pro', vision: true },
-  { id: 'qwen/qwen2.5-vl-72b-instruct', label: 'qwen2.5 vl 72b', vision: true },
+  { id: 'anthropic/claude-sonnet-5.5', label: 'claude sonnet 5.5', vision: true },
+  { id: 'anthropic/claude-opus-5.5', label: 'claude opus 5.5', vision: true },
+  { id: 'anthropic/claude-haiku-5.5', label: 'claude haiku 5.5', vision: true },
+  { id: 'openai/gpt-6.1-sol', label: 'gpt-6.1 sol', vision: true },
+  { id: 'openai/gpt-6-astra', label: 'gpt-6 astra', vision: true },
+  { id: 'google/gemini-4-argon', label: 'gemini 4 argon', vision: true },
+  { id: 'google/gemini-3.8-flash', label: 'gemini 3.8 flash', vision: true },
+  { id: 'qwen/qwen3.8-flash', label: 'qwen3.8 flash', vision: true },
+  { id: 'x-ai/grok-4.7', label: 'grok 4.7', vision: true },
 ];
 
 export const openrouter: Provider = {
@@ -212,13 +210,13 @@ const LOCAL: CompatOptions = {
 };
 
 const LOCAL_FALLBACK: ModelInfo[] = [
-  { id: 'qwen2.5vl:7b', label: 'qwen2.5-vl 7b (ollama)', vision: true },
-  { id: 'gemma3:12b', label: 'gemma 3 12b (ollama)', vision: true },
-  { id: 'llama3.2-vision:11b', label: 'llama 3.2 vision 11b (ollama)', vision: true },
-  { id: 'llava:13b', label: 'llava 13b (ollama)', vision: true },
+  { id: 'gemma4:12b', label: 'gemma 4 12b (ollama)', vision: true },
+  { id: 'gemma4:26b', label: 'gemma 4 26b (ollama)', vision: true },
+  { id: 'qwen3-vl:8b', label: 'qwen3-vl 8b (ollama)', vision: true },
+  { id: 'qwen3.6:27b', label: 'qwen3.6 27b (ollama)', vision: true },
 ];
 
-const VISION_HINT = /(vl|vision|llava|gemma3|gemma-3|pixtral|minicpm-v|moondream|bakllava|mllama|qwen2\.5-?omni|llama4|mistral-small3\.[12])/i;
+const VISION_HINT = /(vl|vision|llava|gemma[34]|gemma-[34]|qwen3\.[5-9]|pixtral|minicpm-v|moondream|bakllava|mllama|qwen2\.5-?omni|llama4|mistral-small3\.[12])/i;
 
 async function localModelIds(cfg: ProviderConfig, signal?: AbortSignal): Promise<string[]> {
   const base = localBase(cfg);
