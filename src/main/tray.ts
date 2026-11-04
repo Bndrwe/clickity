@@ -1,4 +1,5 @@
 // Menu-bar / system-tray icon and its lowercase menu.
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Menu, Tray, nativeImage, nativeTheme, type NativeImage } from 'electron';
@@ -24,6 +25,44 @@ const FALLBACK_WHITE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCA
 let tray: Tray | null = null;
 let actions: TrayActions | null = null;
 
+/**
+ * Does the tray sit on a dark background? (→ use a white glyph.)
+ * Windows: the taskbar follows the *system* theme (SystemUsesLightTheme), which can differ from the
+ * apps theme, and nativeTheme.shouldUseDarkColors is overridden by our own appearance setting
+ * (themeSource) anyway, so read the registry. Missing value (win 10 before 1903, always dark) → dark.
+ * Linux: GNOME/Ubuntu top bars are dark in light mode too.
+ */
+function darkTray(): boolean {
+  if (process.platform === 'win32') {
+    try {
+      const out = execFileSync(
+        'reg',
+        ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize', '/v', 'SystemUsesLightTheme'],
+        { windowsHide: true, timeout: 2000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+      );
+      const m = /SystemUsesLightTheme\s+REG_DWORD\s+0x([0-9a-f]+)/i.exec(out);
+      return m ? parseInt(m[1]!, 16) === 0 : true;
+    } catch {
+      return true;
+    }
+  }
+  if (/gnome|unity|ubuntu|pantheon/i.test(process.env.XDG_CURRENT_DESKTOP ?? '')) return true;
+  return nativeTheme.shouldUseDarkColors;
+}
+
+/** Same glyph, every opaque pixel painted white (assets/tray.png is near-black). */
+function whiten(img: NativeImage): NativeImage {
+  const out = nativeImage.createEmpty();
+  for (const scaleFactor of img.getScaleFactors()) {
+    const size = img.getSize(scaleFactor);
+    const bmp = img.toBitmap({ scaleFactor }); // BGRA / RGBA: either way alpha is byte 3
+    for (let i = 0; i < bmp.length; i += 4) bmp[i] = bmp[i + 1] = bmp[i + 2] = 255;
+    const rep = nativeImage.createFromBitmap(bmp, { width: size.width * scaleFactor, height: size.height * scaleFactor, scaleFactor });
+    out.addRepresentation({ scaleFactor, width: size.width, height: size.height, buffer: rep.toPNG() });
+  }
+  return out.isEmpty() ? img : out;
+}
+
 function loadIcon(): NativeImage {
   const assets = path.join(__dirname, '../assets');
   const candidates = isMac ? ['tray-template.png', 'tray.png'] : ['tray.png', 'tray-template.png'];
@@ -33,12 +72,14 @@ function loadIcon(): NativeImage {
     const img = nativeImage.createFromPath(file);
     if (img.isEmpty()) continue;
     if (isMac && name === 'tray-template.png') img.setTemplateImage(true);
+    // the shipped glyphs are black: invisible on the default dark windows 10 taskbar / gnome bar
+    if (!isMac && darkTray()) return whiten(img);
     return img;
   }
   // Fallback: black template on mac (the OS tints it); otherwise pick a color that
-  // stays visible on the (usually dark) taskbar.
-  const dataUrl = isMac || !nativeTheme.shouldUseDarkColors ? FALLBACK_BLACK : FALLBACK_WHITE;
-  const png = Buffer.from(dataUrl.split(',')[1], 'base64');
+  // stays visible on the tray background.
+  const dataUrl = isMac || !darkTray() ? FALLBACK_BLACK : FALLBACK_WHITE;
+  const png = Buffer.from(dataUrl.split(',')[1]!, 'base64');
   const img = nativeImage.createFromBuffer(png, { scaleFactor: 2 });
   if (isMac) img.setTemplateImage(true);
   return img;
@@ -84,6 +125,8 @@ export function createTray(a: TrayActions): Tray {
   refreshTray();
   // Windows: left click should open the menu too (mac/linux already do).
   if (process.platform === 'win32') tray.on('click', () => tray?.popUpContextMenu());
+  // taskbar / panel switched light ↔ dark: recolor the glyph (mac uses a template image)
+  if (!isMac) nativeTheme.on('updated', onThemeUpdated);
   return tray;
 }
 
@@ -94,7 +137,17 @@ export function refreshTray(): void {
   tray.setToolTip(actions.isPaused() ? 'clickity (paused)' : 'clickity');
 }
 
+let lastDark: boolean | null = null;
+function onThemeUpdated(): void {
+  if (!tray || tray.isDestroyed()) return;
+  const dark = darkTray();
+  if (dark === lastDark) return;
+  lastDark = dark;
+  tray.setImage(loadIcon());
+}
+
 export function destroyTray(): void {
+  nativeTheme.removeListener('updated', onThemeUpdated);
   if (tray && !tray.isDestroyed()) tray.destroy();
   tray = null;
 }

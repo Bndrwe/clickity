@@ -31,7 +31,9 @@ function getLoginShellPath(): Promise<string> {
       resolve(v);
     };
     try {
-      const child = spawn(shell, ['-ilc', 'echo "__CLICKY_PATH__${PATH}__CLICKY_PATH__"'], {
+      // `printenv PATH` instead of `echo $PATH`: works in fish too (its $PATH is a list, and
+      // `${PATH}` is a syntax error there); the env var itself is always ':'-joined.
+      const child = spawn(shell, ['-ilc', 'echo __CLICKY_PATH__; printenv PATH; echo __CLICKY_PATH__'], {
         stdio: ['ignore', 'pipe', 'ignore'],
         env: { ...process.env, DISABLE_AUTO_UPDATE: 'true' },
       });
@@ -47,7 +49,7 @@ function getLoginShellPath(): Promise<string> {
       child.on('close', () => {
         clearTimeout(timer);
         const m = /__CLICKY_PATH__(.*?)__CLICKY_PATH__/s.exec(out);
-        finish(m?.[1]?.trim() ?? '');
+        finish(m?.[1]?.trim().split(/\r?\n/).pop()?.trim() ?? '');
       });
     } catch {
       finish('');
@@ -61,16 +63,21 @@ function extraDirs(): string[] {
   if (isWin) {
     const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
     const local = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
-    return [
+    // npm's .cmd shims need node.exe on PATH too, so include the usual node install dirs
+    // (official installer, nvm-windows symlink, volta) besides the CLI dirs.
+    const dirs = [
       path.join(appData, 'npm'),
       path.join(home, '.local', 'bin'),
       path.join(home, '.bun', 'bin'),
       path.join(home, '.claude', 'local'),
       path.join(local, 'Programs', 'claude'),
       path.join(local, 'pnpm'),
+      path.join(local, 'Volta', 'bin'),
       path.join(home, 'scoop', 'shims'),
-      'C:\\Program Files\\nodejs',
+      path.join(process.env.ProgramFiles || 'C:\\Program Files', 'nodejs'),
     ];
+    if (process.env.NVM_SYMLINK) dirs.push(process.env.NVM_SYMLINK);
+    return dirs;
   }
   const dirs = [
     '/opt/homebrew/bin',
@@ -84,6 +91,13 @@ function extraDirs(): string[] {
     path.join(home, '.volta', 'bin'),
     path.join(home, '.yarn', 'bin'),
     path.join(home, '.cargo', 'bin'),
+    // version managers' "current/default" bins and shims (fnm, asdf, mise, nvm)
+    path.join(home, '.local', 'share', 'fnm', 'aliases', 'default', 'bin'),
+    path.join(home, 'Library', 'Application Support', 'fnm', 'aliases', 'default', 'bin'),
+    path.join(home, '.fnm', 'aliases', 'default', 'bin'),
+    path.join(home, '.asdf', 'shims'),
+    path.join(home, '.local', 'share', 'mise', 'shims'),
+    path.join(home, '.nvm', 'current', 'bin'),
     path.join(home, 'Library', 'pnpm'),
     path.join(home, '.local', 'share', 'pnpm'),
     '/snap/bin',
@@ -116,8 +130,10 @@ export function cliEnv(): Promise<NodeJS.ProcessEnv> {
         .split(path.delimiter)
         .filter(Boolean)
         .forEach((p) => parts.add(p));
-    add(env[pathKey]);
+    // login-shell PATH first: launchd's/the desktop's minimal PATH (/usr/bin…) may hold stub or
+    // stale copies that would otherwise shadow the user's homebrew/npm/version-manager installs.
     add(await getLoginShellPath());
+    add(env[pathKey]);
     extraDirs().forEach((d) => parts.add(d));
     env[pathKey] = [...parts].join(path.delimiter);
     return env;
@@ -142,21 +158,27 @@ function isFile(p: string): boolean {
  * Returns null when not found.
  */
 export async function resolveBinary(name: string, cliPath?: string): Promise<string | null> {
-  const exts = isWin ? ['.exe', '.cmd', '.bat', '.ps1', ''] : [''];
+  // windows only runs .exe/.cmd/.bat here: npm also drops an extensionless sh script and a .ps1
+  // next to each .cmd shim, and spawning either fails, so never pick those.
+  const exts = isWin ? ['.exe', '.cmd', '.bat'] : [''];
   if (cliPath?.trim()) {
     const p = expandHome(cliPath.trim().replace(/^"(.*)"$/, '$1'));
+    if (isWin && !/\.(exe|cmd|bat|com)$/i.test(p)) {
+      // "…\\npm\\claude" or "…\\npm\\claude.ps1" → its runnable sibling
+      const base = p.replace(/\.ps1$/i, '');
+      for (const e of exts) if (isFile(base + e)) return base + e;
+    }
     if (isFile(p)) return p;
-    if (isWin) for (const e of exts) if (isFile(p + e)) return p + e;
     // a bare name like "claude-beta": search PATH for it
     if (!p.includes('/') && !p.includes('\\')) name = p;
     else return null;
   }
   const env = await cliEnv();
   const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
-  for (const dir of (env[pathKey] ?? '').split(path.delimiter)) {
+  for (let dir of (env[pathKey] ?? '').split(path.delimiter)) {
+    if (isWin) dir = dir.trim().replace(/^"(.*)"$/, '$1'); // windows PATH entries may be quoted
     if (!dir) continue;
     for (const e of exts) {
-      if (e === '.ps1') continue; // can't spawn powershell scripts directly
       const full = path.join(dir, name + e);
       if (isFile(full)) {
         if (!isWin) {
@@ -180,11 +202,35 @@ function needsShell(bin: string): boolean {
   return isWin && /\.(cmd|bat)$/i.test(bin);
 }
 
-/** Quote one argument for cmd.exe (used only with shell: true on windows). */
-function quoteCmdArg(a: string): string {
+/**
+ * Quote one argument for `cmd.exe /d /s /c "…"` running an npm .cmd shim (shell: true on windows).
+ * The line is parsed twice: by cmd.exe (quotes toggle, `%VAR%` expands even inside quotes, &|<>^
+ * are special outside quotes, a line break ends the command) and then by node's argv parser
+ * (backslashes are literal unless they precede a quote; `""` inside quotes is a literal quote).
+ * Embedded quotes become `""` so cmd's quote state never flips (a `\"` would leave the rest of the
+ * argument unquoted for cmd → `&` etc. would run as commands). `%` is written as `"^%"` (close
+ * quote, caret-escaped percent, reopen) because cmd has no in-quote escape for it (`%%` only works
+ * inside batch files; on a /c line it stays doubled). Prompts never go through here: callers send
+ * them on stdin.
+ */
+export function quoteCmdArg(a: string): string {
+  a = a.replace(/[\r\n]+/g, ' '); // cmd.exe would cut the command at the line break
   if (a === '') return '""';
   if (!/[\s"&|<>^%!(),;=]/.test(a)) return a;
-  return '"' + a.replace(/"/g, '""').replace(/%/g, '%%') + '"';
+  let out = '"';
+  let slashes = 0;
+  for (const ch of a) {
+    if (ch === '\\') {
+      slashes++;
+      continue;
+    }
+    // backslashes right before a quote we emit must be doubled to stay literal
+    if (ch === '"') out += '\\'.repeat(slashes * 2) + '""';
+    else if (ch === '%') out += '\\'.repeat(slashes * 2) + '"^%"';
+    else out += '\\'.repeat(slashes) + ch;
+    slashes = 0;
+  }
+  return out + '\\'.repeat(slashes * 2) + '"';
 }
 
 function spawnOpts(bin: string, args: string[], base: SpawnOptions): { cmd: string; args: string[]; opts: SpawnOptions } {
@@ -356,12 +402,13 @@ export function makeTempDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), `clickity-${prefix}-`));
 }
 
+/**
+ * Delete a temp dir in the background. On windows the CLI we just killed (taskkill is async) may
+ * still hold the dir as its cwd or have a screenshot open → EBUSY/EPERM, and a one-shot rmSync
+ * would leave the screenshots behind in %TEMP%. Retry for a few seconds instead.
+ */
 export function removeDir(dir: string): void {
-  try {
-    fs.rmSync(dir, { recursive: true, force: true });
-  } catch {
-    /* ignore */
-  }
+  fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 }).catch(() => {});
 }
 
 /** Write the request's images into `dir` (from base64) with simple names; returns absolute paths. */
@@ -390,6 +437,13 @@ export function cliFailure(
   }
   const text = `${extra}\n${r.stderr}`;
   if (/__clicky_timeout__/.test(text)) return new Error(`${label} timed out`);
+  // windows: the npm .cmd shim ran but cmd.exe couldn't find node.exe (or the shim's target)
+  if (/'node(\.exe)?' is not recognized as an internal or external command/i.test(text)) {
+    return new Error(`${label} needs node.js. install it from nodejs.org, then restart clickity`);
+  }
+  if (/is not recognized as an internal or external command|system cannot find the path specified/i.test(text)) {
+    return new Error(`${label} not found. install it or set its path in settings`);
+  }
   if (/not (logged|signed) in|log ?in required|please (run )?(\/)?login|unauthori[sz]ed|authenticat|invalid api key|oauth token|credentials|\b401\b/i.test(text)) {
     return new Error(`${label} isn't signed in. ${loginHint}`);
   }
@@ -429,7 +483,8 @@ function appleScriptString(s: string): string {
 }
 
 export function shellQuote(s: string): string {
-  if (isWin) return /[\s"]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  // windows: also quote paths with cmd metacharacters (e.g. "C:\\R&D\\claude.cmd")
+  if (isWin) return /[\s"&|<>^(),;=]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   return /^[\w@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
