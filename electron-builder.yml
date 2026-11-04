@@ -56,6 +56,8 @@ nsis:
   runAfterFinish: true
 
 linux:
+  # the global key hook needs X11; on Wayland this runs clickity through XWayland
+  executableArgs: ["--ozone-platform=x11"]
   icon: assets/icon.png
   category: Utility
   target:

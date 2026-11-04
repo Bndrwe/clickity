@@ -628,15 +628,18 @@ function errMessage(e: unknown): string {
 function onPttStart(): void {
   pttStartedAt = performance.now();
   micNote = '';
-  maybePreload(config.stt);
   const st = config.stt?.provider === 'on-device' ? localSttStatus(config.stt.model) : undefined;
   if (st?.state === 'downloading') modelNote = `downloading the voice model… ${st.progress}%`;
   speaker.stop();
+  // Start the mic FIRST. Loading/compiling Whisper (wasm) blocks this thread for a while, so
+  // kicking it off before getUserMedia resolves delayed recording and lost the first words.
+  // Once capture runs, audio is buffered by the worklet even while the model loads.
   mic
     .start()
     .then(() => {
       const d = mic.details;
       if (d) log('info', `mic started: "${d.device}" ${d.sampleRate}hz context=${d.contextState} capture=${d.capture}`);
+      maybePreload(config.stt);
     })
     .catch((e: unknown) => {
       // tell the user now, not only after they let go
