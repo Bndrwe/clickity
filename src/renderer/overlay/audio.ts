@@ -157,7 +157,9 @@ export class MicRecorder {
     let node: AudioNode | null = null;
     if (ctx.audioWorklet) {
       try {
-        workletUrl ??= URL.createObjectURL(new Blob([WORKLET_SRC], { type: 'application/javascript' }));
+        // a data: URL, not a blob: URL: the overlay page is file://, and Chromium refuses to load
+        // worklet modules from blob URLs there (the worklet path silently fell back to ScriptProcessor)
+        workletUrl ??= `data:application/javascript;charset=utf-8,${encodeURIComponent(WORKLET_SRC)}`;
         await ctx.audioWorklet.addModule(workletUrl);
         if (my !== this.gen) return;
         const w = new AudioWorkletNode(ctx, 'clicky-capture', { numberOfInputs: 1, numberOfOutputs: 1, channelCount: 1 });

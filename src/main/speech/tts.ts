@@ -29,19 +29,30 @@ async function detail(res: Response): Promise<string> {
   }
 }
 
+/** A hung TTS request must not hold the turn open forever: the reply is still shown without audio. */
+const TTS_TIMEOUT_MS = 60_000;
+
 async function post(name: string, url: string, init: RequestInit): Promise<ArrayBuffer> {
+  const timeout = AbortSignal.timeout(TTS_TIMEOUT_MS);
+  const signal = init.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
   let res: Response;
   try {
-    res = await fetch(url, init);
+    res = await fetch(url, { ...init, signal });
   } catch (e) {
     if (init.signal?.aborted) throw e;
+    if (timeout.aborted) throw new Error(`${name} speech timed out`);
     throw new Error(`${name} speech: can't reach ${new URL(url).host}`);
   }
   if (!res.ok) {
     const d = await detail(res);
     throw new Error(`${name} speech failed (${res.status})${d ? ': ' + d : ''}`);
   }
-  return res.arrayBuffer();
+  try {
+    return await res.arrayBuffer();
+  } catch (e) {
+    if (init.signal?.aborted) throw e;
+    throw new Error(`${name} speech: ${timeout.aborted ? 'timed out' : 'audio download was cut off'}`);
+  }
 }
 
 export async function synthesize(text: string, settings: Settings, signal?: AbortSignal): Promise<SpeakCommand | null> {

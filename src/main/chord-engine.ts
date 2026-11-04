@@ -123,6 +123,16 @@ export class ChordEngine {
   }
 
   /**
+   * Drop a key from the held set without treating it as a release (it was never really pressed:
+   * Windows' synthetic LeftControl that comes with AltGr). Cancels a talk it helped start.
+   */
+  forgetKey(key: KeyName): void {
+    if (!this.held.delete(key)) return;
+    if (this.pending && !sameSet(this.held, this.talk)) this.clearPending();
+    if (this.talkActive && this.chordHeld && this.talk.has(key)) this.cancelTalk();
+  }
+
+  /**
    * A key the keycode map doesn't know (layout-specific keys such as the ISO <> key) went down.
    * It isn't tracked as held, but it still means the talk chord was part of another shortcut.
    */
@@ -212,3 +222,61 @@ export class ChordEngine {
   }
 }
 
+
+/** Max gap between Windows' synthetic LeftControl and AltRight that together mean AltGr. */
+const ALTGR_MAX_GAP_MS = 2;
+
+/**
+ * Windows reports AltGr (European layouts: @ € { } …) as a synthetic LeftControl keydown followed
+ * by AltRight with the same timestamp, which would look exactly like the default ctrl + alt talk
+ * chord. Feed raw uiohook keycodes + times through this; 'altgr' means "retract the Control you
+ * just passed on and drop this event". Physical left ctrl + left alt is unaffected (different
+ * keycode), and a physical ctrl + right alt is pressed far more than 2ms apart.
+ */
+export class AltGrFilter {
+  private ctrlCode: number;
+  private altRightCode: number;
+  private lastCtrlTime: number | null = null;
+  private altGrHeld = false;
+  private swallowCtrlUp = false;
+
+  constructor(ctrlCode: number, altRightCode: number) {
+    this.ctrlCode = ctrlCode;
+    this.altRightCode = altRightCode;
+  }
+
+  keyDown(code: number, time: number): 'pass' | 'drop' | 'altgr' {
+    if (code === this.ctrlCode) {
+      if (this.altGrHeld) return 'drop'; // autorepeat of the synthetic control
+      this.lastCtrlTime = time;
+      return 'pass';
+    }
+    if (code === this.altRightCode) {
+      if (this.altGrHeld) return 'drop'; // autorepeat
+      if (this.lastCtrlTime !== null && Math.abs(time - this.lastCtrlTime) <= ALTGR_MAX_GAP_MS) {
+        this.lastCtrlTime = null;
+        this.altGrHeld = true;
+        this.swallowCtrlUp = true;
+        return 'altgr';
+      }
+      return 'pass';
+    }
+    this.lastCtrlTime = null;
+    return 'pass';
+  }
+
+  keyUp(code: number): 'pass' | 'drop' {
+    if (code === this.altRightCode && this.altGrHeld) {
+      this.altGrHeld = false;
+      return 'drop';
+    }
+    if (code === this.ctrlCode) {
+      this.lastCtrlTime = null;
+      if (this.swallowCtrlUp) {
+        this.swallowCtrlUp = false;
+        return 'drop';
+      }
+    }
+    return 'pass';
+  }
+}

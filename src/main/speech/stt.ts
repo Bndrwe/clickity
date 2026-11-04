@@ -17,6 +17,14 @@ async function errorDetail(res: Response): Promise<string> {
   }
 }
 
+async function parseJson<T>(name: string, res: Response): Promise<T> {
+  try {
+    return (await res.json()) as T;
+  } catch {
+    throw new Error(`${name} transcription: unexpected response (not json)`);
+  }
+}
+
 async function fail(name: string, res: Response): Promise<never> {
   const d = await errorDetail(res);
   throw new Error(`${name} transcription failed (${res.status})${d ? ': ' + d.toLowerCase() : ''}`);
@@ -44,7 +52,7 @@ async function openaiStyle(
   if (key) headers.Authorization = `Bearer ${key}`;
   const res = await postFetch(name, url, { method: 'POST', headers, body: form, signal });
   if (!res.ok) await fail(name, res);
-  const j = (await res.json()) as { text?: string };
+  const j = await parseJson<{ text?: string }>(name, res);
   return (j.text ?? '').trim();
 }
 
@@ -82,7 +90,7 @@ export async function transcribe(wav: Buffer, settings: Settings, signal?: Abort
         signal,
       });
       if (!res.ok) await fail('gemini', res);
-      const j = (await res.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+      const j = await parseJson<{ candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> }>('gemini', res);
       return (j.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? '').join('').trim();
     }
     case 'on-device':

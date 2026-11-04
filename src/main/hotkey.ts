@@ -4,7 +4,7 @@
 // down/up events are fed into the same chord engine as the 'Fn' key.
 import type { HotkeySettings, KeyName } from '../shared/types';
 import { fnStatus, onFn, restartFnWatch, startFnWatch, stopFnWatch } from './fn-key';
-import { ChordEngine, type HotkeyHandlers } from './chord-engine';
+import { AltGrFilter, ChordEngine, type HotkeyHandlers } from './chord-engine';
 
 export { ChordEngine, type HotkeyHandlers };
 
@@ -177,7 +177,17 @@ function startUiohook(cfg: HotkeySettings, handlers: HotkeyHandlers): boolean {
     const codeMap = buildKeycodeMap(mod.UiohookKey as UiohookKeyTable);
     const eng = new ChordEngine(handlers, cfg);
     const hook = mod.uIOhook;
+    // Windows AltGr = synthetic LeftControl + AltRight (same timestamp): not the ctrl + alt chord.
+    const K = mod.UiohookKey as UiohookKeyTable;
+    const altGr = process.platform === 'win32' ? new AltGrFilter(K.Ctrl, K.AltRight) : null;
     hook.on('keydown', (e: any) => {
+      const ag = altGr?.keyDown(e.keycode, Number(e.time) || 0);
+      if (ag === 'drop') return;
+      if (ag === 'altgr') {
+        emitRaw('Control', false); // the recorder saw the synthetic control: take it back
+        eng.forgetKey('Control');
+        return;
+      }
       const name = codeMap.get(e.keycode);
       if (!name) {
         // keycode 0 = VC_UNDEFINED (e.g. mac fn): never a real "other key"
@@ -189,6 +199,7 @@ function startUiohook(cfg: HotkeySettings, handlers: HotkeyHandlers): boolean {
       eng.keyDown(name);
     });
     hook.on('keyup', (e: any) => {
+      if (altGr?.keyUp(e.keycode) === 'drop') return;
       const name = codeMap.get(e.keycode);
       if (!name) return;
       emitRaw(name, false);

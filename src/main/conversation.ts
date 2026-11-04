@@ -67,6 +67,8 @@ interface Turn {
   overlay: BrowserWindow | null;
   startedAt: number;
   stage: 'recording' | 'processing';
+  /** what started it: the global escape key leaves chats-window turns alone (they have a stop button) */
+  kind: 'voice' | 'type' | 'window' | 'test';
   /** overlays we sent a point to, so we can recall the companion */
   pointed: Set<BrowserWindow>;
   /** stored chat this turn is recorded in (set once the turn reaches the model) */
@@ -122,6 +124,12 @@ function waitForOverlay<T>(
       waiters.delete(waiter);
       clearTimeout(timer);
       signal.removeEventListener('abort', onAbort);
+      win.removeListener('closed', onClosed);
+    };
+    // display unplugged / overlays rebuilt mid-turn: fail now instead of at the timeout
+    const onClosed = (): void => {
+      cleanup();
+      reject(new Error('overlay closed'));
     };
     const waiter: Waiter = {
       channel,
@@ -142,6 +150,7 @@ function waitForOverlay<T>(
     }, timeoutMs);
     waiters.add(waiter);
     signal.addEventListener('abort', onAbort, { once: true });
+    win.once('closed', onClosed);
   });
 }
 
@@ -202,54 +211,9 @@ function showError(win: BrowserWindow | null, message: string): void {
 
 /* ───────────────────────── POINT tags ───────────────────────── */
 
-const POINT_TAG_RE = /\[POINT:[^\]\n]*\]/gi;
-/** A tag that has started streaming but isn't closed yet, at the very end of the buffer. */
-const PARTIAL_TAG_RE = /\[(?:P(?:O(?:I(?:N(?:T(?::[^\]\n]*)?)?)?)?)?)?$/i;
-
-export interface ParsedPoint {
-  x: number;
-  y: number;
-  label: string;
-  /** 1-based screen index, undefined = cursor screen */
-  screen?: number;
-}
-
-/** Visible text while streaming: complete tags removed, a trailing partial tag hidden. */
-export function stripForDisplay(buffer: string): string {
-  return buffer.replace(POINT_TAG_RE, '').replace(PARTIAL_TAG_RE, '').replace(/[ \t]+\n/g, '\n').trimEnd();
-}
-
-/** Final text: every tag (and any dangling fragment) removed, whitespace tidied. */
-export function stripPointTags(text: string): string {
-  return text
-    .replace(POINT_TAG_RE, '')
-    .replace(PARTIAL_TAG_RE, '')
-    .replace(/[ \t]{2,}/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-/** Parse `[POINT:x,y:label:screenN]` tags. `[POINT:none]` and malformed tags are skipped. */
-export function parsePointTags(text: string): ParsedPoint[] {
-  const out: ParsedPoint[] = [];
-  for (const m of text.matchAll(POINT_TAG_RE)) {
-    const inner = m[0].slice('[POINT:'.length, -1).trim();
-    if (!inner || /^none$/i.test(inner)) continue;
-    const parts = inner.split(':').map((p) => p.trim());
-    const coords = /^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/.exec(parts[0]);
-    if (!coords) continue;
-    let screenIdx: number | undefined;
-    const last = parts[parts.length - 1];
-    const screenMatch = parts.length > 1 ? /^screen\s*(\d+)$/i.exec(last) : null;
-    if (screenMatch) {
-      screenIdx = Number(screenMatch[1]);
-      parts.pop();
-    }
-    const label = parts.slice(1).join(':').trim() || 'here';
-    out.push({ x: Number(coords[1]), y: Number(coords[2]), label, screen: screenIdx });
-  }
-  return out;
-}
+// Tag parsing is pure and lives in point-tags.ts (unit tested).
+import { parsePointTags, pickPointScreen, stripForDisplay, stripPointTags, type ParsedPoint } from './point-tags';
+export { parsePointTags, stripForDisplay, stripPointTags, type ParsedPoint };
 
 /* ───────────────────────── system prompt ───────────────────────── */
 
@@ -338,7 +302,7 @@ function cancelCurrent(): void {
   sendState(turn.overlay, { phase: 'idle' });
 }
 
-function beginTurn(overlay: BrowserWindow | null, stage: Turn['stage']): Turn {
+function beginTurn(overlay: BrowserWindow | null, stage: Turn['stage'], kind: Turn['kind']): Turn {
   cancelCurrent();
   clearErrorTimer();
   const turn: Turn = {
@@ -347,6 +311,7 @@ function beginTurn(overlay: BrowserWindow | null, stage: Turn['stage']): Turn {
     overlay,
     startedAt: Date.now(),
     stage,
+    kind,
     pointed: new Set(),
     chatId: null,
   };
@@ -691,7 +656,7 @@ export async function sendFromWindow(req: ChatSendRequest): Promise<{ chatId: st
   closeTyping();
   const chatId = resolveChat(typeof req.chatId === 'string' ? req.chatId : null, true);
   const cursor = screen.getCursorScreenPoint();
-  const turn = beginTurn(overlayForPoint(cursor), 'processing');
+  const turn = beginTurn(overlayForPoint(cursor), 'processing', 'window');
   turn.chatId = chatId;
 
   const modelText = [text, ...prepared.inlined].filter(Boolean).join('\n\n');
@@ -717,7 +682,7 @@ export async function sendFromWindow(req: ChatSendRequest): Promise<{ chatId: st
 
 /** Resolve a parsed point to an overlay + overlay-local DIP point. */
 function resolvePoint(p: ParsedPoint, screens: CapturedScreen[]): { win: BrowserWindow; point: OverlayPoint } | null {
-  const target = (p.screen ? screens.find((s) => s.index === p.screen) : undefined) ?? screens.find((s) => s.isCursorScreen) ?? screens[0];
+  const target = pickPointScreen(p, screens);
   if (!target) return null;
   const x = Math.min(Math.max(p.x, 0), target.image.width);
   const y = Math.min(Math.max(p.y, 0), target.image.height);
@@ -802,7 +767,7 @@ export function onTalkDown(): void {
   if (current?.stage === 'recording') return; // already listening (e.g. key repeat)
   closeTyping();
   const cursor = screen.getCursorScreenPoint();
-  const turn = beginTurn(overlayForPoint(cursor), 'recording');
+  const turn = beginTurn(overlayForPoint(cursor), 'recording', 'voice');
   const settings = getSettings();
   const micStatus = microphoneStatus();
   log('voice', `talk down: turn ${turn.id}, overlay ${turn.overlay ? 'ok' : 'missing'}, mic permission ${micStatus}, stt ${settings.speech.stt.provider}${settings.speech.stt.provider === 'on-device' ? ` (${settings.speech.stt.model})` : ''}`);
@@ -876,6 +841,12 @@ function waitForPttResult(turn: Turn, win: BrowserWindow, idleMs: number): Promi
       progressWaiters.delete(progress);
       clearTimeout(timer);
       signal.removeEventListener('abort', onAbort);
+      win.removeListener('closed', onClosed);
+    };
+    // the overlay (and its recording) is gone, e.g. its display was unplugged
+    const onClosed = (): void => {
+      cleanup();
+      reject(userError('the screen changed while listening — try again'));
     };
     const waiter: Waiter = {
       channel: IPC.pttResult,
@@ -892,6 +863,7 @@ function waitForPttResult(turn: Turn, win: BrowserWindow, idleMs: number): Promi
     waiters.add(waiter);
     progressWaiters.add(progress);
     signal.addEventListener('abort', onAbort, { once: true });
+    win.once('closed', onClosed);
     arm();
   });
 }
@@ -1029,13 +1001,37 @@ function onTextSubmit(senderId: number, text: string): void {
   if (typingOverlay === win) closeTyping();
   const trimmed = String(text ?? '').trim();
   if (!trimmed) return;
-  const turn = beginTurn(win, 'processing');
+  const turn = beginTurn(win, 'processing', 'type');
   void processTypedTurn(turn, trimmed).catch((err) => failTurn(turn, err));
 }
 
 /* ───────────────────────── escape / misc ───────────────────────── */
 
 export function onEscape(): void {
+  closeTyping();
+  // Escape is global (uiohook hears it in every app): pressing it in an editor must not kill a
+  // reply streaming into the chats window, which has its own stop button.
+  if (current?.kind !== 'window') cancelCurrent();
+  clearErrorTimer();
+}
+
+/** True while a voice turn is recording (the hotkey engine's toggle mode resyncs on this). */
+export function isListening(): boolean {
+  return current?.stage === 'recording' && !current.controller.signal.aborted;
+}
+
+/**
+ * The talk chord turned out to be part of another shortcut (AltGr / ctrl+alt+key): drop the
+ * recording without an error bubble. Only touches a turn that is still recording.
+ */
+export function cancelTalk(): void {
+  if (!current || current.stage !== 'recording') return;
+  log('voice', `talk cancelled: turn ${current.id} (chord was part of another shortcut)`);
+  cancelCurrent();
+}
+
+/** Everything, including a chats-window reply (app quit / pause). */
+function cancelAll(): void {
   closeTyping();
   cancelCurrent();
   clearErrorTimer();
@@ -1050,7 +1046,7 @@ export function clearHistory(): void {
 export async function testSpeak(): Promise<void> {
   const settings = getSettings();
   const cursor = screen.getCursorScreenPoint();
-  const turn = beginTurn(overlayForPoint(cursor), 'processing');
+  const turn = beginTurn(overlayForPoint(cursor), 'processing', 'test');
   const label = hotkeyLabel(settings.hotkeys.talk, process.platform);
   const line = `hi! i'm clickity, your companion. hold ${label} and ask me anything.`;
   try {
@@ -1088,7 +1084,7 @@ export function initConversation(): void {
 
 /** Cancel everything and drop temp files (app quit / pause). */
 export function shutdownConversation(): void {
-  onEscape();
+  cancelAll();
   broadcastToOverlays(IPC.overlayPoint, null);
   try {
     cleanupCaptures();

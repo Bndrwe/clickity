@@ -251,16 +251,9 @@ kbd {
 .composer textarea::placeholder { color: var(--ghost); transition: color 0.3s; }
 .main[data-mode='thread'] .composer textarea { font-size: 16.5px; min-height: 28px; margin-bottom: 10px; padding-top: 2px; }
 
-.composer-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.chips {
-  display: flex; flex-wrap: nowrap; gap: 6px; min-width: 0; overflow-x: auto; scrollbar-width: none;
-  padding: 2px; margin: -2px;
-}
-.chips.overflow {
-  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
-  mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
-}
-.chips::-webkit-scrollbar { display: none; }
+/* chips wrap onto a second line when the composer is narrow (never clipped, focus rings stay visible) */
+.composer-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 12px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; flex: 0 1 auto; }
 .chip {
   flex: none; height: 38px; padding: 0 12px 0 10px; border-radius: 12px;
   display: inline-flex; align-items: center; gap: 7px;
@@ -275,11 +268,11 @@ kbd {
 .main[data-mode='thread'] .chip { height: 32px; font-size: 13.5px; padding: 0 11px 0 10px; border-radius: 10px; gap: 7px; }
 .main[data-mode='thread'] .chip .ic { width: 15px; height: 15px; }
 
-.actions { display: flex; align-items: center; gap: 2px; flex: none; }
+.actions { display: flex; align-items: center; gap: 2px; flex: none; margin-left: auto; }
 .model-btn {
   height: 38px; padding: 0 10px 0 12px; border-radius: 12px;
   display: inline-flex; align-items: center; gap: 7px;
-  font-size: 15px; color: rgba(255, 255, 255, 0.82); white-space: nowrap; max-width: 220px;
+  font-size: 15px; color: rgba(255, 255, 255, 0.82); white-space: nowrap; max-width: 176px;
   transition: background 0.2s, color 0.2s;
 }
 .model-btn .ic { width: 16px; height: 16px; }
@@ -443,7 +436,6 @@ kbd {
   .thread-inner { padding: 20px 16px 32px; }
   .composer { padding: 18px 16px 14px 18px; }
   .composer-row { flex-wrap: wrap; }
-  .actions { margin-left: auto; }
   .chip { font-size: 14px; height: 34px; }
   .greeting { font-size: 30px; }
   .topbar { padding: 0 90px; }

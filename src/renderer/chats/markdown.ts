@@ -72,6 +72,8 @@ export function renderMarkdown(src: string): DocumentFragment {
     if (isUl(line) || isOl(line)) {
       const ordered = isOl(line);
       const list = document.createElement(ordered ? 'ol' : 'ul');
+      const start = ordered ? parseInt(/^\s*(\d+)/.exec(line)![1], 10) : 1;
+      if (start !== 1) (list as HTMLOListElement).start = start;
       while (i < lines.length && (ordered ? isOl(lines[i]) : isUl(lines[i]))) {
         const li = document.createElement('li');
         inline(li, lines[i].replace(ordered ? /^\s*\d+[.)]\s+/ : /^\s*[-*•]\s+/, ''));

@@ -82,7 +82,7 @@ interface Mode {
   prefix?: string;
 }
 const MODES: Mode[] = [
-  { id: 'screen', label: 'look at screen', icon: 'monitor' },
+  { id: 'screen', label: 'screen', icon: 'monitor' },
   { id: 'explain', label: 'explain', icon: 'sparkles', prefix: 'explain ' },
   { id: 'how', label: 'how do i…', icon: 'help', prefix: 'how do i ' },
   { id: 'summarize', label: 'summarize', icon: 'list', prefix: 'summarize ' },
@@ -94,15 +94,6 @@ for (const m of MODES) {
   chipEls.set(m.id, b);
   el.chips.append(b);
 }
-
-new ResizeObserver(() => {
-  const c = el.chips;
-  c.classList.toggle('overflow', c.scrollWidth > c.clientWidth + 1 && c.scrollLeft + c.clientWidth < c.scrollWidth - 2);
-}).observe(el.chips);
-el.chips.addEventListener('scroll', () => {
-  const c = el.chips;
-  c.classList.toggle('overflow', c.scrollLeft + c.clientWidth < c.scrollWidth - 2);
-});
 
 function activePrefixMode(): Mode | undefined {
   const t = el.input.value.toLowerCase();
@@ -199,10 +190,13 @@ async function submit(): Promise<void> {
   pressSend(el.send);
   const chatId = chat && chat.id ? chat.id : null;
   if (!chatId) awaitingNewChat = true;
+  stick = true; // our own message: follow the reply down
+  el.newPill.hidden = true;
   try {
     const res = await api.send({ chatId, text, includeScreen, attachments: sentAttachments.length ? sentAttachments : undefined });
     awaitingNewChat = false;
-    if (!chat || chat.id !== res.chatId) {
+    // a new chat that nothing is showing yet: open it. If the user has moved on meanwhile, leave their view alone.
+    if (!chatId && !chat) {
       const fresh = await api.get(res.chatId);
       if (fresh) showChat(mergeChat(fresh));
     }
@@ -250,6 +244,9 @@ el.composer.addEventListener('drop', (e) => {
     void addFiles(files);
   }
 });
+// elsewhere a dropped file must not navigate the window away
+window.addEventListener('dragover', (e) => e.preventDefault());
+window.addEventListener('drop', (e) => e.preventDefault());
 
 function readBase64(f: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -439,14 +436,18 @@ el.modelBtn.addEventListener('click', async (e) => {
 });
 document.addEventListener('mousedown', (e) => {
   const t = e.target as Node;
-  if (!el.modelPop.contains(t) && !el.rowMenu.contains(t) && !el.modelBtn.contains(t)) closePopovers();
+  const onMore = t instanceof Element && !!t.closest('.row-more');
+  if (!el.modelPop.contains(t) && !el.rowMenu.contains(t) && !el.modelBtn.contains(t) && !onMore) closePopovers();
 });
 window.addEventListener('resize', () => closePopovers());
 
 /* ───────────── sidebar ───────────── */
 
 let renaming: string | null = null;
+let renameDraft: string | null = null;
+let renameFresh = false;
 let confirmingDelete: string | null = null;
+let confirmFocus = false;
 
 function renderList(): void {
   const q = query.trim().toLowerCase();
@@ -469,12 +470,16 @@ function renderRow(c: ChatSummary, now: number): HTMLElement {
   const active = chat?.id === c.id;
   const row = h('div', { class: 'row' + (active ? ' active' : ''), 'data-id': c.id });
   if (renaming === c.id) {
-    const inp = h('input', { class: 'rename', value: c.title, 'aria-label': 'chat title', maxlength: 120 });
+    const inp = h('input', { class: 'rename', value: renameDraft ?? c.title, 'aria-label': 'chat title', maxlength: 120 });
     let done = false;
+    const fresh = renameFresh;
+    renameFresh = false;
+    inp.addEventListener('input', () => (renameDraft = inp.value));
     const finish = (commit: boolean) => {
       if (done) return;
       done = true;
       renaming = null;
+      renameDraft = null;
       const t = inp.value.trim();
       if (commit && t && t !== c.title) {
         c.title = t;
@@ -493,11 +498,15 @@ function renderRow(c: ChatSummary, now: number): HTMLElement {
         finish(false);
       }
     });
-    inp.addEventListener('blur', () => finish(true));
+    // a re-render removes the focused input; that is not the user leaving it
+    inp.addEventListener('blur', () => {
+      if (inp.isConnected) finish(true);
+    });
     row.append(inp);
     requestAnimationFrame(() => {
       inp.focus();
-      inp.select();
+      if (fresh) inp.select();
+      else inp.setSelectionRange(inp.value.length, inp.value.length);
     });
     return row;
   }
@@ -511,7 +520,10 @@ function renderRow(c: ChatSummary, now: number): HTMLElement {
     });
     row.classList.add('confirming');
     row.append(h('span', { class: 'confirm-q', text: 'delete?' }), h('span', { class: 'confirm-actions' }, no, yes));
-    requestAnimationFrame(() => yes.focus());
+    if (confirmFocus) {
+      confirmFocus = false;
+      requestAnimationFrame(() => yes.focus());
+    }
     return row;
   }
   const open = h(
@@ -535,11 +547,14 @@ function renderRow(c: ChatSummary, now: number): HTMLElement {
     rn.addEventListener('click', () => {
       closePopovers();
       renaming = c.id;
+      renameDraft = null;
+      renameFresh = true;
       renderList();
     });
     del.addEventListener('click', () => {
       closePopovers();
       confirmingDelete = c.id;
+      confirmFocus = true;
       renderList();
     });
     el.rowMenu.replaceChildren(rn, del);
@@ -557,6 +572,8 @@ async function deleteChat(id: string): Promise<void> {
   } catch (err) {
     toast(errMsg(err));
   }
+  streaming.delete(id);
+  liveTurns.delete(id);
   list = list.filter((c) => c.id !== id);
   if (chat?.id === id) showChat(null);
   renderList();
@@ -638,13 +655,13 @@ async function newChat(): Promise<void> {
   el.input.focus();
 }
 
-/** keep any turn that is streaming locally but not yet stored */
+/** the reply currently streaming in each chat, kept whether or not that chat is on screen */
+const liveTurns = new Map<string, ChatTurn>();
+
+/** keep a reply that is streaming but not yet stored when its chat is reopened */
 function mergeChat(c: Chat): Chat {
-  const live = streaming.get(c.id);
-  if (live && chat?.id === c.id && !c.turns.some((t) => t.id === live)) {
-    const local = chat.turns.find((t) => t.id === live);
-    if (local) c.turns.push(local);
-  }
+  const live = liveTurns.get(c.id);
+  if (live && !c.turns.some((t) => t.id === live.id)) c.turns.push({ ...live });
   return c;
 }
 
@@ -660,7 +677,8 @@ function showChat(c: Chat | null): void {
   const wasEmpty = el.main.dataset.mode === 'empty';
   el.main.dataset.mode = empty ? 'empty' : 'thread';
   if (empty && !wasEmpty) enterEmptyState([$('greeting'), $('composer'), $('hint')]);
-  el.turns.replaceChildren(...(c ? c.turns.map((t) => renderTurn(t, false)) : []));
+  const liveId = c ? streaming.get(c.id) : undefined;
+  el.turns.replaceChildren(...(c ? c.turns.map((t) => renderTurn(t, false, t.id === liveId)) : []));
   turnEls.clear();
   el.turns.querySelectorAll<HTMLElement>('.msg').forEach((n) => turnEls.set(n.dataset.id!, n));
   syncTitle();
@@ -804,6 +822,9 @@ function onEvent(e: ChatEvent): void {
 
   if (e.type === 'start') streaming.set(e.chatId, e.turnId);
   if (e.type === 'done' || e.type === 'error') streaming.delete(e.chatId);
+  if (e.type === 'start') liveTurns.set(e.chatId, { id: e.turnId, role: 'assistant', text: '', at: Date.now() });
+  if (e.type === 'delta') liveTurns.set(e.chatId, { id: e.turnId, role: 'assistant', text: e.text, at: liveTurns.get(e.chatId)?.at ?? Date.now() });
+  if (e.type === 'done' || e.type === 'error') liveTurns.delete(e.chatId);
 
   if (!chat || chat.id !== e.chatId) {
     renderList();

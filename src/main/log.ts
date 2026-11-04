@@ -42,10 +42,30 @@ function fmt(v: unknown): string {
   }
 }
 
+let stdoutBroken = false;
+/**
+ * Echo to the terminal in dev. When the launching terminal is gone (closed, or `| head`), writes
+ * fail with EPIPE / EIO, emitted asynchronously as an 'error' event: unhandled, that is an
+ * uncaught exception in the main process (error dialog). Swallow it and stop echoing.
+ */
+function writeStdout(line: string): void {
+  if (stdoutBroken) return;
+  try {
+    if (process.stdout.listenerCount('error') === 0) {
+      process.stdout.on('error', () => {
+        stdoutBroken = true;
+      });
+    }
+    process.stdout.write(line);
+  } catch {
+    stdoutBroken = true;
+  }
+}
+
 /** Append one line: `2026-11-04T08:21:00.123Z [scope] message …` */
 export function log(scope: string, ...parts: unknown[]): void {
   const line = `${new Date().toISOString()} [${scope}] ${parts.map(fmt).join(' ')}\n`;
-  if (!app.isPackaged || process.env.CLICKITY_TEST) process.stdout.write(line);
+  if (!app.isPackaged || process.env.CLICKITY_TEST) writeStdout(line);
   const f = logFile();
   if (!f) return;
   try {

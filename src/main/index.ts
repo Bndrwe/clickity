@@ -1,17 +1,21 @@
 // App bootstrap: single instance, settings, overlays, hotkeys, tray, settings window and IPC.
+import fs from 'node:fs';
+import path from 'node:path';
 import { app, ipcMain, shell } from 'electron';
 import { IPC } from '../shared/ipc';
 import { PROVIDER_KINDS, type ChatSendRequest, type DeepPartial, type PermissionKind, type ProviderKind, type Settings } from '../shared/types';
-import { getSettings, loadSettings, onSettingsChanged, resetSettings, updateSettings } from './settings-store';
+import { flushSettings, getSettings, loadSettings, onSettingsChanged, resetSettings, updateSettings } from './settings-store';
 import { getProvider, openLogin, testProvider } from './providers/index';
 import { startHotkeys, stopHotkeys, suspendHotkeys, updateHotkeys } from './hotkey';
 import { notifyHotkeyHeard, registerHotkeyIpc } from './hotkey-ipc';
 import { cleanupCaptures } from './capture';
 import { destroyOverlays, initOverlays, refreshOverlayConfigs, setOverlaysVisible } from './overlay';
 import {
+  cancelTalk,
   clearHistory,
   getActiveChatId,
   initConversation,
+  isListening,
   newChat,
   onEscape,
   onTalkDown,
@@ -40,7 +44,11 @@ const isMac = process.platform === 'darwin';
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => openMainWindow());
+  // A second launch before we're ready would read settings / make windows too early;
+  // bootstrap opens the right window itself once ready.
+  app.on('second-instance', () => {
+    if (app.isReady()) openMainWindow();
+  });
   void bootstrap();
 }
 
@@ -73,9 +81,35 @@ function setPaused(next: boolean): void {
 
 /* ───────────────────────── settings side effects ───────────────────────── */
 
+/**
+ * Linux has no setLoginItemSettings (it's a no-op there): use an XDG autostart entry.
+ * AppImages run from a fresh /tmp/.mount_* path each time, so point at $APPIMAGE instead.
+ */
+function applyLinuxAutostart(enabled: boolean): void {
+  const dir = path.join(process.env.XDG_CONFIG_HOME || path.join(app.getPath('home'), '.config'), 'autostart');
+  const file = path.join(dir, 'clickity.desktop');
+  try {
+    if (!enabled) {
+      fs.rmSync(file, { force: true });
+      return;
+    }
+    const exe = process.env.APPIMAGE || process.execPath;
+    const quoted = `"${exe.replace(/(["`$\\])/g, '\\$1')}"`;
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      file,
+      ['[Desktop Entry]', 'Type=Application', 'Name=Clickity', 'Comment=AI companion next to your cursor', `Exec=${quoted} --hidden`, 'Terminal=false', 'X-GNOME-Autostart-enabled=true', ''].join('\n'),
+    );
+  } catch (err) {
+    console.warn('[main] autostart entry failed:', err);
+    log('app', 'autostart entry failed:', err);
+  }
+}
+
 function applyLaunchAtLogin(enabled: boolean): void {
   // In dev this would register the bare electron binary, which can't start the app.
   if (!app.isPackaged) return;
+  if (process.platform === 'linux') return applyLinuxAutostart(enabled);
   try {
     // --hidden: start quietly in the menu bar / tray when the OS launches us at login.
     app.setLoginItemSettings({ openAtLogin: enabled, args: ['--hidden'] });
@@ -182,6 +216,7 @@ function registerIpc(): void {
   });
   ipcMain.handle(IPC.appInfo, () => ({ version: app.getVersion(), platform: process.platform, packaged: app.isPackaged }));
   ipcMain.handle(IPC.appRelaunch, () => {
+    flushSettings(); // app.exit skips before-quit, where pending settings are normally written
     app.relaunch();
     app.exit(0);
   });
@@ -260,9 +295,16 @@ async function bootstrap(): Promise<void> {
         onType();
       },
       onEscape,
+      // AltGr / ctrl+alt+<key>: the chord was another shortcut, drop the recording quietly
+      onTalkCancel: cancelTalk,
+      isTalking: isListening,
     });
     console.log(`[main] hotkeys ready (${backend})`);
     log('hotkey', `ready (${backend})`);
+    if (process.platform === 'linux') {
+      // Wayland: global keys only reach us from X11 / XWayland apps; note it for bug reports.
+      log('hotkey', `linux session ${process.env.XDG_SESSION_TYPE || '?'}, display ${process.env.WAYLAND_DISPLAY ? 'wayland' : ''}${process.env.DISPLAY ? ' x11' : ''}, ozone ${app.commandLine.getSwitchValue('ozone-platform') || 'default'}`);
+    }
   } catch (err) {
     console.error('[main] hotkeys failed to start:', err);
     log('hotkey', 'failed to start:', err);

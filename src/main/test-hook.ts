@@ -4,7 +4,7 @@
 import { session } from 'electron';
 import { getSettings, updateSettings } from './settings-store';
 import { getChat, listChats } from './chat-store';
-import { onEscape, onTalkDown, onTalkUp } from './conversation';
+import { cancelTalk, isListening, onEscape, onTalkDown, onTalkUp } from './conversation';
 import { logPath } from './log';
 
 export function installTestHook(): void {
@@ -13,6 +13,8 @@ export function installTestHook(): void {
     onTalkDown,
     onTalkUp,
     onEscape,
+    cancelTalk,
+    isListening,
     getSettings,
     updateSettings,
     listChats,

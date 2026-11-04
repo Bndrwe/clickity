@@ -3,6 +3,7 @@ import { app, safeStorage } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_SETTINGS, PROVIDER_KINDS, type DeepPartial, type Settings } from '../shared/types';
+import { fixEnums } from './settings-validate';
 
 type Obj = Record<string, unknown>;
 type Listener = (s: Settings, prev: Settings) => void;
@@ -160,6 +161,7 @@ function validate(s: Settings): Settings {
   if (typeof s.companion.color !== 'string' || (s.companion.color !== '' && !/^#[0-9a-f]{6}$/i.test(s.companion.color))) s.companion.color = '';
   s.speech.tts.rate = clamp(s.speech.tts.rate, 0.5, 2, d.speech.tts.rate);
   s.historyTurns = Math.round(clamp(s.historyTurns, 0, 20, d.historyTurns));
+  fixEnums(s, d, process.platform);
   return s;
 }
 
@@ -190,6 +192,11 @@ function flush(): void {
   } catch (err) {
     console.error('settings: could not save settings.json', err);
   }
+}
+
+/** Write pending changes now (before app.exit / relaunch, which skip before-quit). */
+export function flushSettings(): void {
+  flush();
 }
 
 function scheduleWrite(): void {

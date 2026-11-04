@@ -154,7 +154,12 @@ export class Speaker {
 
   private async playAudio(cmd: Extract<SpeakCommand, { mode: 'audio' }>, my: number): Promise<void> {
     const ctx = this.ensureCtx();
-    if (ctx.state !== 'running') await ctx.resume().catch(() => undefined);
+    // bounded like the mic's resume: a resume() that never settles would wedge the queue
+    // (running stays true, so no speechDone and every later speak is ignored)
+    if (ctx.state !== 'running') {
+      await Promise.race([ctx.resume().catch(() => undefined), new Promise((r) => setTimeout(r, 1000))]);
+    }
+    if (my !== this.gen) return;
     const analyser = this.analyser!;
     let decoded: AudioBuffer | null = null;
     try {
@@ -172,9 +177,12 @@ export class Speaker {
         src.buffer = buf;
         src.connect(analyser);
         let settled = false;
+        // safety net: a suspended context (autoplay blocked) never fires onended
+        const guard = setTimeout(() => finish(), buf.duration * 1000 + 1500);
         const finish = () => {
           if (settled) return;
           settled = true;
+          clearTimeout(guard);
           try {
             src.stop();
           } catch {

@@ -660,7 +660,9 @@ async function onPttStop(req: PttStopRequest): Promise<void> {
       api.sendPttResult({ error: errMessage(e), errorKind: 'mic', durationMs });
       return;
     }
-    if (!rec.pcm.length) {
+    // a tap shorter than the first worklet/script buffer has no samples yet: that is an accidental
+    // press (handled below), not a dead microphone
+    if (!rec.pcm.length && durationMs >= 250) {
       const why = rec.contextState === 'suspended' ? 'the audio engine was suspended' : 'no samples arrived';
       log('error', `no audio captured after ${durationMs}ms (${why})`);
       api.sendPttResult({ error: 'no audio from the microphone — check your input device in sound settings', errorKind: 'mic', durationMs, peak: 0 });

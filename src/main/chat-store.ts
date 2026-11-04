@@ -94,13 +94,30 @@ function readChatFile(id: string): Chat | null {
   }
 }
 
+/**
+ * Windows: rename over a file that an antivirus / indexer / backup tool has open briefly fails
+ * with EPERM / EACCES / EBUSY. Retry a few times (sync, a few ms), then let the caller see it.
+ */
+function renameWithRetry(from: string, to: string): void {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      fs.renameSync(from, to);
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (attempt >= 4 || (code !== 'EPERM' && code !== 'EACCES' && code !== 'EBUSY')) throw err;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 15 * (attempt + 1));
+    }
+  }
+}
+
 /** Atomic write: tmp file + rename. */
 function writeChat(chat: Chat): void {
   const file = fileFor(chat.id);
   const tmp = `${file}.${process.pid}.tmp`;
   try {
     fs.writeFileSync(tmp, JSON.stringify(chat, null, 1), 'utf8');
-    fs.renameSync(tmp, file);
+    renameWithRetry(tmp, file);
   } catch (err) {
     console.error(`[chat-store] could not save chat ${chat.id}:`, err);
     try {
