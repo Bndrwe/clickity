@@ -8,7 +8,7 @@ import type { ImageInput } from '../shared/types';
 const MAX_SIDE = 1568;
 const JPEG_QUALITY = 80;
 const MAX_AGE_MS = 2 * 60 * 1000;
-const TEMP_DIR = path.join(os.tmpdir(), 'clickyclone-captures');
+const TEMP_DIR = path.join(os.tmpdir(), 'clickity-captures');
 
 export interface CapturedScreen {
   index: number; // 1-based, order sent to the model

@@ -18,7 +18,7 @@ clickity is an open-source clone of heyclicky.com. the difference is that you br
 
 ## download
 
-grab the installer for your computer from the [releases page](https://github.com/bndrwe/clickyclone/releases):
+grab the installer for your computer from the [releases page](https://github.com/Bndrwe/clickity/releases):
 
 | computer | file |
 |---|---|
