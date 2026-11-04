@@ -1,0 +1,26 @@
+{
+  "name": "clickyclone",
+  "productName": "Clicky Clone",
+  "version": "0.1.0",
+  "description": "An AI companion that lives next to your cursor. Hold a key, talk, and it looks at your screen and points the way. Bring your own Claude, ChatGPT, Gemini, OpenRouter or local model.",
+  "main": "dist/main/index.js",
+  "license": "MIT",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/build.mjs && electron .",
+    "start": "electron .",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "dist": "node scripts/build.mjs && electron-builder"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^4.3.2",
+    "uiohook-napi": "^1.5.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "electron": "^45.2.2",
+    "electron-builder": "^26.0.12",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.7.2"
+  }
+}
