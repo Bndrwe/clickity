@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'">
+<title>clicky settings</title>
+<script>
+  // set theme before first paint; cache mirrors the `theme` setting
+  (function () {
+    try {
+      var t = localStorage.getItem('theme') || 'system';
+      var dark = t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+      if (dark) document.documentElement.classList.add('dark');
+    } catch (e) {}
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@1&family=Inter:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="./settings.css">
+</head>
+<body>
+<div class="drag-strip" aria-hidden="true"></div>
+
+<header class="topbar" id="topbar">
+  <div class="topbar-inner">
+    <a class="wordmark" href="#top" data-scroll="top">clicky</a>
+    <nav class="nav" aria-label="sections">
+      <a href="#model" data-scroll="model">model</a>
+      <a href="#voice" data-scroll="voice">voice</a>
+      <a href="#keys" data-scroll="keys">keys</a>
+      <a href="#companion" data-scroll="companion">companion</a>
+      <a href="#permissions" data-scroll="permissions">permissions</a>
+      <a href="#about" data-scroll="about">about</a>
+      <button class="icon-btn" id="theme-toggle" type="button" aria-label="theme: system" title="theme"></button>
+    </nav>
+  </div>
+</header>
+
+<main class="column" id="top">
+  <section class="hero">
+    <div class="float-obj" id="float-obj" aria-hidden="true">
+      <div class="float-shadow"></div>
+      <svg class="float-svg" viewBox="0 0 120 120" width="120" height="120">
+        <path d="M22 14 L98 58 Q106 63 97 67 L64 80 Q58 83 56 89 L50 104 Q46 112 40 104 Z" fill="var(--ink)" stroke="var(--ink)" stroke-width="6" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <p class="eyebrow rise" style="--d:0ms">your companion</p>
+    <h1 class="h2 rise" style="--d:90ms">A friend that lives by your cursor.</h1>
+    <p class="muted rise" style="--d:180ms">hold <span class="tnum" id="hero-hotkey">control + option</span> and talk.</p>
+  </section>
+
+  <section class="section reveal" id="model" aria-labelledby="model-h">
+    <header class="section-head">
+      <p class="eyebrow">model</p>
+      <h2 class="h3" id="model-h">Pick a brain.</h2>
+      <p class="muted">use a plan you already pay for, an api key, or a model on your machine.</p>
+    </header>
+    <div id="model-list"></div>
+  </section>
+
+  <section class="section reveal" id="voice" aria-labelledby="voice-h">
+    <header class="section-head">
+      <p class="eyebrow">voice</p>
+      <h2 class="h3" id="voice-h">How it listens and talks.</h2>
+    </header>
+    <div class="sheet" id="voice-sheet">
+      <p class="eyebrow group-eyebrow">listening</p>
+      <div class="row">
+        <label class="row-label" for="stt-provider">speech to text</label>
+        <div class="row-value">
+          <select id="stt-provider">
+            <option value="on-device">on-device whisper</option>
+            <option value="openai">openai</option>
+            <option value="groq">groq</option>
+            <option value="gemini">gemini</option>
+            <option value="local">local server</option>
+          </select>
+          <p class="hint" id="stt-hint"></p>
+        </div>
+      </div>
+      <div class="row">
+        <label class="row-label" for="stt-model">model</label>
+        <div class="row-value"><input id="stt-model" type="text" spellcheck="false" autocomplete="off"></div>
+      </div>
+      <div class="row" data-stt="key">
+        <label class="row-label" for="stt-key">api key</label>
+        <div class="row-value">
+          <div class="input-wrap"><input id="stt-key" type="password" spellcheck="false" autocomplete="off"><button class="text-btn" type="button" data-reveal="stt-key">show</button></div>
+          <p class="hint">optional. leave empty to reuse your matching provider key.</p>
+          <button class="text-btn" type="button" id="stt-key-remove" hidden>remove</button>
+        </div>
+      </div>
+      <div class="row" data-stt="url">
+        <label class="row-label" for="stt-url">base url</label>
+        <div class="row-value"><input id="stt-url" type="text" spellcheck="false" autocomplete="off" placeholder="http://localhost:8000/v1"></div>
+      </div>
+      <div class="row">
+        <label class="row-label" for="stt-lang">language</label>
+        <div class="row-value"><input id="stt-lang" type="text" spellcheck="false" autocomplete="off" placeholder="auto" maxlength="8"></div>
+      </div>
+
+      <p class="eyebrow group-eyebrow">speaking</p>
+      <div class="row">
+        <label class="row-label" for="tts-provider">text to speech</label>
+        <div class="row-value">
+          <select id="tts-provider">
+            <option value="system">system voice</option>
+            <option value="openai">openai</option>
+            <option value="elevenlabs">elevenlabs</option>
+            <option value="off">off</option>
+          </select>
+        </div>
+      </div>
+      <div class="row" data-tts="voice">
+        <label class="row-label" for="tts-voice-select" id="tts-voice-label">voice</label>
+        <div class="row-value">
+          <select id="tts-voice-select"></select>
+          <input id="tts-voice-input" type="text" spellcheck="false" autocomplete="off" placeholder="voice id">
+        </div>
+      </div>
+      <div class="row" data-tts="speed">
+        <label class="row-label" for="tts-rate">speed</label>
+        <div class="row-value range-row">
+          <input id="tts-rate" type="range" min="0.5" max="2" step="0.05">
+          <output class="tnum" id="tts-rate-out" for="tts-rate"></output>
+        </div>
+      </div>
+      <div class="row" data-tts="key">
+        <label class="row-label" for="tts-key">api key</label>
+        <div class="row-value">
+          <div class="input-wrap"><input id="tts-key" type="password" spellcheck="false" autocomplete="off"><button class="text-btn" type="button" data-reveal="tts-key">show</button></div>
+          <button class="text-btn" type="button" id="tts-key-remove" hidden>remove</button>
+        </div>
+      </div>
+      <div class="row" data-tts="test">
+        <span class="row-label">preview</span>
+        <div class="row-value"><button class="btn" type="button" id="test-voice"><span>test voice</span></button></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section reveal" id="keys" aria-labelledby="keys-h">
+    <header class="section-head">
+      <p class="eyebrow">keys</p>
+      <h2 class="h3" id="keys-h">Your shortcuts.</h2>
+      <p class="muted">a chord needs a modifier or a function key, so typing is never hijacked.</p>
+    </header>
+    <div class="sheet">
+      <div class="row">
+        <span class="row-label">push to talk</span>
+        <div class="row-value">
+          <div class="chord-line">
+            <div class="chord-well tnum" id="chord-talk" aria-live="polite"></div>
+            <button class="btn" type="button" id="rec-talk"><span>record</span></button>
+          </div>
+        </div>
+      </div>
+      <div class="row">
+        <span class="row-label" id="mode-label">mode</span>
+        <div class="row-value">
+          <div class="seg" role="radiogroup" aria-labelledby="mode-label" id="mode-seg">
+            <button type="button" role="radio" data-mode="hold" aria-checked="false">hold to talk</button>
+            <button type="button" role="radio" data-mode="toggle" aria-checked="false">tap to toggle</button>
+          </div>
+        </div>
+      </div>
+      <div class="row">
+        <span class="row-label">type a question</span>
+        <div class="row-value">
+          <div class="chord-line">
+            <div class="chord-well tnum" id="chord-type" aria-live="polite"></div>
+            <button class="btn" type="button" id="rec-type"><span>record</span></button>
+          </div>
+        </div>
+      </div>
+      <div class="row">
+        <span class="row-label"></span>
+        <div class="row-value"><button class="text-btn" type="button" id="reset-keys"><span>reset to defaults</span></button></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section reveal" id="companion" aria-labelledby="companion-h">
+    <header class="section-head">
+      <p class="eyebrow">companion</p>
+      <h2 class="h3" id="companion-h">How it behaves.</h2>
+    </header>
+    <div class="sheet">
+      <div class="row">
+        <span class="row-label" id="l-follow">follow cursor</span>
+        <div class="row-value"><button class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="l-follow" id="sw-follow"></button></div>
+      </div>
+      <div class="row">
+        <span class="row-label" id="l-bubble">show reply bubble</span>
+        <div class="row-value"><button class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="l-bubble" id="sw-bubble"></button></div>
+      </div>
+      <div class="row">
+        <span class="row-label" id="l-point">point at things</span>
+        <div class="row-value"><button class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="l-point" id="sw-point"></button></div>
+      </div>
+      <div class="row">
+        <label class="row-label" for="scale">size</label>
+        <div class="row-value range-row">
+          <input id="scale" type="range" min="0.75" max="1.5" step="0.05">
+          <output class="tnum" id="scale-out" for="scale"></output>
+        </div>
+      </div>
+      <div class="row">
+        <label class="row-label" for="instructions">custom instructions</label>
+        <div class="row-value">
+          <textarea id="instructions" rows="4" placeholder="e.g. keep answers short. i'm learning blender."></textarea>
+        </div>
+      </div>
+      <div class="row">
+        <label class="row-label" for="turns">remember last turns</label>
+        <div class="row-value"><input id="turns" class="narrow tnum" type="number" min="0" max="50" step="1"></div>
+      </div>
+      <div class="row">
+        <span class="row-label" id="l-login">launch at login</span>
+        <div class="row-value"><button class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="l-login" id="sw-login"></button></div>
+      </div>
+      <div class="row">
+        <span class="row-label">conversation</span>
+        <div class="row-value"><button class="btn" type="button" id="clear-chat"><span>clear conversation</span></button></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section reveal" id="permissions" aria-labelledby="perm-h">
+    <header class="section-head">
+      <p class="eyebrow">permissions</p>
+      <h2 class="h3" id="perm-h">What it needs from your system.</h2>
+    </header>
+    <div class="sheet" id="perm-sheet"></div>
+  </section>
+
+  <section class="section reveal" id="about" aria-labelledby="about-h">
+    <header class="section-head">
+      <p class="eyebrow">about</p>
+      <h2 class="h3" id="about-h">clicky.</h2>
+    </header>
+    <div class="sheet">
+      <div class="row">
+        <span class="row-label">version</span>
+        <div class="row-value"><span class="tnum" id="app-version">·</span> <span class="muted" id="app-platform"></span></div>
+      </div>
+      <div class="row">
+        <span class="row-label">links</span>
+        <div class="row-value links">
+          <a class="text-link" href="https://heyclicky.com" data-ext>heyclicky.com ↗</a>
+        </div>
+      </div>
+      <div class="row">
+        <span class="row-label"></span>
+        <div class="row-value"><button class="text-btn" type="button" id="quit"><span>quit clicky</span></button></div>
+      </div>
+    </div>
+  </section>
+  <footer class="foot"></footer>
+</main>
+
+<dialog id="onboard" aria-labelledby="ob-title">
+  <div class="dlg">
+    <p class="eyebrow" id="ob-step">step 1 of 3</p>
+    <h2 class="h3" id="ob-title"></h2>
+    <p class="muted" id="ob-sub"></p>
+    <div class="ob-body" id="ob-body"></div>
+    <div class="ob-actions">
+      <button class="text-btn" type="button" id="ob-back"><span>back</span></button>
+      <button class="text-btn" type="button" id="ob-skip"><span>skip</span></button>
+      <button class="btn primary" type="button" id="ob-next"><span>next</span></button>
+    </div>
+  </div>
+</dialog>
+
+<script src="./settings.js"></script>
+</body>
+</html>
