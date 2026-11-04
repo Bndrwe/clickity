@@ -29,6 +29,9 @@ const replyEl = $('reply');
 const replyTextEl = $('reply-text');
 const errorEl = $('error');
 const noteEl = $('note');
+const stepEl = $('step');
+const confirmEl = $('confirm');
+const confirmTextEl = $('confirm-text');
 const typePos = $('typebox-pos');
 const typeForm = $<HTMLFormElement>('typebox');
 const typeInput = $<HTMLInputElement>('typebox-input');
@@ -80,6 +83,8 @@ interface Flight {
   x1: number;
   y1: number;
   rippled: boolean;
+  /** agent mode: quick hop to a click target (no landing ripple; the click draws its own) */
+  fast: boolean;
 }
 let flight: Flight | null = null;
 let currentPoint: OverlayPoint | null = null;
@@ -105,6 +110,10 @@ let errorTimer = 0;
 let serverNote = '';
 /** status line from this overlay: voice model download / load, mic trouble while listening */
 let localNote = '';
+/** agent mode: actions waiting for enter / esc (OverlayState.confirm) */
+let confirmText = '';
+/** agent mode: "step 2 of 8" */
+let stepText = '';
 let lingerTimer = 0;
 let lingering = false;
 let transcriptTimer = 0;
@@ -177,7 +186,7 @@ function frame(now: number): void {
     posY = q * q * f.y0 + 2 * q * p * f.cy + p * p * f.y1;
     if (!f.rippled && t > 0.42) {
       f.rippled = true;
-      ripple(f.x1, f.y1);
+      if (!f.fast) ripple(f.x1, f.y1);
       showPill();
     }
     if (t >= 1) {
@@ -284,20 +293,34 @@ function placeBubble(dt: number): void {
 }
 
 /* ───────── pointing ───────── */
-function ripple(x: number, y: number): void {
-  if (reducedMotion) return;
+function ripple(x: number, y: number, click = false): void {
+  if (reducedMotion && !click) return;
   const r = document.createElement('div');
-  r.className = 'ripple';
+  r.className = click ? 'ripple click' : 'ripple';
   r.style.transform = `translate3d(${x}px, ${y}px, 0)`;
   ripplesEl.appendChild(r);
   const anim = r.animate(
-    [
-      { transform: `translate3d(${x}px, ${y}px, 0) scale(0.2)`, opacity: 0.7 },
-      { transform: `translate3d(${x}px, ${y}px, 0) scale(1.6)`, opacity: 0 },
-    ],
-    { duration: 1100, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
+    click
+      ? [
+          { transform: `translate3d(${x}px, ${y}px, 0) scale(0.35)`, opacity: 0.95 },
+          { transform: `translate3d(${x}px, ${y}px, 0) scale(1.5)`, opacity: 0 },
+        ]
+      : [
+          { transform: `translate3d(${x}px, ${y}px, 0) scale(0.2)`, opacity: 0.7 },
+          { transform: `translate3d(${x}px, ${y}px, 0) scale(1.6)`, opacity: 0 },
+        ],
+    { duration: click ? (reducedMotion ? 400 : 650) : 1100, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
   );
   anim.onfinish = () => r.remove();
+}
+
+/** agent mode: a click lands at p right now — ripple + a small press of the companion. */
+function clickAt(p: OverlayPoint): void {
+  ripple(p.x, p.y, true);
+  if (!reducedMotion) {
+    arrowEl.animate([{ scale: '1' }, { scale: '0.82' }, { scale: '1' }], { duration: 260, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' });
+  }
+  kick();
 }
 
 function showPill(): void {
@@ -347,10 +370,12 @@ function pointAt(p: OverlayPoint): void {
     nx = -nx;
     ny = -ny;
   }
-  const liftAmt = Math.min(dist * 0.28, 160);
+  // agent mode: same arc, but a quick hop (main clicks ~380ms after sending the point)
+  const fast = phase === 'acting';
+  const liftAmt = Math.min(dist * (fast ? 0.14 : 0.28), fast ? 60 : 160);
   flight = {
     t0: performance.now(),
-    dur: clamp(700 + dist * 0.25, 750, 1000),
+    dur: fast ? clamp(200 + dist * 0.08, 220, 320) : clamp(700 + dist * 0.25, 750, 1000),
     x0,
     y0,
     cx: x0 + dx / 2 + nx * liftAmt,
@@ -358,6 +383,7 @@ function pointAt(p: OverlayPoint): void {
     x1: p.x,
     y1: p.y,
     rippled: false,
+    fast,
   };
   mode = 'flying';
   kick();
@@ -414,7 +440,15 @@ function renderBubble(): void {
   const showBubble = config.companion.showBubble;
   const isError = phase === 'error' && !!errorText;
   const wantTranscript = showBubble && !!transcript && (phase === 'transcribing' || phase === 'thinking');
-  const wantReply = showBubble && !!reply && (phase === 'thinking' || phase === 'speaking' || lingering);
+  const wantReply = showBubble && !!reply && (phase === 'thinking' || phase === 'speaking' || phase === 'acting' || lingering);
+  // agent mode lines show even with the reply bubble off: they're how the user stays in control
+  const wantConfirm = !!confirmText && phase !== 'idle' && phase !== 'error' && phase !== 'listening';
+  const wantStep = !!stepText && (phase === 'thinking' || phase === 'speaking' || phase === 'acting');
+  confirmTextEl.textContent = wantConfirm ? confirmText : '';
+  stepEl.textContent = wantStep ? stepText : '';
+  bubbleEl.classList.toggle('has-confirm', wantConfirm);
+  bubbleEl.classList.toggle('has-step', wantStep);
+  confirmEl.setAttribute('aria-hidden', String(!wantConfirm));
   // status lines are shown even with the reply bubble turned off: they explain why nothing happens
   const note = phase === 'listening' || phase === 'transcribing' ? localNote || serverNote : phase !== 'idle' && phase !== 'error' ? serverNote : '';
   const wantNote = !!note;
@@ -441,7 +475,7 @@ function renderBubble(): void {
   bubbleEl.classList.toggle('is-error', isError);
   errorEl.textContent = isError ? errorText : '';
 
-  const want = isError || wantTranscript || wantReply || wantNote;
+  const want = isError || wantTranscript || wantReply || wantNote || wantConfirm || wantStep;
   if (want !== bubbleIn) {
     bubbleIn = want;
     if (want) bubbleSnap = true;
@@ -460,6 +494,8 @@ function onState(s: OverlayState): void {
   root.dataset.phase = phase;
   transcript = (s.transcript ?? '').trim();
   serverNote = (s.note ?? '').trim();
+  confirmText = (s.confirm ?? '').trim();
+  stepText = (s.step ?? '').trim();
   if (phase !== 'listening' && phase !== 'transcribing') micNote = '';
   localNote = modelNote || micNote;
 
@@ -766,9 +802,11 @@ api.onCursor((p) => {
 api.onState(onState);
 
 api.onPoint((p) => {
-  if (p && config.companion.pointing) pointAt(p);
+  // agent mode flies to its click targets even when "point at things" is off
+  if (p && (config.companion.pointing || phase === 'acting')) pointAt(p);
   else returnToCursor();
 });
+api.onClick(clickAt);
 
 api.onPttStart(onPttStart);
 api.onPttStop((req) => void onPttStop(req));

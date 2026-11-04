@@ -704,6 +704,7 @@ function metaFor(t: ChatTurn): string[] {
     if (t.provider) bits.push(PROVIDER_META[t.provider]?.label ?? t.provider);
     if (t.model) bits.push(t.model.toLowerCase());
     if (t.points?.length) bits.push(`pointed at: ${t.points.join(', ').toLowerCase()}`);
+    if (t.actions?.length) bits.push(t.actions.join(' · ').toLowerCase());
   }
   if (t.at) bits.push(clock(t.at));
   return bits;
@@ -809,6 +810,61 @@ function upsertTurn(t: ChatTurn, streamingNow: boolean): void {
   afterGrow(isNew);
 }
 
+/* ───────────── agent mode: approve / progress ───────────── */
+
+/** The assistant turn's column, where agent rows go (under the text, above the meta line). */
+function agentSlot(turnId: string): HTMLElement | null {
+  const node = turnEls.get(turnId);
+  if (!node) return null;
+  const col = node.querySelector<HTMLElement>('.col');
+  if (!col) return null;
+  let slot = col.querySelector<HTMLElement>('.agent');
+  if (!slot) {
+    slot = h('div', { class: 'agent' });
+    const meta = col.querySelector('.meta');
+    if (meta) col.insertBefore(slot, meta);
+    else col.append(slot);
+  }
+  return slot;
+}
+
+function renderConfirm(e: Extract<ChatEvent, { type: 'confirm' }>): void {
+  const slot = agentSlot(e.turnId);
+  if (!slot) return;
+  if (e.pending) {
+    const allow = h('button', { class: 'agent-btn primary', type: 'button', text: 'allow' }) as HTMLButtonElement;
+    const deny = h('button', { class: 'agent-btn', type: 'button', text: 'cancel' }) as HTMLButtonElement;
+    const answer = (yes: boolean) => {
+      allow.disabled = deny.disabled = true;
+      void (yes ? api.approve(e.turnId) : api.deny(e.turnId)).catch(() => {});
+    };
+    allow.addEventListener('click', () => answer(true));
+    deny.addEventListener('click', () => answer(false));
+    slot.replaceChildren(
+      h('div', { class: 'agent-confirm', role: 'group', 'aria-label': 'clickity wants to act' },
+        h('div', { class: 'agent-summary', text: e.summary }),
+        h('div', { class: 'agent-actions' }, allow, deny, h('span', { class: 'agent-hint', text: 'or enter · esc' })),
+      ),
+    );
+    afterGrow(false);
+    announce(`clickity wants to: ${e.summary}. allow?`);
+    if (document.hasFocus()) allow.focus({ preventScroll: true });
+  } else {
+    // not allowed: the turn's error line says so ("not done: cancelled")
+    slot.replaceChildren(...(e.outcome === 'allowed' ? [h('div', { class: 'agent-note', text: 'allowed' })] : []));
+  }
+}
+
+function renderActing(e: Extract<ChatEvent, { type: 'acting' }>): void {
+  // only the newest step shows progress; the run ending clears it everywhere
+  for (const n of el.turns.querySelectorAll('.agent-note.live')) n.remove();
+  if (!e.step) {
+    for (const n of el.turns.querySelectorAll('.agent-note:not(.live)')) n.remove();
+    return;
+  }
+  agentSlot(e.turnId)?.replaceChildren(h('div', { class: 'agent-note live', text: `${e.step} · acting on your screen…` }));
+}
+
 function onEvent(e: ChatEvent): void {
   // a new chat started from this window, or a voice turn while nothing (or an empty chat) is shown → follow it
   if (e.type === 'user' && chat?.id !== e.chatId) {
@@ -822,6 +878,9 @@ function onEvent(e: ChatEvent): void {
 
   if (e.type === 'start') streaming.set(e.chatId, e.turnId);
   if (e.type === 'done' || e.type === 'error') streaming.delete(e.chatId);
+  // an agent run keeps the stop button up while it waits for approval or acts
+  if ((e.type === 'confirm' && e.pending) || (e.type === 'acting' && e.step)) streaming.set(e.chatId, e.turnId);
+  if (e.type === 'acting' && !e.step && streaming.get(e.chatId) === e.turnId) streaming.delete(e.chatId);
   if (e.type === 'start') liveTurns.set(e.chatId, { id: e.turnId, role: 'assistant', text: '', at: Date.now() });
   if (e.type === 'delta') liveTurns.set(e.chatId, { id: e.turnId, role: 'assistant', text: e.text, at: liveTurns.get(e.chatId)?.at ?? Date.now() });
   if (e.type === 'done' || e.type === 'error') liveTurns.delete(e.chatId);
@@ -846,6 +905,12 @@ function onEvent(e: ChatEvent): void {
     case 'done':
       upsertTurn(e.turn, false);
       announce('reply finished');
+      break;
+    case 'confirm':
+      renderConfirm(e);
+      break;
+    case 'acting':
+      renderActing(e);
       break;
     case 'error': {
       const prev = chat.turns.find((t) => t.id === e.turnId);

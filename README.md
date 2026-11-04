@@ -177,6 +177,20 @@ the speaking rate is adjustable in settings.
 
 with agent mode on, the companion can also act on your screen: click, double-click, right-click, type text, press key chords (like cmd + s) and scroll. every action is written to the log (typed text only by its length), and escape stops a running sequence between actions.
 
+**how to ask.** there is no separate mode to switch on. just ask for something to be done, by voice, in the type box or in the chats window with "share screen" on: "click next", "type my email in that field", "save this file", "clickity, do the export for me", "agent: turn on dark mode". questions ("where is…", "what does this do?") still get an answer and a point, not clicks.
+
+**approval.** settings › companion › agent mode has three settings:
+
+- **ask first** (the default): clickity says what it's about to do and shows the steps in its bubble, e.g. `click “save” · type “hello” · press cmd+s`. press **enter** to allow or **esc** to cancel. from the chats window you can also press **allow** under the reply. with no answer after 60 seconds, nothing happens.
+- **automatic**: it acts right away.
+- **off**: it only points, never clicks or types.
+
+**how a task runs.** after each round of actions clickity waits a moment, takes a fresh screenshot and checks its work, then continues until it says it's done. the bubble shows "step 2 of 8". it stops after **max steps** rounds (1–20, default 8; settings › companion). each step is saved in the chat, so the chats window shows "clicked save · typed hello" under the reply.
+
+**stopping.** press **esc** at any time. in the chats window, the stop button works too.
+
+**safety rules.** clickity is told to act only when you asked it to do something, to use few, precise steps, to click only what it can see, and never to do anything destructive or irreversible (delete, send, post, publish, buy, pay, submit, change account settings) or type passwords unless you asked for exactly that in this conversation. models make mistakes, so keep **ask first** on for anything that matters, and watch what it does.
+
 what each system needs:
 
 - **macos**: the **accessibility** permission (system settings › privacy & security › accessibility › clickity). clickity posts the input through a small bundled helper (`clickity-input`), which counts as clickity for this permission. building from source? run `npm run build:input` once (needs xcode's command line tools).

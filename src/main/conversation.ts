@@ -1436,16 +1436,22 @@ export function submitTypedText(text: string): void {
 
 /* ───────────────────────── escape / misc ───────────────────────── */
 
+let confirmEscAt = 0;
+
 export function onEscape(): void {
   closeTyping();
   // agent mode waiting for approval: esc = "no" (said and recorded, unlike a plain stop)
   const pending = current?.agent?.confirm;
   if (pending) {
     log('agent', `${current!.id} cancelled (escape)`);
+    confirmEscAt = Date.now();
     pending.settle('cancelled');
     clearErrorTimer();
     return;
   }
+  // the same esc press can arrive twice (global-shortcut grab + uiohook): don't let the echo
+  // also stop the "okay, i won't do that" that the first one started
+  if (Date.now() - confirmEscAt < 400) return;
   // Escape is global (uiohook hears it in every app): pressing it in an editor must not kill a
   // reply streaming into the chats window, which has its own stop button. An agent run acting on
   // the screen is the exception: esc always stops it.

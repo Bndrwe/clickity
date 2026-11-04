@@ -365,6 +365,83 @@ body {
   display: none;
 }
 
+/* ───────── agent mode ───────── */
+/* "step 2 of 8": a small eyebrow above the reply */
+.step {
+  display: none;
+  margin: 0 0 4px;
+  color: var(--ink-muted);
+  font: 500 11px/1.4 var(--sans);
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  font-variant-numeric: tabular-nums;
+}
+.bubble.has-step .step {
+  display: block;
+}
+.bubble.has-step:not(.has-reply):not(.has-confirm):not(.has-note) .step {
+  margin: 0;
+}
+.bubble.is-error .step {
+  display: none;
+}
+
+/* waiting for approval: what will happen + how to answer */
+.confirm {
+  display: none;
+}
+.bubble.has-confirm .confirm {
+  display: block;
+}
+.bubble.has-confirm.has-reply .confirm,
+.bubble.has-confirm.has-note .confirm {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.bubble.is-error .confirm {
+  display: none;
+}
+.confirm-text {
+  margin: 0;
+  color: var(--ink);
+  font: 500 14px/1.45 var(--sans);
+  overflow-wrap: anywhere;
+}
+.confirm-hint {
+  margin: 6px 0 0;
+  color: var(--ink-muted);
+  font-size: 12px;
+  text-transform: lowercase;
+}
+.confirm-hint kbd {
+  font: 500 11px/1 var(--sans);
+  color: var(--ink-2);
+  padding: 2px 6px 3px;
+  border-radius: 6px;
+  background: var(--bg-sunken);
+  box-shadow: 0 0 0 1px var(--line);
+}
+.bubble.has-confirm {
+  animation: confirm-in 0.6s var(--ease) both;
+}
+@keyframes confirm-in {
+  from {
+    box-shadow: 0 24px 48px -16px var(--shadow), 0 0 0 1px var(--ink);
+  }
+  to {
+    box-shadow: 0 24px 48px -16px var(--shadow), 0 0 0 1px var(--line);
+  }
+}
+
+/* the moment of a click: a tight, quick ring under the companion's tip */
+.ripple.click {
+  width: 30px;
+  height: 30px;
+  margin: -15px 0 0 -15px;
+  box-shadow: 0 0 0 1.5px var(--buddy, var(--ink)), 0 0 0 3.5px color-mix(in srgb, var(--bg-elev) 60%, transparent);
+}
+
 /* ───────── type box ───────── */
 .typebox {
   opacity: 0;

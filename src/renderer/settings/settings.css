@@ -289,3 +289,8 @@ dialog#onboard .ob-mark { width: 44px; height: 44px; margin-bottom: 22px; }
 dialog#onboard #ob-title { font-size: var(--h2); line-height: 1; margin: 6px 0 10px; }
 dialog#onboard .ob-body { margin: 28px 0 10px; gap: 12px; }
 dialog#onboard .ob-actions { margin-top: 32px; }
+
+/* agent mode */
+.agent-hint { margin-top: 8px; max-width: 44ch; }
+.agent-status { padding-top: 6px; font-size: 14px; }
+.agent-status[hidden], #agent-steps-row[hidden] { display: none; }

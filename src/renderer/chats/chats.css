@@ -375,6 +375,32 @@ kbd {
 }
 .body pre code { padding: 0; border: 0; background: none; font-size: 13px; line-height: 1.6; color: #dfe3e8; white-space: pre; }
 .err { margin-top: 6px; color: var(--danger); font-size: 14px; opacity: 0.9; }
+
+/* agent mode: "clickity wants to act" + progress */
+.agent:empty { display: none; }
+.agent { margin-top: 10px; }
+.agent-confirm {
+  display: grid; gap: 10px; padding: 12px 14px; border-radius: 14px;
+  background: var(--glass); border: 1px solid var(--line-2);
+  animation: agent-in 0.5s var(--ease) both;
+}
+@keyframes agent-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.agent-summary { color: var(--text); font-size: 14px; font-weight: 500; overflow-wrap: anywhere; }
+.agent-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.agent-btn {
+  height: 30px; padding: 0 14px; border-radius: 999px; font-size: 13px; font-weight: 500;
+  color: var(--text-2); border: 1px solid var(--line-2); transition: background 0.2s var(--ease), color 0.2s var(--ease);
+}
+.agent-btn:hover { background: var(--surface-2); color: #fff; }
+.agent-btn.primary { background: #f2f2f0; color: #0b0b0b; border-color: transparent; }
+.agent-btn.primary:hover { background: #fff; color: #000; }
+.agent-btn:disabled { opacity: 0.5; cursor: default; }
+.agent-hint { font-size: 12px; color: var(--faint); margin-left: 4px; }
+.agent-note { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.agent-note.off { color: var(--faint); }
+.agent-note.live { animation: agent-pulse 1.6s ease-in-out infinite; }
+@keyframes agent-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { .agent-confirm, .agent-note.live { animation: none; } }
 .body:empty + .err { margin-top: 2px; }
 
 .caret {

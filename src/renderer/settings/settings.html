@@ -219,6 +219,24 @@
         <div class="row-value"><button class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="l-point" id="sw-point"></button></div>
       </div>
       <div class="row">
+        <span class="row-label" id="agent-label">agent mode</span>
+        <div class="row-value">
+          <div>
+            <div class="seg" role="radiogroup" aria-labelledby="agent-label" id="agent-seg">
+              <button type="button" role="radio" data-actions="off" aria-checked="false">off</button>
+              <button type="button" role="radio" data-actions="ask" aria-checked="false">ask first</button>
+              <button type="button" role="radio" data-actions="auto" aria-checked="false">automatic</button>
+            </div>
+            <p class="hint agent-hint" id="agent-hint"></p>
+            <div class="hk-status agent-status" id="agent-status" aria-live="polite"></div>
+          </div>
+        </div>
+      </div>
+      <div class="row" id="agent-steps-row">
+        <label class="row-label" for="max-steps">max steps</label>
+        <div class="row-value"><input id="max-steps" class="narrow tnum" type="number" min="1" max="20" step="1"></div>
+      </div>
+      <div class="row">
         <label class="row-label" for="scale">size</label>
         <div class="row-value range-row">
           <input id="scale" type="range" min="0.5" max="2.5" step="0.05">

@@ -26,6 +26,12 @@ The model may end its reply with zero or more tags:
 
 Mapping: `globalX = bounds.x + x * bounds.width / imageWidth` (same for y), then `localX = globalX - overlayDisplay.bounds.x`.
 
+## Agent mode (action tags)
+
+When `settings.companion.actions !== 'off'` and the turn has screenshots, the system prompt also offers action tags (screenshot pixels, like POINT): `[CLICK|DOUBLECLICK|RIGHTCLICK:x,y:label:screenN]`, `[TYPE:text]` (`\]` / `\\` escapes), `[KEY:cmd+s]`, `[SCROLL:x,y:down 5:screenN]`, `[WAIT:500]`, `[DONE]`. `action-tags.ts` parses / strips them (pure, unit tested; human key names → canonical `KeyName`).
+
+`conversation.runAgent()` loop: map coords with `screenshotToGlobal` → (`'ask'`) `OverlayState.confirm` + ChatEvent `confirm`, wait for Enter (`hotkey.setConfirmKeys` grabs plain Enter/Esc as global shortcuts while pending; ChordEngine `onEnter` is a backup), Esc, chats `approve`/`deny`, or 60 s → phase `'acting'` with `step`: fly the companion to each target (`overlayPoint`, fast flight), `IPC.overlayClick` ripple, `agent-input.performActions()` (→ `input.perform`; `CLICKITY_FAKE_INPUT=1` only logs) → settle 700 ms → fresh screenshots → automatic follow-up model turn, until `[DONE]`, a reply without actions, Esc/stop, an error or `maxSteps`. Each step is its own stored assistant turn with `actions` ("clicked save"); `chatContext` merges consecutive assistant turns.
+
 ## Module APIs (main process)
 
 ### `src/main/settings-store.ts`

@@ -4,6 +4,7 @@ import {
   PROVIDER_KINDS,
   PROVIDER_META,
   type DeepPartial,
+  type InputStatus,
   type KeyName,
   type ModelInfo,
   type PermissionKind,
@@ -940,11 +941,82 @@ function initColor(): void {
 }
 
 
+/* agent mode: off · ask first · automatic, max steps, can we click / type here? */
+const ACCESSIBILITY_URL = 'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility';
+function initAgentMode(): void {
+  type Mode = Settings['companion']['actions'];
+  const seg = [...document.querySelectorAll<HTMLButtonElement>('#agent-seg button')];
+  const hint = $('agent-hint');
+  const statusBox = $('agent-status');
+  const stepsRow = $('agent-steps-row');
+  const HINTS: Record<Mode, string> = {
+    off: 'clickity only points; it never clicks or types.',
+    ask: 'ask it to do something — it shows the steps and waits for enter. esc stops it.',
+    auto: 'it clicks and types right away. esc stops it. it still never deletes, sends or buys unless you asked.',
+  };
+  const sync = () => {
+    const m = settings.companion.actions;
+    for (const b of seg) b.setAttribute('aria-checked', String(b.dataset.actions === m));
+    hint.textContent = HINTS[m] ?? '';
+    stepsRow.hidden = m === 'off';
+    statusBox.hidden = m === 'off';
+  };
+  for (const b of seg) {
+    b.addEventListener('click', () => {
+      const v = b.dataset.actions as Mode;
+      settings = { ...settings, companion: { ...settings.companion, actions: v } };
+      sync();
+      void save({ companion: { actions: v } });
+      if (v !== 'off') void refresh();
+    });
+  }
+  syncers.push(sync);
+  bindText($<HTMLInputElement>('max-steps'), () => String(settings.companion.maxSteps), (v) => {
+    const n = Math.max(1, Math.min(20, Math.round(Number(v))));
+    return Number.isFinite(n) && v !== '' ? { companion: { maxSteps: n } } : null;
+  });
+
+  const render = (st: InputStatus | null) => {
+    statusBox.replaceChildren();
+    if (!st) return void statusBox.append(h('span', { class: 'hk-state', text: 'checking…' }));
+    if (st.ok) {
+      statusBox.append(h('span', { class: 'hk-state', text: 'ready' }), h('span', { class: 'muted', text: st.detail || 'clickity can click and type here' }));
+      return;
+    }
+    const detail = (st.detail || "can't control the mouse and keyboard here").toLowerCase();
+    statusBox.append(h('span', { class: 'hk-state warn', text: detail }));
+    if (platform === 'darwin' && /accessib/.test(detail)) {
+      const grant = h('button', { class: 'text-btn', type: 'button' }, h('span', { text: 'open settings' }));
+      grant.addEventListener('click', () => void api.openExternal(ACCESSIBILITY_URL));
+      const restart = h('button', { class: 'text-btn', type: 'button' }, h('span', { text: 'restart clickity' }));
+      restart.addEventListener('click', () => void api.relaunch());
+      statusBox.append(grant, restart);
+    }
+  };
+  let seq = 0;
+  const refresh = async () => {
+    if (settings.companion.actions === 'off') return;
+    const mine = ++seq;
+    let st: InputStatus | null = null;
+    try {
+      st = await api.inputStatus();
+    } catch (e) {
+      st = { ok: false, backend: 'none', detail: e instanceof Error ? e.message.split('\n')[0] : 'unavailable' };
+    }
+    if (mine === seq) render(st);
+  };
+  window.addEventListener('focus', () => void refresh());
+  render(null);
+  sync();
+  void refresh();
+}
+
 function initCompanion(): void {
   bindSwitch($('sw-follow'), () => settings.companion.followCursor, (v) => ({ companion: { followCursor: v } }));
   bindSwitch($('sw-bubble'), () => settings.companion.showBubble, (v) => ({ companion: { showBubble: v } }));
   bindSwitch($('sw-point'), () => settings.companion.pointing, (v) => ({ companion: { pointing: v } }));
   bindSwitch($('sw-login'), () => settings.launchAtLogin, (v) => ({ launchAtLogin: v }));
+  initAgentMode();
   bindRange($<HTMLInputElement>('scale'), $('scale-out'), () => settings.companion.scale, (n) => `${n.toFixed(2)}×`, (n) => ({ companion: { scale: n } }));
   initColor();
   bindText($<HTMLTextAreaElement>('instructions'), () => settings.customInstructions, (v) => ({ customInstructions: v }));
