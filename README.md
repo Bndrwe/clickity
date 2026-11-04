@@ -188,6 +188,14 @@ the model can end a reply with pointing tags, such as `[POINT:x,y:label:screen1]
 
 - **permissions say "not allowed" but the switches are on (mac)**: clickity's free builds aren't signed with an apple developer certificate, so macos treats every new version as a different app — the old switches stay on but no longer apply. click **reset permissions** in settings › permissions (it clears clickity's entries and restarts), then grant them again. by hand: in system settings › privacy & security › accessibility / screen recording / microphone / input monitoring, select clickity, click **−**, reopen clickity and grant again.
 
+  still stuck? paste this into **terminal** — it quits clickity, removes the download quarantine (which makes macos run a hidden copy of the app), re-signs it, clears its old permission entries and reopens it:
+
+  ```sh
+  osascript -e 'quit app "Clickity"'; sleep 1; xattr -dr com.apple.quarantine /Applications/Clickity.app; codesign --force --deep --sign - /Applications/Clickity.app; tccutil reset All com.clickity.app; open /Applications/Clickity.app
+  ```
+
+  then grant each permission when macos asks (microphone, screen recording, accessibility, input monitoring) and restart clickity once from settings › permissions. macos never lets apps or the terminal *grant* these for you — that always happens in system settings.
+
 - **"cli not found" for a subscription provider**: the app cannot find `claude`, `codex` or `gemini` on its path. open settings, find the provider, and set the cli path to the full path of the binary (run `which claude` in a terminal to get it).
 - **the cli works in a terminal but not when the app is opened from finder or the dock**: on mac, apps started from finder do not inherit the path from your shell profile. a cli installed through nvm or a global npm prefix is often missing from that path. set the cli path, as above.
 - **the talk key does nothing on linux**: global key handling works best on x11. on wayland, clickity only hears keys while an x11 (xwayland) app has focus, so the chord may not trigger in native wayland apps. log in to an "x11" / "xorg" session for the best results. linux support is best-effort and targets x11.

@@ -1043,6 +1043,44 @@ function restartRow(): HTMLElement {
         reset,
       ),
     ),
+    terminalFixRow(),
+  );
+}
+/**
+ * macOS doesn't allow granting privacy permissions from the terminal (the database is
+ * SIP-protected). What the terminal can do is remove everything that makes macOS ignore
+ * a grant: the download quarantine (which runs the app from a hidden translocated copy),
+ * a stale signature, and old entries — then macOS asks fresh and the grant sticks.
+ */
+const TERMINAL_FIX =
+  `osascript -e 'quit app "Clickity"'; sleep 1; ` +
+  `xattr -dr com.apple.quarantine /Applications/Clickity.app; ` +
+  `codesign --force --deep --sign - /Applications/Clickity.app; ` +
+  `tccutil reset All com.clickity.app; ` +
+  `open /Applications/Clickity.app`;
+function terminalFixRow(): HTMLElement {
+  const copy = h('button', { class: 'btn', type: 'button', 'aria-live': 'polite' }, h('span', { text: 'copy' }));
+  copy.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(TERMINAL_FIX);
+      flash(copy, 'copied');
+    } catch {
+      flash(copy, 'copy failed');
+    }
+  });
+  return h(
+    'div',
+    { class: 'row' },
+    h('span', { class: 'row-label', text: 'still not allowed?' }),
+    h(
+      'div',
+      { class: 'row-value' },
+      h('span', {
+        class: 'muted',
+        text: 'paste this in terminal. it clears what makes macos ignore your switches, then reopens clickity — grant each permission when macos asks, then restart clickity once. (macos only lets you grant permissions in system settings, never from the terminal.) ',
+      }),
+      h('div', { class: 'code' }, h('code', { text: TERMINAL_FIX }), copy),
+    ),
   );
 }
 const platformName = () => ({ darwin: 'macos', win32: 'windows', linux: 'linux' } as Record<string, string>)[platform] ?? platform;
@@ -1144,9 +1182,8 @@ function initOnboarding(): void {
   });
   back.addEventListener('click', () => go(step - 1));
   skip.addEventListener('click', () => go(step + 1));
-  dlg.addEventListener('click', (e) => {
-    if (e.target === dlg) dlg.close();
-  });
+  // onboarding is a full page now: it closes only via "start" (or by finishing the steps)
+  dlg.addEventListener('cancel', (e) => e.preventDefault());
   syncers.push(() => {
     if (dlg.open && step === 2) render();
   });

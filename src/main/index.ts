@@ -129,14 +129,12 @@ function handleSettingsChanged(s: Settings, prev: Settings): void {
   }
   if (s.theme !== prev.theme) applySettingsTheme(s.theme);
   if (s.launchAtLogin !== prev.launchAtLogin) applyLaunchAtLogin(s.launchAtLogin);
-  // finishing onboarding takes you to the main window
-  if (!prev.onboarded && s.onboarded) openChatsWindow();
+
 }
 
-/** The window to show when the app icon is clicked: chats once set up, settings before. */
+/** The window to show when the app icon is clicked: settings, the main window. */
 function openMainWindow(): void {
-  if (getSettings().onboarded) openChatsWindow();
-  else openSettingsWindow();
+  openSettingsWindow();
 }
 
 /* ───────────────────────── IPC ───────────────────────── */
@@ -326,7 +324,6 @@ async function bootstrap(): Promise<void> {
 
   // Opening the app from its icon shows the settings window, like any app.
   // Started by the OS at login: stay quiet in the menu bar / tray.
-  // Chats is the main window; settings (with onboarding) opens first until setup is done.
-  if (!settings.onboarded) openSettingsWindow();
-  else if (!launchedAtLogin()) openChatsWindow();
+  // Settings is the main window (onboarding shows there on first run); chats opens from its "chats" link.
+  if (!settings.onboarded || !launchedAtLogin()) openSettingsWindow();
 }
