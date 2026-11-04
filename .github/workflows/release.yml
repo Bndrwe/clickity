@@ -74,5 +74,5 @@ jobs:
             - **windows:** `…-win-x64.exe`
             - **linux:** `…-linux-x86_64.AppImage` or `.deb`
 
-            mac: the app isn't notarized by apple, so the first time, right-click the app › open › open.
+            mac: the app isn't notarized by apple, so macos blocks the first launch. click "done", then system settings › privacy & security › scroll down › "open anyway". or run once in terminal: `xattr -dr com.apple.quarantine /Applications/Clickity.app`
             windows: smartscreen may warn — click "more info" › "run anyway".
