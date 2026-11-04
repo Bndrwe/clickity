@@ -94,6 +94,15 @@ for (const m of MODES) {
   el.chips.append(b);
 }
 
+new ResizeObserver(() => {
+  const c = el.chips;
+  c.classList.toggle('overflow', c.scrollWidth > c.clientWidth + 1 && c.scrollLeft + c.clientWidth < c.scrollWidth - 2);
+}).observe(el.chips);
+el.chips.addEventListener('scroll', () => {
+  const c = el.chips;
+  c.classList.toggle('overflow', c.scrollLeft + c.clientWidth < c.scrollWidth - 2);
+});
+
 function activePrefixMode(): Mode | undefined {
   const t = el.input.value.toLowerCase();
   return MODES.find((m) => m.prefix && t.startsWith(m.prefix.trimEnd()));
@@ -466,7 +475,10 @@ function renderRow(c: ChatSummary, now: number): HTMLElement {
       const t = inp.value.trim();
       if (commit && t && t !== c.title) {
         c.title = t;
-        if (chat?.id === c.id) chat.title = t, syncTitle();
+        if (chat?.id === c.id) {
+          chat.title = t;
+          syncTitle();
+        }
         void api.rename(c.id, t).catch((err) => toast(errMsg(err)));
       }
       renderList();
