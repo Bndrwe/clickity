@@ -43,10 +43,40 @@ all builds: [releases page](https://github.com/Bndrwe/clickity/releases).
 
 ### installing
 
-**mac** — open the dmg and drag clickity into applications. clickity isn't notarized by apple yet, so the first launch is blocked ("apple could not verify…"). click **done**, then either:
+**mac** — open the dmg and drag clickity into **applications**.
 
-- open **system settings › privacy & security**, scroll down, click **open anyway** next to clickity, and confirm; or
-- run once in terminal: `xattr -dr com.apple.quarantine /Applications/Clickity.app`
+#### "clickity" not opened? that's expected
+
+the first time you open clickity, macos shows this:
+
+<p align="center">
+  <img src="docs/screenshots/mac-not-opened.png" width="300" alt="macos dialog: “Clickity” not opened. apple could not verify “Clickity” is free of malware that may harm your mac or compromise your privacy.">
+</p>
+
+this happens because clickity isn't notarized by apple: that needs a paid apple developer account, and it's a free open-source app. nothing is wrong with your download. **don't click move to trash** — click **done**, then pick one of these:
+
+**option a: system settings (no terminal)**
+
+1. click **done** on the dialog.
+2. open **system settings › privacy & security**.
+3. scroll down to **security**. you'll see *"clickity" was blocked to protect your mac*. click **open anyway**.
+4. enter your password (or use touch id), then click **open anyway** in the dialog that follows.
+
+clickity opens, and macos remembers your choice — you only do this once per install.
+
+**option b: one terminal command**
+
+open **terminal** and run:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Clickity.app
+```
+
+then open clickity normally. this removes the "downloaded from the internet" flag macos puts on the app.
+
+> don't see **open anyway**? it only shows for about an hour after you tried to open the app — open clickity once more, click **done**, and look again. if clickity isn't in applications yet, drag it there from the dmg first; apps run straight from the dmg can't be approved.
+
+after it opens, grant **microphone**, **screen recording** and **accessibility** in settings › permissions, then click **restart clickity**.
 
 **windows** — run the installer. if smartscreen warns, click **more info › run anyway**. you get a start menu and desktop shortcut.
 
