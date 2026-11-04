@@ -176,15 +176,15 @@ const CORNER = 0.1; // rounding of the triangle corners (canvas units, before fi
  *  ticks: 3 = full mark, 2 = simplified for tiny sizes.
  *  tickW: tick stroke width (canvas units, before fit).
  */
-function buildMark({ extent, ticks = 3, tickW = 0.1, gap = 0.14, lenK = 1 }) {
+function buildMark({ extent, ticks = 3, tickW = 0.1, gap = 0.26, lenK = 1 }) {
   const tri = companionVertices(1, THETA);
   const tip = tri[0];
   const phi = Math.atan2(-Math.cos(THETA), Math.sin(THETA)); // direction of the tip
-  const spread = ticks === 3 ? [-0.62, 0, 0.62] : [-0.5, 0.5];
+  const spread = ticks === 3 ? [-0.7, 0, 0.7] : [-0.55, 0.55];
   const segs = spread.map((off, i) => {
     const a = phi + off;
     const mid = ticks === 3 && off === 0;
-    const len = (mid ? 0.4 : 0.3) * lenK;
+    const len = (mid ? 0.3 : 0.26) * lenK;
     const sx = tip[0] + Math.cos(a) * gap, sy = tip[1] + Math.sin(a) * gap;
     return [sx, sy, sx + Math.cos(a) * len, sy + Math.sin(a) * len];
   });
@@ -304,9 +304,9 @@ const BLACK = [0, 0, 0];
 
 const outputs = [
   { file: 'icon.png', size: 1024, color: INK, extent: 1.2, roundBg: OFF_WHITE, shadow: true },
-  { file: 'tray.png', size: 32, color: INK, extent: 1.84, tickW: 0.17, gap: 0.12, sub: 8 },
-  { file: 'tray-template.png', size: 16, color: BLACK, extent: 1.92, ticks: 2, tickW: 0.24, gap: 0.2, lenK: 1.1, sub: 8 },
-  { file: 'tray-template@2x.png', size: 32, color: BLACK, extent: 1.84, tickW: 0.17, gap: 0.12, sub: 8 },
+  { file: 'tray.png', size: 32, color: INK, extent: 1.84, ticks: 2, tickW: 0.17, gap: 0.3, lenK: 1.5, sub: 8 },
+  { file: 'tray-template.png', size: 16, color: BLACK, extent: 1.92, ticks: 2, tickW: 0.27, gap: 0.34, lenK: 1.45, sub: 8 },
+  { file: 'tray-template@2x.png', size: 32, color: BLACK, extent: 1.84, ticks: 2, tickW: 0.17, gap: 0.3, lenK: 1.5, sub: 8 },
 ];
 
 writeLogos();
