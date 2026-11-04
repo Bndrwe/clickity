@@ -16,6 +16,23 @@ clickyclone is an open-source clone of heyclicky.com. the difference is that you
 4. the reply streams into a bubble, and the companion reads it out loud.
 5. if the model points at something, the companion flies there and lands next to it.
 
+## download
+
+grab the installer for your computer from the [releases page](https://github.com/bndrwe/clickyclone/releases):
+
+| computer | file |
+|---|---|
+| mac with apple silicon (m1–m4) | `Clicky Clone-…-mac-arm64.dmg` |
+| mac with intel | `Clicky Clone-…-mac-x64.dmg` |
+| windows 10 / 11 | `Clicky Clone-…-win-x64.exe` |
+| linux | `Clicky Clone-…-linux-x86_64.AppImage` or `.deb` |
+
+on mac, open the dmg and drag clicky clone into applications. the app isn't notarized by apple, so the first time you open it: right-click it › open › open. on windows, smartscreen may warn: more info › run anyway.
+
+clicky clone then behaves like any app: it has a dock / taskbar / start-menu icon, clicking the icon opens its settings, the companion keeps running while the window is closed, and you quit it with cmd + q, the dock menu, or quit in the menu-bar / tray icon. turn on "launch at login" in settings to have it start quietly when you log in.
+
+installers are built by github actions (`.github/workflows/release.yml`) whenever a `v*` tag is pushed, or on demand from the actions tab.
+
 ## install and run from source
 
 you need node.js and npm.

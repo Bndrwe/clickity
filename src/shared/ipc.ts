@@ -52,6 +52,7 @@ export const IPC = {
   appInfo: 'app:info', // () => { version, platform }
   testSpeak: 'speech:test', // () => void — companion says a short line using current tts settings
   appQuit: 'app:quit', // () => void
+  appRelaunch: 'app:relaunch', // () => void — restart (macOS applies some permissions only after a relaunch)
 
   /* main → settings window */
   settingsChanged: 'settings:changed', // Settings
@@ -91,7 +92,9 @@ export interface SettingsApi {
   requestPermission(kind: PermissionKind): Promise<PermissionsStatus>;
   clearHistory(): Promise<void>;
   openExternal(url: string): Promise<void>;
-  appInfo(): Promise<{ version: string; platform: NodeJS.Platform }>;
+  /** packaged = running as the installed app (false under `npm run dev`) */
+  appInfo(): Promise<{ version: string; platform: NodeJS.Platform; packaged: boolean }>;
+  relaunch(): Promise<void>;
   testSpeak(): Promise<void>;
   quit(): Promise<void>;
 }

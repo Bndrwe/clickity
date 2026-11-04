@@ -20,6 +20,7 @@ const api: SettingsApi = {
   clearHistory: () => ipcRenderer.invoke(IPC.historyClear),
   openExternal: (url) => ipcRenderer.invoke(IPC.openExternal, url),
   appInfo: () => ipcRenderer.invoke(IPC.appInfo),
+  relaunch: () => ipcRenderer.invoke(IPC.appRelaunch),
   testSpeak: () => ipcRenderer.invoke(IPC.testSpeak),
   quit: () => ipcRenderer.invoke(IPC.appQuit),
 };

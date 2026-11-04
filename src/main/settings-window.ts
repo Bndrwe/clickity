@@ -67,16 +67,12 @@ export function openSettingsWindow(): BrowserWindow {
   });
 
   w.once('ready-to-show', () => {
-    // With the dock hidden we're an accessory app; show the dock icon while settings
-    // are open so the window behaves normally (cmd-tab, app menu).
-    if (isMac) void app.dock?.show();
     w.show();
     w.focus();
     if (isMac) app.focus({ steal: true });
   });
   w.on('closed', () => {
     win = null;
-    if (isMac) app.dock?.hide();
   });
 
   void w.loadFile(path.join(__dirname, '../renderer/settings/settings.html'));

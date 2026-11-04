@@ -34,7 +34,7 @@ const typeInput = $<HTMLInputElement>('typebox-input');
 
 /* ───────── config / theme ───────── */
 let config: OverlayConfig = {
-  companion: { followCursor: true, offsetX: 18, offsetY: 20, scale: 1, showBubble: true, pointing: true },
+  companion: { followCursor: true, offsetX: 18, offsetY: 20, scale: 1, color: '', showBubble: true, pointing: true },
   theme: 'system',
   displayBounds: { x: window.screenX, y: window.screenY, width: window.innerWidth, height: window.innerHeight },
   hotkeyLabel: '',
@@ -601,8 +601,10 @@ async function onPttStop(req: PttStopRequest): Promise<void> {
 api.onConfig((c) => {
   const prevFollow = config.companion.followCursor;
   config = c;
-  scale = clamp(c.companion.scale || 1, 0.5, 2);
+  scale = clamp(c.companion.scale || 1, 0.5, 2.5);
   root.style.setProperty('--s', String(scale));
+  if (c.companion.color) root.style.setProperty('--buddy', c.companion.color);
+  else root.style.removeProperty('--buddy');
   applyTheme();
   if (prevFollow !== c.companion.followCursor && mode === 'follow') {
     const t = followTarget();

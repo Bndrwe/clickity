@@ -100,8 +100,9 @@ body {
   opacity: 0.92;
 }
 .arrow .fill {
-  fill: var(--ink);
-  stroke: var(--ink);
+  /* --buddy is the user's companion color (settings › companion › color); default ink */
+  fill: var(--buddy, var(--ink));
+  stroke: var(--buddy, var(--ink));
   stroke-width: 2.4;
 }
 
@@ -176,7 +177,7 @@ body {
   width: calc(2px * var(--s));
   height: calc(12px * var(--s));
   border-radius: 2px;
-  background: var(--ink);
+  background: var(--buddy, var(--ink));
   transform: scaleY(0.2);
   will-change: transform;
 }
