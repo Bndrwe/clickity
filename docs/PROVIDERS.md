@@ -52,7 +52,7 @@ choose the sign-in with your chatgpt account when prompted.
 
 ## gemini (subscription)
 
-**what you need:** a google account with a google ai pro plan, or a free google account for the free tier limits.
+**what you need:** a google account with a google ai pro plan. a free google account may also work, with lower limits.
 
 **install and sign in:**
 
@@ -140,9 +140,9 @@ the default base url is `http://localhost:11434/v1`, which is where ollama liste
 - `llama3.2-vision`
 - `gemma3` (the 4b size and up accept images)
 
-a text-only model cannot read the screenshots. depending on the server, it either ignores the images and answers from your words alone, or the request fails with an error that mentions images. if you see an error like that, switch to a vision model.
+a text-only model cannot read the screenshots. depending on the server, it may ignore the images and answer from your words alone, or the request may fail with an error that mentions images. if you see an error like that, switch to a vision model.
 
-smaller vision models answer more slowly and may describe the screen less accurately, so pointing is less reliable with them.
+smaller vision models may describe the screen less accurately, so pointing can be less reliable with them.
 
 **cost:** free to run apart from electricity and the hardware. a larger model needs more memory and a fast gpu to respond in a few seconds.
 
