@@ -1,5 +1,9 @@
 // IPC channel names and the APIs each preload exposes on `window`.
 import type {
+  Chat,
+  ChatEvent,
+  ChatSendRequest,
+  ChatSummary,
   DeepPartial,
   ModelInfo,
   OverlayConfig,
@@ -54,6 +58,24 @@ export const IPC = {
   appQuit: 'app:quit', // () => void
   appRelaunch: 'app:relaunch', // () => void — restart (macOS applies some permissions only after a relaunch)
 
+  openChats: 'app:open-chats', // () => void — from settings (and tray / app menu in main)
+  openSettings: 'app:open-settings', // () => void — from the chats window
+
+  /* chats window → main (invoke) */
+  chatsList: 'chats:list', // () => ChatSummary[] (newest first)
+  chatsGet: 'chats:get', // (id) => Chat | null
+  chatsNew: 'chats:new', // () => Chat — empty chat, becomes the active conversation
+  chatsOpen: 'chats:open', // (id) => void — make it the active conversation (voice turns continue it)
+  chatsRename: 'chats:rename', // (id, title) => void
+  chatsDelete: 'chats:delete', // (id) => void
+  chatsSend: 'chats:send', // (req: ChatSendRequest) => { chatId } — reply streams via chatsEvent
+  chatsStop: 'chats:stop', // (chatId) => void — abort a reply in progress
+  chatsActive: 'chats:active', // () => string | null — id of the active conversation
+
+  /* main → chats window */
+  chatsEvent: 'chats:event', // ChatEvent
+  chatsChanged: 'chats:changed', // ChatSummary[] — list changed (new chat, rename, voice turn…)
+
   /* main → settings window */
   settingsChanged: 'settings:changed', // Settings
 } as const;
@@ -97,11 +119,34 @@ export interface SettingsApi {
   relaunch(): Promise<void>;
   testSpeak(): Promise<void>;
   quit(): Promise<void>;
+  openChats(): Promise<void>;
+}
+
+/** Exposed as `window.chats` by src/preload/chats.ts */
+export interface ChatsApi {
+  list(): Promise<ChatSummary[]>;
+  get(id: string): Promise<Chat | null>;
+  create(): Promise<Chat>;
+  open(id: string): Promise<void>;
+  rename(id: string, title: string): Promise<void>;
+  remove(id: string): Promise<void>;
+  send(req: ChatSendRequest): Promise<{ chatId: string }>;
+  stop(chatId: string): Promise<void>;
+  active(): Promise<string | null>;
+  onEvent(cb: (e: ChatEvent) => void): void;
+  onChanged(cb: (list: ChatSummary[]) => void): void;
+  // shared with the settings window
+  getSettings(): Promise<Settings>;
+  setSettings(patch: DeepPartial<Settings>): Promise<Settings>;
+  onSettingsChanged(cb: (s: Settings) => void): void;
+  providerModels(kind: ProviderKind): Promise<ModelInfo[]>;
+  openSettings(): Promise<void>;
 }
 
 declare global {
   interface Window {
     overlay: OverlayApi;
     clicky: SettingsApi;
+    chats: ChatsApi;
   }
 }

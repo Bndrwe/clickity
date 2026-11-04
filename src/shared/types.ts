@@ -352,3 +352,68 @@ export interface OverlayConfig {
   displayBounds: { x: number; y: number; width: number; height: number };
   hotkeyLabel: string; // e.g. "ctrl + option"
 }
+
+/* ───────────────────────── chat history ───────────────────────── */
+
+/** One message in a stored chat. Screenshots are never stored, only a count. */
+export interface ChatTurn {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+  at: number; // epoch ms
+  /** how the user turn arrived: held the talk key, the overlay type box, or the chats window */
+  source?: 'voice' | 'type' | 'window';
+  /** number of screenshots sent with this user turn */
+  screenshots?: number;
+  /** names of attachments sent from the chats window */
+  attachments?: string[];
+  /** labels the companion pointed at (assistant turns) */
+  points?: string[];
+  provider?: ProviderKind;
+  model?: string;
+  /** assistant turn failed; text holds whatever streamed before the error */
+  error?: string;
+}
+
+export interface ChatSummary {
+  id: string;
+  title: string; // first user message, trimmed (or a user rename)
+  createdAt: number;
+  updatedAt: number;
+  turnCount: number;
+  preview: string; // last assistant reply, trimmed to ~120 chars
+}
+
+export interface Chat {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  turns: ChatTurn[];
+}
+
+/** An image or text file attached in the chats window composer. */
+export interface ChatAttachment {
+  name: string;
+  mime: string; // image/png, image/jpeg, image/webp, text/plain…
+  base64: string;
+}
+
+export interface ChatSendRequest {
+  chatId: string | null; // null → start a new chat
+  text: string;
+  /** also capture the screens, like a voice turn */
+  includeScreen: boolean;
+  attachments?: ChatAttachment[];
+  /** override the provider/model for this message (defaults to settings) */
+  provider?: ProviderKind;
+  model?: string;
+}
+
+/** Streamed back to the chats window while a reply is generated. */
+export type ChatEvent =
+  | { type: 'user'; chatId: string; turn: ChatTurn } // user turn stored (voice or window)
+  | { type: 'start'; chatId: string; turnId: string } // assistant turn begins
+  | { type: 'delta'; chatId: string; turnId: string; text: string } // full visible text so far
+  | { type: 'done'; chatId: string; turn: ChatTurn }
+  | { type: 'error'; chatId: string; turnId: string; error: string };
