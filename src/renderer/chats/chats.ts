@@ -15,6 +15,7 @@ import {
 import { $, h, icon, logo, markSvg, type IconName } from './dom';
 import { renderMarkdown } from './markdown';
 import { GROUPS, clock, groupOf, relTime } from './time';
+import { clickTicks, enterEmptyState, enterList, enterMessage, openPopover, pressSend } from './motion';
 
 const api = window.chats;
 const isMac = /Mac/i.test(navigator.platform || navigator.userAgent);
@@ -195,6 +196,7 @@ async function submit(): Promise<void> {
   attachments = [];
   renderAttachments();
   syncComposer();
+  pressSend(el.send);
   const chatId = chat && chat.id ? chat.id : null;
   if (!chatId) awaitingNewChat = true;
   try {
@@ -393,6 +395,7 @@ async function save(patch: Parameters<typeof api.setSettings>[0]): Promise<void>
 
 function placePopover(pop: HTMLElement, anchor: HTMLElement, align: 'left' | 'right' = 'right'): void {
   pop.hidden = false;
+  openPopover(pop);
   pop.style.maxHeight = '';
   const r = anchor.getBoundingClientRect();
   const ph = pop.offsetHeight;
@@ -651,7 +654,9 @@ function syncTitle(): void {
 function showChat(c: Chat | null): void {
   chat = c;
   const empty = !c || c.turns.length === 0;
+  const wasEmpty = el.main.dataset.mode === 'empty';
   el.main.dataset.mode = empty ? 'empty' : 'thread';
+  if (empty && !wasEmpty) enterEmptyState([$('greeting'), $('composer'), $('hint')]);
   el.turns.replaceChildren(...(c ? c.turns.map((t) => renderTurn(t, false)) : []));
   turnEls.clear();
   el.turns.querySelectorAll<HTMLElement>('.msg').forEach((n) => turnEls.set(n.dataset.id!, n));
@@ -773,6 +778,12 @@ function upsertTurn(t: ChatTurn, streamingNow: boolean): void {
     const n = renderTurn(t, true, streamingNow);
     el.turns.append(n);
     turnEls.set(t.id, n);
+    enterMessage(n);
+    // signature: the mark "clicks" as clickity starts to answer
+    if (t.role === 'assistant' && streamingNow) {
+      clickTicks(n.querySelector('.avatar svg'));
+      clickTicks(document.querySelector('#side-brand svg'));
+    }
   }
   afterGrow(isNew);
 }
@@ -909,5 +920,9 @@ async function boot(): Promise<void> {
   showChat(c);
   el.input.focus();
   document.body.classList.add('ready');
+  // first paint: list rows settle in; an empty window brings its composer in, then the mark clicks once
+  enterList(document.querySelectorAll('#sidebar .row'));
+  if (el.main.dataset.mode === 'empty') enterEmptyState([$('greeting'), $('composer'), $('hint')]);
+  setTimeout(() => clickTicks(document.querySelector('#side-brand svg')), 500);
 }
 void boot();
