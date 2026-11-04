@@ -23,6 +23,7 @@ const api: OverlayApi = {
   speechDone: () => ipcRenderer.send(IPC.speechDone),
   submitText: (text) => ipcRenderer.send(IPC.textSubmit, text),
   cancelText: () => ipcRenderer.send(IPC.textCancel),
+  setInteractive: (on: boolean) => ipcRenderer.send(IPC.overlaySetInteractive, !!on),
   ready: () => ipcRenderer.send(IPC.overlayReady),
   log: (entry) => ipcRenderer.send(IPC.overlayLog, entry),
   pttProgress: (note) => ipcRenderer.send(IPC.pttProgress, note),

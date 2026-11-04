@@ -71,6 +71,7 @@ export const IPC = {
   textSubmit: 'overlay:text-submit', // string
   textCancel: 'overlay:text-cancel', // void
   overlayReady: 'overlay:ready', // void — renderer loaded, send it config
+  overlaySetInteractive: 'overlay:set-interactive', // boolean — pointer is over the bubble: accept clicks so it can be dragged
   overlayLog: 'overlay:log', // OverlayLogEntry — diagnostic line for clickity.log
   pttProgress: 'ptt:progress', // string — status while transcribing (e.g. model download %); keeps main's timeout alive
 
@@ -144,6 +145,8 @@ export interface OverlayApi {
   speechDone(): void;
   submitText(text: string): void;
   cancelText(): void;
+  /** while the pointer is over the bubble, let the overlay take clicks (for dragging) */
+  setInteractive(on: boolean): void;
   ready(): void;
   /** diagnostic line for clickity.log */
   log(entry: OverlayLogEntry): void;

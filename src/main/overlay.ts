@@ -153,6 +153,11 @@ export function initOverlays(): void {
     if (msg) log(`overlay ${displayOf.get(e.sender.id)?.id ?? '?'}`, entry?.level === 'info' ? '' : `${entry?.level}:`, msg);
   });
 
+  ipcMain.on(IPC.overlaySetInteractive, (e, on: unknown) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (win && isOverlay(win)) setOverlayInteractive(win, on === true);
+  });
+
   ipcMain.on(IPC.overlayReady, (e) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || !isOverlay(win)) return;
@@ -247,8 +252,22 @@ export function refreshOverlayConfigs(): void {
  * Temporarily make an overlay interactive for the type box (focusable, receives clicks),
  * or restore it to a passive click-through layer.
  */
+const typingWins = new WeakSet<BrowserWindow>();
+
+/**
+ * While the pointer is over the reply bubble, let the overlay take mouse clicks so the
+ * bubble can be dragged; otherwise stay click-through. (No-op while the type box is open:
+ * the window is already interactive then.)
+ */
+export function setOverlayInteractive(win: BrowserWindow | null | undefined, on: boolean): void {
+  if (!win || win.isDestroyed() || typingWins.has(win)) return;
+  win.setIgnoreMouseEvents(!on, { forward: true });
+}
+
 export function setOverlayTyping(win: BrowserWindow | null | undefined, typing: boolean): void {
   if (!win || win.isDestroyed()) return;
+  if (typing) typingWins.add(win);
+  else typingWins.delete(win);
   if (typing) {
     win.setFocusable(true);
     win.setIgnoreMouseEvents(false);

@@ -489,3 +489,9 @@ body {
     transition: none !important;
   }
 }
+
+/* the pinned bubble and type box can be dragged */
+.bubble.is-in { pointer-events: auto; cursor: grab; touch-action: none; user-select: none; }
+.typebox { cursor: grab; touch-action: none; }
+.typebox input { cursor: text; }
+.dragging, .dragging .bubble, .dragging .typebox { cursor: grabbing !important; }

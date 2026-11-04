@@ -123,6 +123,15 @@ let bubbleW = 0;
 let bubbleH = 0;
 let bubbleFlip = false;
 let bubbleSnap = true;
+/** where the bubble is pinned (overlay-local px) — set once when it appears, then only moved by dragging */
+let bubbleAnchor: { x: number; y: number } | null = null;
+/** where the type box is pinned while open */
+let typeAnchor: { x: number; y: number } | null = null;
+/** last place the type box sat, so the reply bubble opens right where you typed */
+let lastTypeSpot: { x: number; y: number; at: number } | null = null;
+/** a drag in progress: which box, and the pointer's offset inside it */
+let drag: { which: 'bubble' | 'type'; dx: number; dy: number; id: number } | null = null;
+let hoverInteractive = false;
 
 let typeW = 280;
 let typeH = 42;
@@ -273,22 +282,42 @@ function slotFor(w: number, h: number): { x: number; y: number; flip: boolean } 
   return { x, y, flip };
 }
 
+/** keep a pinned box fully on screen (it can grow as the reply streams in) */
+function keepOnScreen(a: { x: number; y: number }, w: number, h: number): { x: number; y: number } {
+  const m = 12;
+  return {
+    x: clamp(a.x, m, Math.max(m, window.innerWidth - w - m)),
+    y: clamp(a.y, m, Math.max(m, window.innerHeight - h - m)),
+  };
+}
+
 function placeBubble(dt: number): void {
   if (bubbleIn) {
-    const s = slotFor(bubbleW || 200, bubbleH || 44);
-    if (s.flip !== bubbleFlip) {
-      bubbleFlip = s.flip;
-      bubbleEl.classList.toggle('flip-x', s.flip);
+    // Pin the bubble where it first appears (or where the type box was) instead of
+    // chasing the cursor; after that it only moves when the user drags it.
+    if (!bubbleAnchor) {
+      const recentType = lastTypeSpot && performance.now() - lastTypeSpot.at < 4000 ? lastTypeSpot : null;
+      const s = slotFor(bubbleW || 200, bubbleH || 44);
+      bubbleAnchor = recentType ? { x: recentType.x, y: recentType.y } : { x: s.x, y: s.y };
+      if (s.flip !== bubbleFlip) {
+        bubbleFlip = s.flip;
+        bubbleEl.classList.toggle('flip-x', s.flip);
+      }
     }
-    if (bubbleSnap || reducedMotion) {
-      bubbleSpring.snap(s.x, s.y);
+    const t = keepOnScreen(bubbleAnchor, bubbleW || 200, bubbleH || 44);
+    if (bubbleSnap || reducedMotion || drag?.which === 'bubble') {
+      bubbleSpring.snap(t.x, t.y);
       bubbleSnap = false;
-    } else bubbleSpring.step(s.x, s.y, dt);
+    } else bubbleSpring.step(t.x, t.y, dt);
     bubblePos.style.transform = `translate3d(${bubbleSpring.x.toFixed(2)}px, ${bubbleSpring.y.toFixed(2)}px, 0)`;
   }
   if (typeOpen) {
-    const s = slotFor(typeW, typeH);
-    typePos.style.transform = `translate3d(${s.x.toFixed(2)}px, ${s.y.toFixed(2)}px, 0)`;
+    if (!typeAnchor) {
+      const s = slotFor(typeW, typeH);
+      typeAnchor = { x: s.x, y: s.y };
+    }
+    const t = keepOnScreen(typeAnchor, typeW, typeH);
+    typePos.style.transform = `translate3d(${t.x.toFixed(2)}px, ${t.y.toFixed(2)}px, 0)`;
   }
 }
 
@@ -483,6 +512,9 @@ function renderBubble(): void {
     if (!want) {
       transcriptOpen = false;
       transcriptWrap.classList.remove('is-open');
+      bubbleAnchor = null; // next turn pins afresh
+      if (drag?.which === 'bubble') drag = null;
+      setHoverInteractive(false);
     }
   }
   kick();
@@ -552,8 +584,10 @@ new ResizeObserver((entries) => {
 }).observe(typeForm);
 
 function setTypeBox(open: boolean): void {
+  if (!open && typeOpen && typeAnchor) lastTypeSpot = { ...keepOnScreen(typeAnchor, typeW, typeH), at: performance.now() };
   typeOpen = open;
   typeForm.classList.toggle('is-in', open);
+  if (!open) typeAnchor = null;
   if (open) {
     typeOpenedAt = performance.now();
     typeInput.value = '';
@@ -830,3 +864,53 @@ api.onTextInput(setTypeBox);
 root.dataset.phase = phase;
 applyTheme();
 api.ready();
+
+/* ───────── dragging the bubble / type box ─────────
+ * The overlay is click-through. While the pointer is over the bubble (mouse moves are
+ * forwarded on macOS/Windows), ask main to make the window accept clicks so the bubble can
+ * be dragged; give the clicks back to the apps underneath as soon as it leaves. */
+function setHoverInteractive(on: boolean): void {
+  if (on === hoverInteractive) return;
+  hoverInteractive = on;
+  api.setInteractive(on);
+}
+function startDrag(which: 'bubble' | 'type', e: PointerEvent): void {
+  if (e.button !== 0) return;
+  const anchor = which === 'bubble' ? bubbleAnchor : typeAnchor;
+  if (!anchor) return;
+  const cur = which === 'bubble' ? { x: bubbleSpring.x, y: bubbleSpring.y } : keepOnScreen(anchor, typeW, typeH);
+  drag = { which, dx: e.clientX - cur.x, dy: e.clientY - cur.y, id: e.pointerId };
+  (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  document.documentElement.classList.add('dragging');
+  e.preventDefault();
+}
+function moveDrag(e: PointerEvent): void {
+  if (!drag || e.pointerId !== drag.id) return;
+  const p = { x: e.clientX - drag.dx, y: e.clientY - drag.dy };
+  if (drag.which === 'bubble') bubbleAnchor = p;
+  else typeAnchor = p;
+  kick();
+}
+function endDrag(e: PointerEvent): void {
+  if (!drag || e.pointerId !== drag.id) return;
+  drag = null;
+  document.documentElement.classList.remove('dragging');
+  const el = e.currentTarget as HTMLElement;
+  if (!el.matches(':hover') && !typeOpen) setHoverInteractive(false);
+}
+bubbleEl.addEventListener('pointerenter', () => setHoverInteractive(true));
+bubbleEl.addEventListener('pointerleave', () => {
+  if (!drag && !typeOpen) setHoverInteractive(false);
+});
+bubbleEl.addEventListener('pointerdown', (e) => startDrag('bubble', e));
+bubbleEl.addEventListener('pointermove', moveDrag);
+bubbleEl.addEventListener('pointerup', endDrag);
+bubbleEl.addEventListener('pointercancel', endDrag);
+// the type box drags by its frame (not the text field, so selecting text still works)
+typeForm.addEventListener('pointerdown', (e) => {
+  if (e.target === typeInput) return;
+  startDrag('type', e);
+});
+typeForm.addEventListener('pointermove', moveDrag);
+typeForm.addEventListener('pointerup', endDrag);
+typeForm.addEventListener('pointercancel', endDrag);
