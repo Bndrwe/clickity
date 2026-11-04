@@ -247,6 +247,14 @@ export interface CompanionSettings {
   showBubble: boolean;
   /** let the companion fly to and point at things on screen */
   pointing: boolean;
+  /**
+   * agent mode: let clickity act on the screen (click, type, keys, scroll).
+   * 'ask' = show what it wants to do and wait for enter (esc cancels); 'auto' = just do it;
+   * 'off' = never act, only point.
+   */
+  actions: 'off' | 'ask' | 'auto';
+  /** max act → look → act steps in one agent run */
+  maxSteps: number;
 }
 
 export interface Settings {
@@ -289,7 +297,7 @@ export const DEFAULT_SETTINGS: Settings = {
     tts: { provider: 'system', voice: '', rate: 1.05 },
   },
   hotkeys: { talk: ['Control', 'Alt'], mode: 'hold', type: ['Control', 'Alt', 'Space'] },
-  companion: { followCursor: true, offsetX: 18, offsetY: 20, scale: 1, color: '', showBubble: true, pointing: true },
+  companion: { followCursor: true, offsetX: 18, offsetY: 20, scale: 1, color: '', showBubble: true, pointing: true, actions: 'ask', maxSteps: 8 },
   theme: 'system',
   customInstructions: '',
   historyTurns: 6,
@@ -308,7 +316,7 @@ export type PermissionsStatus = Record<PermissionKind, PermissionState>;
 
 /* ───────────────────────── overlay ───────────────────────── */
 
-export type CompanionPhase = 'idle' | 'listening' | 'transcribing' | 'thinking' | 'speaking' | 'error';
+export type CompanionPhase = 'idle' | 'listening' | 'transcribing' | 'thinking' | 'speaking' | 'acting' | 'error';
 
 export interface OverlayState {
   phase: CompanionPhase;
@@ -319,6 +327,10 @@ export interface OverlayState {
   error?: string;
   /** short status line in the bubble while listening / transcribing, e.g. "downloading the voice model… 42%" */
   note?: string;
+  /** agent mode: actions waiting for approval ("click save · type hello") — bubble shows "enter to allow · esc to cancel" */
+  confirm?: string;
+  /** agent mode: "step 2 of 8" while acting */
+  step?: string;
 }
 
 /** A point in overlay-window-local DIP coordinates. */
@@ -433,3 +445,25 @@ export type ChatEvent =
   | { type: 'delta'; chatId: string; turnId: string; text: string } // full visible text so far
   | { type: 'done'; chatId: string; turn: ChatTurn }
   | { type: 'error'; chatId: string; turnId: string; error: string };
+
+/* ───────────────────────── agent mode (input control) ───────────────────────── */
+
+/**
+ * One thing clickity does with the user's mouse/keyboard. Coordinates are GLOBAL DIP
+ * (Electron screen coordinates), already mapped from screenshot pixels by conversation.ts.
+ */
+export type InputAction =
+  | { type: 'click'; x: number; y: number; button?: 'left' | 'right'; count?: 1 | 2; label?: string }
+  | { type: 'move'; x: number; y: number }
+  | { type: 'scroll'; x: number; y: number; dy: number; dx?: number } // dy in lines, + = down
+  | { type: 'type'; text: string }
+  | { type: 'key'; keys: KeyName[] } // canonical KeyName chord, e.g. ['Meta','KeyS'] or ['Enter']
+  | { type: 'wait'; ms: number };
+
+export interface InputStatus {
+  ok: boolean;
+  /** 'native' (mac swift helper / windows SendInput / linux xdotool) */
+  backend: string;
+  /** short lowercase reason when !ok, e.g. "needs accessibility", "install xdotool" */
+  detail: string;
+}

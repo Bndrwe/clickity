@@ -35,7 +35,7 @@ const typeInput = $<HTMLInputElement>('typebox-input');
 
 /* ───────── config / theme ───────── */
 let config: OverlayConfig = {
-  companion: { followCursor: true, offsetX: 18, offsetY: 20, scale: 1, color: '', showBubble: true, pointing: true },
+  companion: { followCursor: true, offsetX: 18, offsetY: 20, scale: 1, color: '', showBubble: true, pointing: true, actions: 'ask', maxSteps: 8 },
   theme: 'system',
   displayBounds: { x: window.screenX, y: window.screenY, width: window.innerWidth, height: window.innerHeight },
   hotkeyLabel: '',
