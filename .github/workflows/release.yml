@@ -35,6 +35,16 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      - name: build fn-key helper (universal, ad-hoc signed)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p build/fnwatch resources/mac
+          swiftc -O -target arm64-apple-macos12 native/macos/fnwatch.swift -o build/fnwatch/fnwatch-arm64
+          swiftc -O -target x86_64-apple-macos12 native/macos/fnwatch.swift -o build/fnwatch/fnwatch-x64
+          lipo -create build/fnwatch/fnwatch-arm64 build/fnwatch/fnwatch-x64 -output resources/mac/fnwatch
+          chmod +x resources/mac/fnwatch
+          codesign -s - -f resources/mac/fnwatch
+          lipo -info resources/mac/fnwatch
       - run: npm run ${{ matrix.script }}
       - uses: actions/upload-artifact@v4
         with:

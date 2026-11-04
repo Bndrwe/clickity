@@ -27,6 +27,11 @@ mac:
   hardenedRuntime: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
+  # fn-key helper (native/macos/fnwatch.swift), built by `npm run build:fnwatch` / CI.
+  # Lands at process.resourcesPath/fnwatch; the app runs fine without it (no fn chords).
+  extraResources:
+    - from: resources/mac/fnwatch
+      to: fnwatch
   extendInfo:
     NSMicrophoneUsageDescription: clickity listens while you hold the talk key.
     NSAppleEventsUsageDescription: clickity uses apple events for system integration.

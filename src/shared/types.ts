@@ -211,7 +211,9 @@ export interface SpeechSettings {
 /* ───────────────────────── hotkeys ───────────────────────── */
 
 /**
- * Canonical key names. Modifiers are side-agnostic: 'Control' | 'Alt' | 'Shift' | 'Meta'.
+ * Canonical key names. Modifiers are side-agnostic: 'Control' | 'Alt' | 'Shift' | 'Meta', plus
+ * 'Fn' — the mac fn / globe key, heard through a small helper (src/main/fn-key.ts); it counts as a
+ * modifier. Windows / Linux never see fn (keyboard firmware handles it).
  * Every other key uses the DOM KeyboardEvent.code value: 'Space', 'KeyA', 'Digit1', 'F5',
  * 'Backquote', 'Escape', 'Enter', 'Tab', 'ArrowUp', … The settings UI records keys with
  * KeyboardEvent.code; the hotkey module maps uiohook keycodes to the same names.
@@ -219,11 +221,11 @@ export interface SpeechSettings {
 export type KeyName = string;
 
 export interface HotkeySettings {
-  /** push-to-talk chord. default: Control + Alt (ctrl+option on mac) */
+  /** push-to-talk chord. default: Control + Fn on mac (see settings-store platformDefaults), Control + Alt elsewhere */
   talk: KeyName[];
   /** 'hold' = talk while held, release to send. 'toggle' = press once to start, again to send */
   mode: 'hold' | 'toggle';
-  /** open a small text box next to the companion instead of speaking. default: Control + Alt + Space */
+  /** open a small text box next to the companion instead of speaking. default: Control + Alt + Space (control + option + space on mac) */
   type: KeyName[];
 }
 
@@ -315,6 +317,8 @@ export interface OverlayState {
   /** visible reply text so far (POINT tags already stripped) */
   reply?: string;
   error?: string;
+  /** short status line in the bubble while listening / transcribing, e.g. "downloading the voice model… 42%" */
+  note?: string;
 }
 
 /** A point in overlay-window-local DIP coordinates. */
@@ -338,6 +342,14 @@ export interface PttResult {
   error?: string;
   /** recording length; very short presses (< 250ms) are treated as accidental */
   durationMs: number;
+  /** loudest sample of the recording, 0..1 (diagnostics + "only silence" detection) */
+  peak?: number;
+  /** on-device transcription time */
+  sttMs?: number;
+  /** on-device backend that transcribed it */
+  sttDevice?: string;
+  /** what went wrong, when `error` is set: mic = recording, model = voice model load, stt = transcription */
+  errorKind?: 'mic' | 'model' | 'stt';
 }
 
 export type SpeakCommand =
@@ -351,6 +363,10 @@ export interface OverlayConfig {
   /** the overlay's display bounds in global DIP, so it can tell whether the cursor is on it */
   displayBounds: { x: number; y: number; width: number; height: number };
   hotkeyLabel: string; // e.g. "ctrl + option"
+  /** speech-to-text settings, so the overlay can warm up the on-device model */
+  stt?: SpeechSettings['stt'];
+  /** this overlay should preload the on-device model in the background (one overlay does) */
+  preloadStt?: boolean;
 }
 
 /* ───────────────────────── chat history ───────────────────────── */

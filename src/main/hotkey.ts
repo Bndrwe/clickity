@@ -1,6 +1,9 @@
 // Global push-to-talk / type / escape hotkeys.
 // Primary backend: uiohook-napi (real key up/down). Fallback: Electron globalShortcut (toggle only).
+// macOS fn: uiohook never sees it, so fn-key.ts runs a tiny event-tap helper and its
+// down/up events are fed into the same chord engine as the 'Fn' key.
 import type { HotkeySettings, KeyName } from '../shared/types';
+import { fnStatus, onFn, restartFnWatch, startFnWatch, stopFnWatch } from './fn-key';
 
 export interface HotkeyHandlers {
   onTalkDown(): void;
@@ -9,7 +12,16 @@ export interface HotkeyHandlers {
   onEscape(): void;
 }
 
-const MODIFIERS = ['Control', 'Alt', 'Shift', 'Meta'];
+/** Modifier order for labels. 'Fn' is the mac fn / globe key (only reported on macOS). */
+const MODIFIERS = ['Control', 'Alt', 'Shift', 'Meta', 'Fn'];
+
+/** Modifiers first (control, alt, shift, meta, fn), then the rest in the order given. */
+export function orderKeys(keys: Iterable<KeyName>): KeyName[] {
+  const set = [...new Set(keys)];
+  return [...MODIFIERS.filter((m) => set.includes(m)), ...set.filter((k) => !MODIFIERS.includes(k))];
+}
+
+export const chordUsesFn = (h: Pick<HotkeySettings, 'talk' | 'type'>): boolean => h.talk.includes('Fn') || h.type.includes('Fn');
 const SUBSET_DELAY_MS = 120;
 const MAX_HOLD_MS = 5 * 60 * 1000;
 
@@ -249,9 +261,9 @@ export function hotkeyLabel(keys: KeyName[], platform: NodeJS.Platform = process
     Alt: mac ? 'option' : 'alt',
     Shift: 'shift',
     Meta: mac ? 'cmd' : 'win',
+    Fn: 'fn',
   };
-  const sorted = [...MODIFIERS.filter((m) => keys.includes(m)), ...keys.filter((k) => !MODIFIERS.includes(k))];
-  return sorted
+  return orderKeys(keys)
     .map((k) => {
       if (modName[k]) return modName[k];
       if (/^Key[A-Z]$/.test(k)) return k.slice(3).toLowerCase();
@@ -274,6 +286,28 @@ let backend: 'uiohook' | 'globalShortcut' | null = null;
 let uio: { uIOhook: any } | null = null;
 let registered: string[] = [];
 let powerListeners: Array<[string, () => void]> = [];
+let offFn: (() => void) | null = null;
+let extSuspended = false;
+let recSuspended = false;
+type RawKeyListener = (key: KeyName, down: boolean) => void;
+const rawListeners = new Set<RawKeyListener>();
+
+function emitRaw(key: KeyName, down: boolean): void {
+  for (const cb of [...rawListeners]) {
+    try { cb(key, down); } catch (e) { console.warn('[hotkey] raw listener threw:', e); }
+  }
+}
+
+/** Every key the native hook sees (uiohook + mac fn helper), even while suspended. For the settings recorder. */
+export function onRawKey(cb: RawKeyListener): () => void {
+  rawListeners.add(cb);
+  return () => rawListeners.delete(cb);
+}
+
+/** Which backend is live: 'uiohook' hears real key up/down (and fn on mac). */
+export function hotkeyBackend(): 'uiohook' | 'globalShortcut' | null {
+  return backend;
+}
 
 function lazyRequire<T = any>(name: string): T {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -296,16 +330,27 @@ function startUiohook(cfg: HotkeySettings, handlers: HotkeyHandlers): boolean {
     hook.on('keydown', (e: any) => {
       const name = codeMap.get(e.keycode);
       if (!name) return;
+      emitRaw(name, true);
       eng.reconcileModifiers({ ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, meta: e.metaKey }, name);
       eng.keyDown(name);
     });
     hook.on('keyup', (e: any) => {
       const name = codeMap.get(e.keycode);
-      if (name) eng.keyUp(name);
+      if (!name) return;
+      emitRaw(name, false);
+      eng.keyUp(name);
     });
     hook.start();
     uio = mod;
     engine = eng;
+    eng.setSuspended(extSuspended || recSuspended);
+    // mac fn key → same engine (the helper is started by startHotkeys)
+    offFn?.();
+    offFn = onFn((down) => {
+      emitRaw('Fn', down);
+      if (down) eng.keyDown('Fn');
+      else eng.keyUp('Fn');
+    });
     // stuck-key guard across sleep / lock
     try {
       const { powerMonitor } = lazyRequire('electron');
@@ -361,6 +406,9 @@ export function startHotkeys(h: HotkeySettings, handlers: HotkeyHandlers): { bac
   currentSettings = h;
   if (startUiohook(h, handlers)) {
     backend = 'uiohook';
+    if (process.platform === 'darwin') {
+      try { startFnWatch({ prompt: chordUsesFn(h) }); } catch (e) { console.warn('[hotkey] fn helper failed:', e); }
+    }
   } else {
     backend = 'globalShortcut';
     try { startGlobalShortcut(h, handlers); } catch (e) { console.warn('[hotkey] globalShortcut failed:', e); }
@@ -369,8 +417,16 @@ export function startHotkeys(h: HotkeySettings, handlers: HotkeyHandlers): { bac
 }
 
 export function updateHotkeys(h: HotkeySettings): void {
+  const prev = currentSettings;
   currentSettings = h;
-  if (backend === 'uiohook') engine?.configure(h);
+  if (backend === 'uiohook') {
+    engine?.configure(h);
+    // newly using fn and the helper isn't up (e.g. never asked for permission): try again, with the prompt
+    const st = fnStatus();
+    if (process.platform === 'darwin' && chordUsesFn(h) && !(prev && chordUsesFn(prev)) && st !== 'running' && st !== 'starting' && st !== 'missing') {
+      try { restartFnWatch({ prompt: true }); } catch (e) { console.warn('[hotkey] fn helper failed:', e); }
+    }
+  }
   else if (backend === 'globalShortcut' && currentHandlers) {
     try { startGlobalShortcut(h, currentHandlers); } catch (e) { console.warn('[hotkey] globalShortcut failed:', e); }
   }
@@ -378,7 +434,8 @@ export function updateHotkeys(h: HotkeySettings): void {
 
 /** Pause all chord handling (used while the settings keybind recorder is open). */
 export function suspendHotkeys(suspended: boolean): void {
-  if (backend === 'uiohook') engine?.setSuspended(suspended);
+  extSuspended = suspended;
+  if (backend === 'uiohook') engine?.setSuspended(extSuspended || recSuspended);
   else if (backend === 'globalShortcut') {
     try {
       if (suspended) {
@@ -390,8 +447,17 @@ export function suspendHotkeys(suspended: boolean): void {
   }
 }
 
+/** Pause chord actions while main records a new keybind (raw keys still flow to onRawKey). */
+export function setRecordingSuspended(recording: boolean): void {
+  recSuspended = recording;
+  if (backend === 'uiohook') engine?.setSuspended(extSuspended || recSuspended);
+}
+
 export function stopHotkeys(): void {
   try { engine?.dispose(); } catch { /* ignore */ }
+  try { offFn?.(); } catch { /* ignore */ }
+  offFn = null;
+  try { stopFnWatch(); } catch { /* ignore */ }
   try { uio?.uIOhook.removeAllListeners?.(); uio?.uIOhook.stop(); } catch { /* ignore */ }
   try {
     if (powerListeners.length) {

@@ -23,6 +23,8 @@ const api: OverlayApi = {
   submitText: (text) => ipcRenderer.send(IPC.textSubmit, text),
   cancelText: () => ipcRenderer.send(IPC.textCancel),
   ready: () => ipcRenderer.send(IPC.overlayReady),
+  log: (entry) => ipcRenderer.send(IPC.overlayLog, entry),
+  pttProgress: (note) => ipcRenderer.send(IPC.pttProgress, note),
 };
 
 contextBridge.exposeInMainWorld('overlay', api);

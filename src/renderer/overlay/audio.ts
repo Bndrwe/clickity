@@ -40,14 +40,46 @@ let workletUrl: string | null = null;
 export interface Recording {
   pcm: Float32Array;
   sampleRate: number;
+  /** AudioContext state when stopped ('suspended' = the audio engine never ran) */
+  contextState?: string;
 }
 
-function micErrorMessage(e: unknown): string {
+/** Loudest absolute sample, 0..1. */
+export function peakLevel(pcm: Float32Array): number {
+  let peak = 0;
+  for (let i = 0; i < pcm.length; i++) {
+    const v = Math.abs(pcm[i]!);
+    if (v > peak) peak = v;
+  }
+  return peak;
+}
+
+const isMac = /Mac/i.test(navigator.platform || navigator.userAgent);
+const isWin = /Win/i.test(navigator.platform || navigator.userAgent);
+
+/** Short, actionable message for a getUserMedia failure. */
+export function micErrorMessage(e: unknown): string {
   const name = (e as { name?: string } | null)?.name;
-  if (name === 'NotAllowedError' || name === 'SecurityError') return 'microphone access denied';
-  if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'no microphone found';
-  if (name === 'NotReadableError') return 'microphone is busy';
-  return 'microphone unavailable';
+  if (name === 'NotAllowedError' || name === 'SecurityError' || name === 'PermissionDeniedError') {
+    if (isMac) return 'microphone blocked — allow clickity in system settings › privacy & security › microphone, then restart it';
+    if (isWin) return 'microphone blocked — allow microphone access in windows settings › privacy › microphone';
+    return 'microphone blocked — allow microphone access for clickity';
+  }
+  if (name === 'NotFoundError' || name === 'OverconstrainedError' || name === 'DevicesNotFoundError') {
+    return 'no microphone found — plug one in or pick an input in your sound settings';
+  }
+  if (name === 'NotReadableError' || name === 'TrackStartError') return 'microphone is busy — another app may be using it';
+  if (name === 'AbortError') return 'microphone failed to start — try again';
+  const msg = e instanceof Error ? e.message : '';
+  return `microphone unavailable${msg ? `: ${msg.toLowerCase().slice(0, 80)}` : ''}`;
+}
+
+/** What the recorder is actually using (for clickity.log). */
+export interface MicInfo {
+  device: string;
+  sampleRate: number;
+  contextState: string;
+  capture: 'worklet' | 'script';
 }
 
 /** One recording at a time. The mic stream is released after every stop/cancel. */
@@ -63,9 +95,15 @@ export class MicRecorder {
   private gen = 0;
   private starting: Promise<void> | null = null;
   private startError: Error | null = null;
+  private info: MicInfo | null = null;
 
   get active(): boolean {
     return this.starting !== null;
+  }
+
+  /** Details of the open recording (null until the mic has started). */
+  get details(): MicInfo | null {
+    return this.info;
   }
 
   start(): Promise<void> {
@@ -73,6 +111,7 @@ export class MicRecorder {
     const my = ++this.gen;
     this.chunks = [];
     this.startError = null;
+    this.info = null;
     this.starting = this.open(my).catch((e: unknown) => {
       if (my === this.gen) this.startError = new Error(micErrorMessage(e));
       this.release();
@@ -95,7 +134,11 @@ export class MicRecorder {
     const ctx = new AudioContext();
     this.ctx = ctx;
     this.sampleRate = ctx.sampleRate;
-    if (ctx.state !== 'running') await ctx.resume().catch(() => undefined);
+    // The overlay is never focused and the hotkey happens outside the page, so the context can
+    // start suspended (autoplay policy). resume() can also hang in a background window: bound it.
+    if (ctx.state !== 'running') {
+      await Promise.race([ctx.resume().catch(() => undefined), new Promise((r) => setTimeout(r, 1000))]);
+    }
 
     const source = ctx.createMediaStreamSource(stream);
     const analyser = ctx.createAnalyser();
@@ -137,6 +180,13 @@ export class MicRecorder {
     source.connect(node);
     node.connect(sink);
     this.nodes.push(node);
+    if (ctx.state !== 'running') void ctx.resume().catch(() => undefined);
+    this.info = {
+      device: stream.getAudioTracks()[0]?.label || 'default',
+      sampleRate: ctx.sampleRate,
+      contextState: ctx.state,
+      capture: this.worklet ? 'worklet' : 'script',
+    };
   }
 
   /** Fills `out` with 0..1 levels for a few voice-range bands. */
@@ -185,7 +235,7 @@ export class MicRecorder {
         w.port.postMessage('flush');
       });
     }
-    const rec: Recording = { pcm: concat(this.chunks), sampleRate: this.sampleRate };
+    const rec: Recording = { pcm: concat(this.chunks), sampleRate: this.sampleRate, contextState: this.ctx?.state ?? 'closed' };
     this.release();
     return rec;
   }

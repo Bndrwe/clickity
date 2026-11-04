@@ -5,6 +5,7 @@ import { PROVIDER_KINDS, type ChatSendRequest, type DeepPartial, type Permission
 import { getSettings, loadSettings, onSettingsChanged, resetSettings, updateSettings } from './settings-store';
 import { getProvider, openLogin, testProvider } from './providers/index';
 import { startHotkeys, stopHotkeys, suspendHotkeys, updateHotkeys } from './hotkey';
+import { notifyHotkeyHeard, registerHotkeyIpc } from './hotkey-ipc';
 import { cleanupCaptures } from './capture';
 import { destroyOverlays, initOverlays, refreshOverlayConfigs, setOverlaysVisible } from './overlay';
 import {
@@ -29,6 +30,8 @@ import { getPermissions, installPermissionHandlers, requestPermission } from './
 import { createTray, destroyTray, refreshTray } from './tray';
 import { installAppMenu, launchedAtLogin } from './app-menu';
 import { applySettingsTheme, openSettingsWindow, sendToSettings } from './settings-window';
+import { log, logPath, logStartup } from './log';
+import { installTestHook } from './test-hook';
 
 const isMac = process.platform === 'darwin';
 
@@ -156,6 +159,8 @@ function registerIpc(): void {
     syncHotkeySuspension();
   });
 
+  registerHotkeyIpc();
+
   ipcMain.handle(IPC.permissionsGet, () => getPermissions());
   ipcMain.handle(IPC.permissionsRequest, (_e, kind: unknown) => requestPermission(assertPermission(kind)));
 
@@ -186,6 +191,12 @@ function registerIpc(): void {
   ipcMain.handle(IPC.chatsSend, (_e, req: ChatSendRequest) => sendFromWindow(req));
   ipcMain.handle(IPC.chatsStop, (_e, id: unknown) => stopChat(assertId(id)));
   ipcMain.handle(IPC.chatsActive, () => getActiveChatId());
+
+  ipcMain.handle(IPC.openLogs, async () => {
+    log('app', 'open logs');
+    const err = await shell.openPath(logPath());
+    if (err) shell.showItemInFolder(logPath());
+  });
 }
 
 /* ───────────────────────── lifecycle ───────────────────────── */
@@ -218,6 +229,8 @@ async function bootstrap(): Promise<void> {
   await app.whenReady();
 
   const settings = loadSettings();
+  logStartup({ provider: settings.provider, stt: settings.speech.stt.provider, sttModel: settings.speech.stt.model, tts: settings.speech.tts.provider, hotkeys: settings.hotkeys });
+  installTestHook();
   applySettingsTheme(settings.theme);
   applyLaunchAtLogin(settings.launchAtLogin);
   installPermissionHandlers();
@@ -227,10 +240,23 @@ async function bootstrap(): Promise<void> {
   initOverlays();
 
   try {
-    const { backend } = startHotkeys(settings.hotkeys, { onTalkDown, onTalkUp, onType, onEscape });
+    const { backend } = startHotkeys(settings.hotkeys, {
+      onTalkDown: () => {
+        notifyHotkeyHeard('talk', getSettings().hotkeys.talk);
+        onTalkDown();
+      },
+      onTalkUp,
+      onType: () => {
+        notifyHotkeyHeard('type', getSettings().hotkeys.type);
+        onType();
+      },
+      onEscape,
+    });
     console.log(`[main] hotkeys ready (${backend})`);
+    log('hotkey', `ready (${backend})`);
   } catch (err) {
     console.error('[main] hotkeys failed to start:', err);
+    log('hotkey', 'failed to start:', err);
   }
 
   createTray({

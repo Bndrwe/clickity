@@ -18,7 +18,37 @@ import type {
   PttStopRequest,
   Settings,
   SpeakCommand,
+  KeyName,
 } from './types';
+
+/** Streamed to the settings window while main records a keybind (IPC.recordKeys). */
+export interface KeyRecordEvent {
+  /** keys down right now, ordered (modifiers first) */
+  held: KeyName[];
+  /** the biggest chord seen so far in this attempt */
+  chord: KeyName[];
+  /** all keys released: chord is the recorded result (['Escape'] alone = cancel) */
+  done: boolean;
+}
+
+/** Whether global keys are being heard (settings › keys › status). */
+export interface HotkeyStatus {
+  platform: NodeJS.Platform;
+  /** 'uiohook' = real key up/down; 'globalShortcut' = fallback (no modifier-only chords, no fn) */
+  backend: 'uiohook' | 'globalShortcut' | 'none';
+  /** macOS accessibility trust (always true elsewhere) */
+  accessibility: boolean;
+  /** mac fn helper: 'running' | 'missing' | 'no-permission' | 'starting' | 'error' | 'off' */
+  fn: 'off' | 'starting' | 'running' | 'missing' | 'no-permission' | 'error';
+  /** the talk or type chord includes Fn */
+  usesFn: boolean;
+}
+
+/** Sent when a chord fires (IPC.hotkeyHeard), so settings can show "heard control + fn". */
+export interface HotkeyHeard {
+  which: 'talk' | 'type';
+  keys: KeyName[];
+}
 
 export const IPC = {
   /* main → overlay (webContents.send) */
@@ -39,6 +69,8 @@ export const IPC = {
   textSubmit: 'overlay:text-submit', // string
   textCancel: 'overlay:text-cancel', // void
   overlayReady: 'overlay:ready', // void — renderer loaded, send it config
+  overlayLog: 'overlay:log', // OverlayLogEntry — diagnostic line for clickity.log
+  pttProgress: 'ptt:progress', // string — status while transcribing (e.g. model download %); keeps main's timeout alive
 
   /* settings window → main (ipcRenderer.invoke) */
   settingsGet: 'settings:get', // () => Settings
@@ -49,6 +81,9 @@ export const IPC = {
   providersTest: 'providers:test', // (kind) => ProviderTestResult
   providersLogin: 'providers:login', // (kind) => void — opens a terminal running the CLI login
   hotkeySuspend: 'hotkey:suspend', // (suspended: boolean) => void — while recording a new keybind
+  recordKeysStart: 'hotkey:record-start', // () => { native: boolean } — main streams IPC.recordKeys; native=false → use the DOM recorder
+  recordKeysStop: 'hotkey:record-stop', // () => void
+  hotkeyStatusGet: 'hotkey:status', // () => HotkeyStatus
   permissionsGet: 'permissions:get', // () => PermissionsStatus
   permissionsRequest: 'permissions:request', // (kind) => PermissionsStatus
   historyClear: 'history:clear', // () => void
@@ -56,6 +91,7 @@ export const IPC = {
   appInfo: 'app:info', // () => { version, platform }
   testSpeak: 'speech:test', // () => void — companion says a short line using current tts settings
   appQuit: 'app:quit', // () => void
+  openLogs: 'app:open-logs', // () => void — open clickity.log (settings › about)
   appRelaunch: 'app:relaunch', // () => void — restart (macOS applies some permissions only after a relaunch)
 
   openChats: 'app:open-chats', // () => void — from settings (and tray / app menu in main)
@@ -78,6 +114,9 @@ export const IPC = {
 
   /* main → settings window */
   settingsChanged: 'settings:changed', // Settings
+  recordKeys: 'hotkey:record-keys', // KeyRecordEvent
+  hotkeyHeard: 'hotkey:heard', // HotkeyHeard — a chord fired
+  hotkeyStatusChanged: 'hotkey:status-changed', // HotkeyStatus
 } as const;
 
 /** Exposed as `window.overlay` by src/preload/overlay.ts */
@@ -97,6 +136,15 @@ export interface OverlayApi {
   submitText(text: string): void;
   cancelText(): void;
   ready(): void;
+  /** diagnostic line for clickity.log */
+  log(entry: OverlayLogEntry): void;
+  /** status while a ptt result is pending (model download %, loading…) */
+  pttProgress(note: string): void;
+}
+
+export interface OverlayLogEntry {
+  level: 'info' | 'warn' | 'error';
+  message: string;
 }
 
 /** Exposed as `window.clicky` by src/preload/settings.ts */
@@ -110,6 +158,13 @@ export interface SettingsApi {
   providerTest(kind: ProviderKind): Promise<ProviderTestResult>;
   providerLogin(kind: ProviderKind): Promise<void>;
   suspendHotkeys(suspended: boolean): Promise<void>;
+  /** start the main-process key recorder; native=false when global keys can't be heard (use DOM events) */
+  recordKeysStart(): Promise<{ native: boolean }>;
+  recordKeysStop(): Promise<void>;
+  onRecordKeys(cb: (e: KeyRecordEvent) => void): void;
+  hotkeyStatus(): Promise<HotkeyStatus>;
+  onHotkeyStatus(cb: (s: HotkeyStatus) => void): void;
+  onHotkeyHeard(cb: (e: HotkeyHeard) => void): void;
   getPermissions(): Promise<PermissionsStatus>;
   requestPermission(kind: PermissionKind): Promise<PermissionsStatus>;
   clearHistory(): Promise<void>;
@@ -120,6 +175,8 @@ export interface SettingsApi {
   testSpeak(): Promise<void>;
   quit(): Promise<void>;
   openChats(): Promise<void>;
+  /** open clickity.log in the default viewer */
+  openLogs(): Promise<void>;
 }
 
 /** Exposed as `window.chats` by src/preload/chats.ts */

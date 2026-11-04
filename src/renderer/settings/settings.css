@@ -182,6 +182,12 @@ input[type=number] { -moz-appearance: textfield; }
 .chord-well { flex: 1 1 200px; min-height: 40px; display: flex; align-items: center; padding: 8px 14px; border-radius: 10px; background: var(--bg-sunken); color: var(--ink); font-size: 15px; font-weight: 600; box-shadow: 0 0 0 0 var(--ink); transition: box-shadow .3s var(--ease); }
 .chord-well.recording { box-shadow: 0 0 0 1px var(--ink); color: var(--ink-muted); font-weight: 400; }
 .chord-well.bad { color: var(--danger); font-weight: 400; }
+.chord-well.recording.live { color: var(--ink); font-weight: 600; }
+.hk-status { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; padding-top: 7px; font-size: 15px; }
+.hk-status .hk-state { color: var(--ink); }
+.hk-status .hk-state.warn { color: var(--danger); }
+.hk-try { transition: color .3s var(--ease); }
+.hk-try.heard { color: var(--ink); }
 
 /* model rows */
 .group { margin-bottom: 28px; }

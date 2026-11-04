@@ -106,9 +106,20 @@ const clamp = (v: unknown, lo: number, hi: number, fallback: number): number =>
 const isKeyList = (v: unknown): v is string[] =>
   Array.isArray(v) && v.length > 0 && v.every((k) => typeof k === 'string' && k.length > 0);
 
-/** Hotkey defaults per platform: cmd + option on mac, ctrl + alt elsewhere. */
-const MAC_HOTKEYS = { talk: ['Meta', 'Alt'], type: ['Meta', 'Alt', 'Space'] };
-const OLD_MAC_DEFAULT_TALK = 'Control+Alt';
+/**
+ * Hotkey defaults per platform: control + fn to talk on mac (fn = the globe key; heard through
+ * the fn-key helper), control + option + space to type. ctrl + alt (+ space) elsewhere: there the
+ * fn key is handled by the keyboard's firmware and never reaches the OS.
+ */
+export const MAC_HOTKEYS = { talk: ['Control', 'Fn'], type: ['Control', 'Alt', 'Space'] };
+/** Previous mac defaults (talk + type). Installs still on one of these move to MAC_HOTKEYS once. */
+const OLD_MAC_DEFAULTS: Array<[string, string]> = [
+  ['Control+Alt', 'Control+Alt+Space'],
+  ['Meta+Alt', 'Meta+Alt+Space'],
+];
+/** Hidden marker (top-level settings.json key) so the mac default migration runs only once. */
+const HOTKEY_DEFAULTS_KEY = 'hotkeyDefaults';
+const HOTKEY_DEFAULTS_VERSION = 2;
 
 /** DEFAULT_SETTINGS adjusted for this platform. */
 export function platformDefaults(): Settings {
@@ -117,7 +128,26 @@ export function platformDefaults(): Settings {
     d.hotkeys.talk = [...MAC_HOTKEYS.talk];
     d.hotkeys.type = [...MAC_HOTKEYS.type];
   }
+  asObj(d)[HOTKEY_DEFAULTS_KEY] = HOTKEY_DEFAULTS_VERSION;
   return d;
+}
+
+/**
+ * One-time move of mac installs still on a previous default chord pair to control + fn.
+ * Mutates merged; returns true when it changed something that should be saved.
+ */
+export function migrateHotkeyDefaults(merged: Obj, stored: Obj, platform: NodeJS.Platform = process.platform): boolean {
+  if (stored[HOTKEY_DEFAULTS_KEY] === HOTKEY_DEFAULTS_VERSION) return false;
+  merged[HOTKEY_DEFAULTS_KEY] = HOTKEY_DEFAULTS_VERSION;
+  const hk = (merged as unknown as Settings).hotkeys;
+  if (platform === 'darwin' && hk && Array.isArray(hk.talk) && Array.isArray(hk.type)) {
+    const pair = [hk.talk.join('+'), hk.type.join('+')];
+    if (OLD_MAC_DEFAULTS.some(([t, y]) => pair[0] === t && pair[1] === y)) {
+      hk.talk = [...MAC_HOTKEYS.talk];
+      hk.type = [...MAC_HOTKEYS.type];
+    }
+  }
+  return Object.keys(stored).length > 0; // fresh installs have nothing on disk to rewrite
 }
 
 /** Fixes values that would break the app; mutates and returns s. */
@@ -207,12 +237,7 @@ export function loadSettings(): Settings {
   }
 
   const merged = merge(asObj(platformDefaults()), stored);
-  // One-time move of mac installs still on the old ctrl + option default to cmd + option.
-  const mergedHotkeys = (merged as unknown as Settings).hotkeys;
-  if (process.platform === 'darwin' && mergedHotkeys && mergedHotkeys.talk.join('+') === OLD_MAC_DEFAULT_TALK && mergedHotkeys.type.join('+') === 'Control+Alt+Space') {
-    mergedHotkeys.talk = [...MAC_HOTKEYS.talk];
-    mergedHotkeys.type = [...MAC_HOTKEYS.type];
-  }
+  const migrated = migrateHotkeyDefaults(merged, stored);
   let upgradePlaintext = false;
   forEachSecret(merged, (h) => {
     if (typeof h.apiKey !== 'string') {
@@ -230,7 +255,7 @@ export function loadSettings(): Settings {
 
   current = validate(merged as unknown as Settings);
   dirty = false;
-  if (upgradePlaintext) scheduleWrite(); // re-save plaintext keys encrypted now that safeStorage works
+  if (upgradePlaintext || migrated) scheduleWrite(); // re-save plaintext keys encrypted now that safeStorage works
   return clone(current);
 }
 

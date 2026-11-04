@@ -14,6 +14,7 @@ import {
   type Theme,
   type TtsProvider,
 } from '../../shared/types';
+import type { HotkeyStatus, KeyRecordEvent } from '../../shared/ipc';
 import { canonicalCode, chordLabel, orderChord, validateChord } from './keys';
 
 const api = window.clicky;
@@ -629,6 +630,9 @@ function initVoice(): void {
 /* ───────────── keys ───────────── */
 
 let recording: { cancel(): void } | null = null;
+const RECORD_PLACEHOLDER = 'press whatever keys…';
+/** fall back to DOM events if the native hook hasn't reported a key this long after the browser did */
+const NATIVE_GRACE_MS = 300;
 
 function initKeys(): void {
   const defs = [
@@ -636,6 +640,7 @@ function initKeys(): void {
     { which: 'type' as const, well: $('chord-type'), btn: $('rec-type') },
   ];
   const label = (k: KeyName[]) => chordLabel(k, platform);
+  const btnLabel = (d: (typeof defs)[number]) => d.btn.querySelector('span')!;
 
   for (const d of defs) {
     syncers.push(() => {
@@ -654,63 +659,129 @@ function initKeys(): void {
   function start(d: (typeof defs)[number]): void {
     (d as any)._active = true;
     void api.suspendHotkeys(true);
-    const held = new Set<KeyName>();
-    let peak: KeyName[] = [];
-    d.well.classList.remove('bad');
-    d.well.classList.add('recording');
-    d.well.textContent = 'press your keys…';
-    d.btn.querySelector('span')!.textContent = 'cancel';
+    let finished = false;
+    // 'pending' until main answers; then 'native' (main streams keys, sees fn) or 'dom'
+    let source: 'pending' | 'native' | 'dom' = 'pending';
+    let sawNative = false;
+    let graceTimer: number | undefined;
+    // DOM state is always tracked, so we can switch to it if the native hook stays silent
+    const domHeld = new Set<KeyName>();
+    let domPeak: KeyName[] = [];
+
+    clearTimeout((d.btn as any)._t); // a previous "saved" flash
+    if ((d.btn as any)._label) (d.btn as any)._label = undefined;
+    btnLabel(d).textContent = 'cancel';
+    showPlaceholder();
+
+    function showPlaceholder(): void {
+      d.well.classList.remove('bad', 'live');
+      d.well.classList.add('recording');
+      d.well.textContent = RECORD_PLACEHOLDER;
+    }
+    function showKeys(keys: KeyName[]): void {
+      if (!keys.length) return showPlaceholder();
+      d.well.classList.remove('bad');
+      d.well.classList.add('recording', 'live');
+      d.well.textContent = label(keys);
+    }
+    function showError(msg: string): void {
+      d.well.classList.remove('recording', 'live');
+      d.well.classList.add('bad');
+      d.well.textContent = msg;
+    }
+    /** all keys released with this chord: cancel, complain, or save */
+    function complete(chord: KeyName[]): void {
+      if (chord.length === 1 && chord[0] === 'Escape') return finish(null);
+      const err = validateChord(chord, platform);
+      if (err) return showError(err); // keep recording: try again
+      finish(orderChord(chord));
+    }
 
     const finish = (commit: KeyName[] | null) => {
+      if (finished) return;
+      finished = true;
+      window.clearTimeout(graceTimer);
       window.removeEventListener('keydown', down, true);
       window.removeEventListener('keyup', up, true);
       window.removeEventListener('blur', onBlur);
-      recording = null;
+      if (recording === rec) recording = null;
       (d as any)._active = false;
-      d.well.classList.remove('recording', 'bad');
-      d.btn.querySelector('span')!.textContent = 'record';
+      activeNative = null;
+      d.well.classList.remove('recording', 'bad', 'live');
+      btnLabel(d).textContent = 'record';
+      void api.recordKeysStop().catch(() => {});
       void api.suspendHotkeys(false);
       if (commit) {
         settings = { ...settings, hotkeys: { ...settings.hotkeys, [d.which]: commit } };
         void save({ hotkeys: { [d.which]: commit } });
       }
       syncAll();
+      if (commit) flash(d.btn, 'saved');
     };
+
+    const useDom = () => {
+      if (source === 'dom') return;
+      source = 'dom';
+      void api.recordKeysStop().catch(() => {});
+      if (domPeak.length) showKeys(domPeak);
+    };
+
+    // native events from main
+    activeNative = (e: KeyRecordEvent) => {
+      if (finished || source === 'dom') return;
+      sawNative = true;
+      window.clearTimeout(graceTimer);
+      if (e.done) return complete(e.chord);
+      showKeys(e.chord);
+    };
+
     const down = (e: KeyboardEvent) => {
       e.preventDefault();
       e.stopPropagation();
       if (e.repeat) return;
       const k = canonicalCode(e.code);
-      if (k === 'Escape' && held.size === 0 && peak.length === 0) return finish(null);
-      held.add(k);
-      if (held.size >= peak.length) peak = orderChord(held);
-      d.well.classList.remove('bad');
-      d.well.classList.add('recording');
-      d.well.textContent = label(peak);
+      if (k === 'Escape' && domHeld.size === 0 && domPeak.length === 0 && !sawNative) return finish(null);
+      domHeld.add(k);
+      if (domHeld.size >= domPeak.length) domPeak = orderChord(domHeld);
+      if (source === 'dom') return showKeys(domPeak);
+      if (!sawNative && graceTimer === undefined) {
+        graceTimer = window.setTimeout(() => {
+          graceTimer = undefined;
+          if (!sawNative && !finished) useDom();
+        }, NATIVE_GRACE_MS);
+      }
     };
     const up = (e: KeyboardEvent) => {
       e.preventDefault();
       e.stopPropagation();
       const k = canonicalCode(e.code);
-      held.delete(k);
-      if (k === 'Meta') held.clear(); // mac swallows other keyups while cmd is down
-      if (held.size > 0) return;
-      const err = validateChord(peak);
-      if (err) {
-        peak = [];
-        d.well.classList.remove('recording');
-        d.well.classList.add('bad');
-        d.well.textContent = err;
-        return;
-      }
-      finish(peak);
+      domHeld.delete(k);
+      if (k === 'Meta') domHeld.clear(); // mac swallows other keyups while cmd is down
+      if (domHeld.size > 0) return;
+      const chord = domPeak;
+      domPeak = [];
+      if (source === 'dom' && chord.length) complete(chord);
     };
     const onBlur = () => finish(null);
     window.addEventListener('keydown', down, true);
     window.addEventListener('keyup', up, true);
     window.addEventListener('blur', onBlur);
-    recording = { cancel: () => finish(null) };
+    const rec = { cancel: () => finish(null) };
+    recording = rec;
+
+    api.recordKeysStart().then(
+      (r) => {
+        if (finished || source === 'dom') return;
+        if (r?.native) source = 'native';
+        else useDom();
+      },
+      () => useDom(),
+    );
   }
+
+  // main → settings: keys held while recording natively
+  let activeNative: ((e: KeyRecordEvent) => void) | null = null;
+  api.onRecordKeys((e) => activeNative?.(e));
 
   const seg = $('mode-seg');
   const modeBtns = [...seg.querySelectorAll<HTMLButtonElement>('button')];
@@ -727,11 +798,92 @@ function initKeys(): void {
     recording?.cancel();
     const d = DEFAULT_SETTINGS.hotkeys;
     const mac = platform === 'darwin';
-    const talk: KeyName[] = mac ? ['Meta', 'Alt'] : [...d.talk];
-    const type: KeyName[] = mac ? ['Meta', 'Alt', 'Space'] : [...d.type];
+    // keep in sync with platformDefaults() in src/main/settings-store.ts
+    const talk: KeyName[] = mac ? ['Control', 'Fn'] : [...d.talk];
+    const type: KeyName[] = mac ? ['Control', 'Alt', 'Space'] : [...d.type];
     void save({ hotkeys: { talk, type, mode: d.mode } });
     flash($('reset-keys'), 'defaults restored');
   });
+
+  initHotkeyStatus();
+}
+
+/* hotkey health: is the chord being heard at all? */
+const INPUT_MONITORING_URL = 'x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent';
+let hotkeyStatus: HotkeyStatus | null = null;
+
+function initHotkeyStatus(): void {
+  const box = $('hotkey-status');
+  const tryLine = $('hotkey-try');
+  const link = (text: string, fn: () => void) => {
+    const b = h('button', { class: 'text-btn', type: 'button' }, h('span', { text }));
+    b.addEventListener('click', fn);
+    return b;
+  };
+  const grantAx = () => link('grant', async () => {
+    try { perms = await api.requestPermission('accessibility'); } catch {}
+    permListeners.forEach((f) => f());
+    void refresh();
+  });
+  const restart = () => link('restart clickity', () => void api.relaunch());
+  const state = (text: string, warn = false) => h('span', { class: warn ? 'hk-state warn' : 'hk-state', text });
+
+  const render = () => {
+    const st = hotkeyStatus;
+    box.replaceChildren();
+    if (!st) return void box.append(state('checking…'));
+    const mac = st.platform === 'darwin';
+    if (st.backend === 'none') {
+      box.append(state('not listening', true), h('span', { class: 'muted', text: 'restart clickity to try again' }), restart());
+    } else if (st.backend === 'globalShortcut') {
+      if (mac && !st.accessibility) box.append(state('needs accessibility — grant, then restart clickity', true), grantAx(), restart());
+      else if (mac) box.append(state('accessibility granted — restart clickity to start listening', true), restart());
+      else box.append(state('listening'), h('span', { class: 'muted', text: 'basic mode: chords with a letter key, tap to toggle' }));
+    } else if (mac && st.usesFn && st.fn === 'no-permission') {
+      box.append(
+        state('fn needs input monitoring', true),
+        link('open settings', () => void api.openExternal(INPUT_MONITORING_URL)),
+        restart(),
+      );
+    } else if (mac && st.usesFn && st.fn === 'missing') {
+      box.append(state("fn can't be heard in this build", true), h('span', { class: 'muted', text: 'record a chord without fn' }));
+    } else if (mac && st.usesFn && st.fn === 'error') {
+      box.append(state('fn stopped listening', true), restart());
+    } else if (mac && st.usesFn && st.fn === 'starting') {
+      box.append(state('starting…'));
+    } else {
+      box.append(state('listening'));
+    }
+  };
+
+  const idleTry = () => {
+    tryLine.classList.remove('heard');
+    tryLine.textContent = `try it: press ${chordLabel(settings.hotkeys.talk, platform)} here`;
+  };
+  let tryTimer: number | undefined;
+  api.onHotkeyHeard((e) => {
+    if (!document.hasFocus() || e.which !== 'talk') return;
+    tryLine.classList.add('heard');
+    tryLine.textContent = `heard ${chordLabel(e.keys, platform)} ✓`;
+    window.clearTimeout(tryTimer);
+    tryTimer = window.setTimeout(idleTry, 2400);
+  });
+  syncers.push(() => {
+    if (!tryLine.classList.contains('heard')) idleTry();
+  });
+
+  const refresh = async () => {
+    try { hotkeyStatus = await api.hotkeyStatus(); } catch {}
+    render();
+  };
+  api.onHotkeyStatus((st) => {
+    hotkeyStatus = st;
+    render();
+  });
+  window.addEventListener('focus', () => void refresh());
+  render();
+  idleTry();
+  void refresh();
 }
 
 /* ───────────── companion ───────────── */

@@ -6,6 +6,7 @@ import { IPC } from '../shared/ipc';
 import type { OverlayConfig } from '../shared/types';
 import { getSettings } from './settings-store';
 import { hotkeyLabel } from './hotkey';
+import { log } from './log';
 
 const CURSOR_POLL_MS = 16;
 const REBUILD_DEBOUNCE_MS = 250;
@@ -73,6 +74,17 @@ function createOverlay(display: Display): BrowserWindow {
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
+  // Diagnostics: overlay errors (mic, whisper, speech) land in clickity.log.
+  win.webContents.on('console-message', (...args: unknown[]) => {
+    const ev = args[0] as { level?: unknown; message?: string; sourceId?: string; lineNumber?: number };
+    // electron ≥ 35 passes one event object; older versions pass (event, level, message, line, sourceId)
+    const level = typeof ev?.level === 'string' ? ev.level : args[1] === 3 ? 'error' : args[1] === 2 ? 'warning' : 'info';
+    const message = typeof ev?.message === 'string' ? ev.message : String(args[2] ?? '');
+    if (level === 'error' || level === 'warning') log(`overlay ${display.id}`, `console.${level}:`, message.slice(0, 600));
+  });
+  win.webContents.on('render-process-gone', (_e, details) => log(`overlay ${display.id}`, 'renderer gone:', details));
+  win.webContents.on('did-fail-load', (_e, code, desc, url) => log(`overlay ${display.id}`, 'failed to load', code, desc, url));
+
   win.once('ready-to-show', () => {
     if (visible && !win.isDestroyed()) win.showInactive();
   });
@@ -129,6 +141,11 @@ function pollCursor(): void {
 export function initOverlays(): void {
   if (initialized) return;
   initialized = true;
+
+  ipcMain.on(IPC.overlayLog, (e, entry: { level?: string; message?: string } | undefined) => {
+    const msg = String(entry?.message ?? '').slice(0, 1000);
+    if (msg) log(`overlay ${displayOf.get(e.sender.id)?.id ?? '?'}`, entry?.level === 'info' ? '' : `${entry?.level}:`, msg);
+  });
 
   ipcMain.on(IPC.overlayReady, (e) => {
     const win = BrowserWindow.fromWebContents(e.sender);
@@ -204,6 +221,9 @@ function buildConfig(win: BrowserWindow): OverlayConfig | null {
     theme: s.theme,
     displayBounds: { ...display.bounds },
     hotkeyLabel: hotkeyLabel(s.hotkeys.talk, process.platform),
+    stt: s.speech.stt,
+    // one overlay warms up the on-device model (they share the browser cache)
+    preloadStt: display.id === screen.getPrimaryDisplay().id,
   };
 }
 

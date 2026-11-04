@@ -345,6 +345,26 @@ body {
   display: none;
 }
 
+/* status line: model download progress, mic hints */
+.note {
+  display: none;
+  margin: 0;
+  color: var(--ink-muted);
+  text-transform: lowercase;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.bubble.has-note .note {
+  display: block;
+}
+.bubble.has-note.has-reply .note,
+.bubble.has-note .transcript-wrap.is-open ~ .note {
+  margin-top: 4px;
+}
+.bubble.is-error .note {
+  display: none;
+}
+
 /* ───────── type box ───────── */
 .typebox {
   opacity: 0;
