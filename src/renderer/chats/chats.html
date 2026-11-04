@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; script-src 'self'">
+<title>clickity</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@1&family=Inter:wght@400;450;500;600&display=swap">
+<link rel="stylesheet" href="./chats.css">
+</head>
+<body>
+<div class="bg" aria-hidden="true"><div class="glow glow-a"></div><div class="glow glow-b"></div><div class="grain"></div></div>
+
+<div class="win-controls" id="win-controls">
+  <button class="icon-btn" id="toggle-side" type="button" aria-label="toggle sidebar" title="toggle sidebar (⌘B)" aria-controls="sidebar"></button>
+  <button class="icon-btn only-collapsed" id="new-chat-mini" type="button" aria-label="new chat" title="new chat"></button>
+</div>
+
+<div class="app" id="app">
+  <aside class="sidebar" id="sidebar" aria-label="chats">
+    <div class="side-drag"></div>
+    <div class="side-brand" id="side-brand"></div>
+    <button class="new-chat" id="new-chat" type="button">
+      <span class="new-chat-label"></span>
+      <span class="kbd-group" id="new-chat-kbd"></span>
+    </button>
+    <label class="search">
+      <span class="search-ic" id="search-ic"></span>
+      <input id="search" type="search" placeholder="search chats" aria-label="search chats" autocomplete="off" spellcheck="false">
+    </label>
+    <nav class="chat-list" id="chat-list" aria-label="chat history"></nav>
+    <div class="side-foot">
+      <button class="side-link" id="open-settings" type="button"></button>
+    </div>
+  </aside>
+  <div class="scrim" id="scrim" aria-hidden="true"></div>
+
+  <main class="main" id="main" data-mode="empty">
+    <header class="topbar"><div class="topbar-title" id="chat-title"></div></header>
+
+    <section class="thread" id="thread" aria-label="conversation">
+      <div class="thread-inner" id="turns"></div>
+    </section>
+
+    <div class="stage" id="stage">
+      <h1 class="greeting" id="greeting">What can I help you see?</h1>
+      <div class="dock">
+        <button class="new-pill" id="new-pill" type="button" hidden></button>
+        <form class="composer" id="composer" autocomplete="off">
+          <div class="attachments" id="attachments" hidden></div>
+          <textarea id="input" rows="1" aria-label="message" placeholder="explain what's on my screen…"></textarea>
+          <div class="composer-row">
+            <div class="chips" id="chips" role="group" aria-label="quick modes"></div>
+            <div class="actions">
+              <button class="model-btn" id="model-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="choose model"></button>
+              <button class="icon-btn attach" id="attach-btn" type="button" aria-label="attach files" title="attach images or text files"></button>
+              <input id="file" type="file" multiple accept="image/*,.txt,.md,.json,.csv,.log" hidden>
+              <button class="send" id="send" type="submit" aria-label="send" disabled></button>
+            </div>
+          </div>
+        </form>
+        <p class="hint" id="hint"><kbd>enter</kbd> to send <span class="sep">/</span> <kbd>shift</kbd> + <kbd>enter</kbd> for a new line</p>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="popover" id="model-pop" role="menu" aria-label="model" hidden></div>
+<div class="popover row-menu" id="row-menu" role="menu" hidden></div>
+<div class="sr-only" id="live" aria-live="polite"></div>
+
+<script src="./chats.js"></script>
+</body>
+</html>
