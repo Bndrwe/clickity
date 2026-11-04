@@ -27,7 +27,12 @@ grab the installer for your computer from the [releases page](https://github.com
 | windows 10 / 11 | `Clickity-…-win-x64.exe` |
 | linux | `Clickity-…-linux-x86_64.AppImage` or `.deb` |
 
-on mac, open the dmg and drag clickity into applications. the app isn't notarized by apple, so the first time you open it: right-click it › open › open. on windows, smartscreen may warn: more info › run anyway.
+on mac, open the dmg and drag clickity into applications. clickity isn't notarized by apple yet, so macos blocks the first launch ("apple could not verify…"). click **done**, then either:
+
+- open **system settings › privacy & security**, scroll down, click **open anyway** next to clickity, and confirm; or
+- run this once in terminal: `xattr -dr com.apple.quarantine /Applications/Clickity.app`
+
+on windows, smartscreen may warn: more info › run anyway.
 
 clickity then behaves like any app: it has a dock / taskbar / start-menu icon, clicking the icon opens its settings, the companion keeps running while the window is closed, and you quit it with cmd + q, the dock menu, or quit in the menu-bar / tray icon. turn on "launch at login" in settings to have it start quietly when you log in.
 
