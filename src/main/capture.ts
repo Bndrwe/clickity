@@ -1,5 +1,5 @@
 // Screen capture: grabs every display, downscales to the model's size limit, writes JPEG temp files.
-import { desktopCapturer, screen, type Display, type DesktopCapturerSource, type Point, type Rectangle } from 'electron';
+import { desktopCapturer, screen, systemPreferences, type Display, type NativeImage, type DesktopCapturerSource, type Point, type Rectangle } from 'electron';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -35,6 +35,19 @@ function matchSources(displays: Display[], sources: DesktopCapturerSource[]): Ma
   return pairs;
 }
 
+/** True when a thumbnail is (almost) pure black: checked on a tiny downscale, so it's cheap. */
+function isBlack(img: NativeImage): boolean {
+  try {
+    const bmp = img.resize({ width: 24, quality: 'good' }).toBitmap(); // BGRA
+    for (let i = 0; i + 2 < bmp.length; i += 4) {
+      if (bmp[i] > 12 || bmp[i + 1] > 12 || bmp[i + 2] > 12) return false;
+    }
+    return bmp.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 /** Captures every display. The cursor's display comes first, then the rest left to right. */
 export async function captureScreens(cursor: Point): Promise<CapturedScreen[]> {
   cleanupCaptures();
@@ -56,11 +69,25 @@ export async function captureScreens(cursor: Point): Promise<CapturedScreen[]> {
       return a.bounds.x - b.bounds.x;
     });
 
-  // macOS without screen-recording permission returns empty thumbnails: skip them.
+  const PERMISSION_MSG = 'screen recording permission needed — open settings › permissions';
+  // macOS 14/15 without screen-recording permission (or with a stale grant for an older
+  // ad-hoc build) still returns thumbnails, just wallpaper-only or black ones. Sending those
+  // makes the model describe/point at a desktop that isn't there, so treat it as "no capture".
+  // The getSources call above has already triggered the system prompt the first time.
+  if (process.platform === 'darwin') {
+    let st = 'unknown';
+    try {
+      st = systemPreferences.getMediaAccessStatus('screen');
+    } catch {
+      /* keep unknown */
+    }
+    if (st === 'denied' || st === 'restricted') throw new Error(PERMISSION_MSG);
+  }
+  // Empty (older macOS without permission) and, on mac, all-black thumbnails are unusable.
   const usable = ordered
     .map((d) => ({ display: d, thumb: pairs.get(d)!.thumbnail }))
-    .filter(({ thumb }) => !thumb.isEmpty());
-  if (usable.length === 0) throw new Error('screen recording permission needed — open settings › permissions');
+    .filter(({ thumb }) => !thumb.isEmpty() && !(process.platform === 'darwin' && isBlack(thumb)));
+  if (usable.length === 0) throw new Error(PERMISSION_MSG);
 
   await fs.promises.mkdir(TEMP_DIR, { recursive: true });
   const screens: CapturedScreen[] = [];

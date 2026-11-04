@@ -46,6 +46,12 @@ function createOverlay(display: Display): BrowserWindow {
     alwaysOnTop: true,
     enableLargerThanScreen: true,
     roundedCorners: false,
+    // macOS: a non-activating panel is the only way to float over *other apps'* fullscreen
+    // spaces without hiding the dock icon (setVisibleOnAllWorkspaces' visibleOnFullScreen
+    // needs dock.hide() unless skipTransformProcessType, which we pass to keep the dock icon).
+    // It also lets the type box take keyboard focus without activating clickity, which
+    // macOS 14+ refuses for a background app (cooperative activation).
+    ...(process.platform === 'darwin' ? { type: 'panel' } : {}),
     title: 'clickity overlay',
     webPreferences: {
       preload: path.join(__dirname, '../preload/overlay.js'),

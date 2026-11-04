@@ -15,7 +15,11 @@ import Foundation
 setvbuf(stdout, nil, _IOLBF, 0)
 
 func emit(_ line: String) {
-    FileHandle.standardOutput.write((line + "\n").data(using: .utf8)!)
+    // C stdio + explicit flush: every line reaches the pipe immediately. (FileHandle.write
+    // raises an uncatchable ObjC exception on EPIPE; fputs just returns EOF.)
+    if fputs(line + "\n", stdout) == EOF || fflush(stdout) != 0 {
+        exit(0) // parent closed the pipe: nobody is listening any more
+    }
 }
 
 /// kVK_Function, and the globe key some newer keyboards report instead.
