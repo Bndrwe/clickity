@@ -1,7 +1,7 @@
 // App bootstrap: single instance, settings, overlays, hotkeys, tray, settings window and IPC.
 import { app, ipcMain, shell } from 'electron';
 import { IPC } from '../shared/ipc';
-import { PROVIDER_KINDS, type DeepPartial, type PermissionKind, type ProviderKind, type Settings } from '../shared/types';
+import { PROVIDER_KINDS, type ChatSendRequest, type DeepPartial, type PermissionKind, type ProviderKind, type Settings } from '../shared/types';
 import { getSettings, loadSettings, onSettingsChanged, resetSettings, updateSettings } from './settings-store';
 import { getProvider, openLogin, testProvider } from './providers/index';
 import { startHotkeys, stopHotkeys, suspendHotkeys, updateHotkeys } from './hotkey';
@@ -9,14 +9,22 @@ import { cleanupCaptures } from './capture';
 import { destroyOverlays, initOverlays, refreshOverlayConfigs, setOverlaysVisible } from './overlay';
 import {
   clearHistory,
+  getActiveChatId,
   initConversation,
+  newChat,
   onEscape,
   onTalkDown,
   onTalkUp,
   onType,
+  openChat,
+  removeChat,
+  sendFromWindow,
   shutdownConversation,
+  stopChat,
   testSpeak,
 } from './conversation';
+import { getChat, listChats, onChatsChanged, renameChat } from './chat-store';
+import { openChatsWindow, sendToChats } from './chats-window';
 import { getPermissions, installPermissionHandlers, requestPermission } from './permissions';
 import { createTray, destroyTray, refreshTray } from './tray';
 import { installAppMenu, launchedAtLogin } from './app-menu';
@@ -44,6 +52,7 @@ function syncHotkeySuspension(): void {
 
 const appMenuActions = {
   openSettings: () => void openSettingsWindow(),
+  openChats: () => void openChatsWindow(),
   isPaused: () => paused,
   setPaused: (p: boolean) => setPaused(p),
   clearConversation: () => clearHistory(),
@@ -74,6 +83,7 @@ function applyLaunchAtLogin(enabled: boolean): void {
 
 function handleSettingsChanged(s: Settings, prev: Settings): void {
   sendToSettings(IPC.settingsChanged, s);
+  sendToChats(IPC.settingsChanged, s);
   refreshOverlayConfigs();
   refreshTray();
   if (JSON.stringify(s.hotkeys) !== JSON.stringify(prev.hotkeys)) {
@@ -98,6 +108,11 @@ function assertPermission(kind: unknown): PermissionKind {
     throw new Error(`unknown permission: ${String(kind)}`);
   }
   return kind;
+}
+
+function assertId(id: unknown): string {
+  if (typeof id !== 'string' || !id) throw new Error('missing chat id');
+  return id;
 }
 
 function shortError(err: unknown): string {
@@ -158,6 +173,19 @@ function registerIpc(): void {
   });
   ipcMain.handle(IPC.testSpeak, () => testSpeak());
   ipcMain.handle(IPC.appQuit, () => app.quit());
+
+  ipcMain.handle(IPC.openChats, () => void openChatsWindow());
+  ipcMain.handle(IPC.openSettings, () => void openSettingsWindow());
+
+  ipcMain.handle(IPC.chatsList, () => listChats());
+  ipcMain.handle(IPC.chatsGet, (_e, id: unknown) => getChat(assertId(id)));
+  ipcMain.handle(IPC.chatsNew, () => newChat());
+  ipcMain.handle(IPC.chatsOpen, (_e, id: unknown) => openChat(assertId(id)));
+  ipcMain.handle(IPC.chatsRename, (_e, id: unknown, title: unknown) => renameChat(assertId(id), String(title ?? '')));
+  ipcMain.handle(IPC.chatsDelete, (_e, id: unknown) => removeChat(assertId(id)));
+  ipcMain.handle(IPC.chatsSend, (_e, req: ChatSendRequest) => sendFromWindow(req));
+  ipcMain.handle(IPC.chatsStop, (_e, id: unknown) => stopChat(assertId(id)));
+  ipcMain.handle(IPC.chatsActive, () => getActiveChatId());
 }
 
 /* ───────────────────────── lifecycle ───────────────────────── */
@@ -207,6 +235,7 @@ async function bootstrap(): Promise<void> {
 
   createTray({
     openSettings: () => openSettingsWindow(),
+    openChats: () => openChatsWindow(),
     isPaused: () => paused,
     setPaused,
     clearConversation: () => clearHistory(),
@@ -216,6 +245,7 @@ async function bootstrap(): Promise<void> {
   installAppMenu(appMenuActions);
 
   onSettingsChanged(handleSettingsChanged);
+  onChatsChanged((list) => sendToChats(IPC.chatsChanged, list));
 
   // Opening the app from its icon shows the settings window, like any app.
   // Started by the OS at login: stay quiet in the menu bar / tray.

@@ -8,6 +8,7 @@ import { hotkeyLabel } from './hotkey';
 
 export interface TrayActions {
   openSettings(): void;
+  openChats(): void;
   isPaused(): boolean;
   setPaused(paused: boolean): void;
   clearConversation(): void;
@@ -52,6 +53,7 @@ function buildMenu(a: TrayActions): Menu {
     { label: `hold ${hotkeyLabel(s.hotkeys.talk, process.platform)} to talk`, enabled: false },
     { label: `${meta.label} · ${model}`, enabled: false },
     { type: 'separator' },
+    { label: 'chats…', click: () => a.openChats() },
     { label: 'settings…', accelerator: isMac ? 'Command+,' : undefined, click: () => a.openSettings() },
     {
       label: 'pause companion',
@@ -68,7 +70,7 @@ function buildMenu(a: TrayActions): Menu {
         click: () => updateSettings({ theme: t }),
       })),
     },
-    { label: 'clear conversation', click: () => a.clearConversation() },
+    { label: 'new conversation', click: () => a.clearConversation() },
     { type: 'separator' },
     { label: 'quit', accelerator: isMac ? 'Command+Q' : undefined, click: () => a.quit() },
   ]);
