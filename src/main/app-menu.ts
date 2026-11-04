@@ -5,6 +5,7 @@ import { app, Menu, type MenuItemConstructorOptions } from 'electron';
 
 export interface AppMenuActions {
   openSettings(): void;
+  openChats(): void;
   isPaused(): boolean;
   setPaused(paused: boolean): void;
   clearConversation(): void;
@@ -23,6 +24,7 @@ export function installAppMenu(a: AppMenuActions): void {
               { role: 'about', label: `about ${name.toLowerCase()}` },
               { type: 'separator' },
               { label: 'settings…', accelerator: 'Command+,', click: () => a.openSettings() },
+              { label: 'chats…', accelerator: 'CommandOrControl+Shift+K', click: () => a.openChats() },
               { type: 'separator' },
               { role: 'hide', label: `hide ${name.toLowerCase()}` },
               { role: 'hideOthers', label: 'hide others' },
@@ -36,14 +38,19 @@ export function installAppMenu(a: AppMenuActions): void {
     {
       label: 'clickity',
       submenu: [
-        ...(isMac ? [] : ([{ label: 'settings…', accelerator: 'Ctrl+,', click: () => a.openSettings() }] as MenuItemConstructorOptions[])),
+        ...(isMac
+          ? []
+          : ([
+              { label: 'settings…', accelerator: 'Ctrl+,', click: () => a.openSettings() },
+              { label: 'chats…', accelerator: 'CommandOrControl+Shift+K', click: () => a.openChats() },
+            ] as MenuItemConstructorOptions[])),
         {
           label: 'pause companion',
           type: 'checkbox',
           checked: a.isPaused(),
           click: (item) => a.setPaused(item.checked),
         },
-        { label: 'clear conversation', click: () => a.clearConversation() },
+        { label: 'new conversation', click: () => a.clearConversation() },
         ...(isMac ? [] : ([{ type: 'separator' }, { role: 'quit', label: 'quit' }] as MenuItemConstructorOptions[])),
       ],
     },
@@ -56,6 +63,7 @@ export function installAppMenu(a: AppMenuActions): void {
   if (isMac && app.dock) {
     app.dock.setMenu(
       Menu.buildFromTemplate([
+        { label: 'chats…', click: () => a.openChats() },
         { label: 'settings…', click: () => a.openSettings() },
         {
           label: 'pause companion',
