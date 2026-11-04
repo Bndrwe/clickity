@@ -23,6 +23,7 @@ const api: SettingsApi = {
   relaunch: () => ipcRenderer.invoke(IPC.appRelaunch),
   testSpeak: () => ipcRenderer.invoke(IPC.testSpeak),
   quit: () => ipcRenderer.invoke(IPC.appQuit),
+  openChats: () => ipcRenderer.invoke(IPC.openChats),
 };
 
 contextBridge.exposeInMainWorld('clicky', api);

@@ -176,16 +176,15 @@ const CORNER = 0.1; // rounding of the triangle corners (canvas units, before fi
  *  ticks: 3 = full mark, 2 = simplified for tiny sizes.
  *  tickW: tick stroke width (canvas units, before fit).
  */
-function buildMark({ extent, ticks = 3, tickW = 0.1 }) {
+function buildMark({ extent, ticks = 3, tickW = 0.1, gap = 0.14, lenK = 1 }) {
   const tri = companionVertices(1, THETA);
   const tip = tri[0];
   const phi = Math.atan2(-Math.cos(THETA), Math.sin(THETA)); // direction of the tip
-  const spread = ticks === 3 ? [-0.62, 0, 0.62] : [-0.42, 0.42];
+  const spread = ticks === 3 ? [-0.62, 0, 0.62] : [-0.5, 0.5];
   const segs = spread.map((off, i) => {
     const a = phi + off;
     const mid = ticks === 3 && off === 0;
-    const gap = 0.2 + CORNER * 0.2;
-    const len = mid ? 0.3 : 0.24;
+    const len = (mid ? 0.4 : 0.3) * lenK;
     const sx = tip[0] + Math.cos(a) * gap, sy = tip[1] + Math.sin(a) * gap;
     return [sx, sy, sx + Math.cos(a) * len, sy + Math.sin(a) * len];
   });
@@ -216,7 +215,7 @@ function sdMark(m, x, y) {
 
 /** SVG for the mark inside a 0..100 box, fitted to `extent` (0..100). */
 function markSvgBody(fill) {
-  const m = buildMark({ extent: 2 * 0.86, ticks: 3, tickW: 0.1 });
+  const m = buildMark({ extent: 2 * 0.86, ticks: 3, tickW: 0.11 });
   const P = (v) => (v * 50 + 50).toFixed(2);
   const S = (v) => (v * 50).toFixed(2);
   const poly = m.tri.map(([x, y]) => `${P(x)},${P(y)}`).join(' ');
@@ -250,8 +249,8 @@ const SUB = 4; // 4x4 supersampling (8 for the tiny sizes)
  * opts: size, color [r,g,b], extent (mark size in canvas units, 0..2),
  *       ticks, tickW, roundBg [r,g,b]|null, shadow bool, sub
  */
-function render({ size, color, extent, ticks = 3, tickW = 0.1, roundBg = null, shadow = false, sub = SUB }) {
-  const mark = buildMark({ extent, ticks, tickW });
+function render({ size, color, extent, ticks = 3, tickW = 0.11, gap, lenK, roundBg = null, shadow = false, sub = SUB }) {
+  const mark = buildMark({ extent, ticks, tickW, gap, lenK });
   const bgRadius = 0.44; // 22% of the 2-unit canvas
   const shadowOffset = [0, 0.045];
   const shadowBlur = 0.1;
@@ -304,10 +303,10 @@ const OFF_WHITE = [0xfa, 0xfa, 0xfa];
 const BLACK = [0, 0, 0];
 
 const outputs = [
-  { file: 'icon.png', size: 1024, color: INK, extent: 1.12, roundBg: OFF_WHITE, shadow: true },
-  { file: 'tray.png', size: 32, color: INK, extent: 1.84, tickW: 0.15, sub: 8 },
-  { file: 'tray-template.png', size: 16, color: BLACK, extent: 1.9, ticks: 2, tickW: 0.22, sub: 8 },
-  { file: 'tray-template@2x.png', size: 32, color: BLACK, extent: 1.84, tickW: 0.15, sub: 8 },
+  { file: 'icon.png', size: 1024, color: INK, extent: 1.2, roundBg: OFF_WHITE, shadow: true },
+  { file: 'tray.png', size: 32, color: INK, extent: 1.84, tickW: 0.17, gap: 0.12, sub: 8 },
+  { file: 'tray-template.png', size: 16, color: BLACK, extent: 1.92, ticks: 2, tickW: 0.24, gap: 0.2, lenK: 1.1, sub: 8 },
+  { file: 'tray-template@2x.png', size: 32, color: BLACK, extent: 1.84, tickW: 0.17, gap: 0.12, sub: 8 },
 ];
 
 writeLogos();
