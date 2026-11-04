@@ -4,7 +4,8 @@
 import { session } from 'electron';
 import { getSettings, updateSettings } from './settings-store';
 import { getChat, listChats } from './chat-store';
-import { cancelTalk, isListening, onEscape, onTalkDown, onTalkUp } from './conversation';
+import { answerConfirm, cancelTalk, confirmPending, isListening, onEnter, onEscape, onTalkDown, onTalkUp, sendFromWindow, submitTypedText } from './conversation';
+import { fakeInputLog } from './agent-input';
 import { logPath } from './log';
 
 export function installTestHook(): void {
@@ -14,6 +15,13 @@ export function installTestHook(): void {
     onTalkUp,
     onEscape,
     cancelTalk,
+    /** agent mode: the enter key / chats window allow-deny, the pending state, faked actions */
+    onEnter,
+    answerConfirm,
+    confirmPending,
+    fakeInputLog,
+    submitTypedText,
+    sendFromWindow,
     isListening,
     getSettings,
     updateSettings,

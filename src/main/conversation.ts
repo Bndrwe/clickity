@@ -15,6 +15,7 @@ import {
   type ChatSendRequest,
   type ChatTurn,
   type ImageInput,
+  type InputAction,
   type OverlayPoint,
   type OverlayState,
   type ProviderKind,
@@ -28,7 +29,9 @@ import { sendToChats } from './chats-window';
 import { transcribe } from './speech/stt';
 import { synthesize } from './speech/tts';
 import { getProvider } from './providers/index';
-import { hotkeyLabel } from './hotkey';
+import { hotkeyLabel, setAgentKeysSuspended, setConfirmKeys } from './hotkey';
+import { describeAction, parseActionTags, stripActionTags, summarizeActions, type ParsedAction } from './action-tags';
+import { agentInputStatus, performActions } from './agent-input';
 import {
   broadcastToOverlays,
   overlayDisplay,
@@ -75,6 +78,8 @@ interface Turn {
   chatId: string | null;
   /** voice turns: OS microphone check, then whether the overlay was told to record */
   mic?: Promise<MicAccess & { started: boolean }>;
+  /** set once the turn runs agent-mode actions (esc then stops it even from the chats window) */
+  agent?: AgentState;
 }
 
 let current: Turn | null = null;
@@ -230,6 +235,46 @@ export interface PromptOptions {
   imageNames?: string[];
 }
 
+/** The agent-mode section of the system prompt ('' when actions are off). */
+function agentPrompt(settings: Settings, screens: CapturedScreen[]): string {
+  const mode = settings.companion.actions;
+  if (mode === 'off') return '';
+  if (!screens.length) {
+    return `
+
+DOING THINGS ON SCREEN
+You can sometimes click and type for the user, but not this turn: you can't see their screen. If they ask you to do something on screen, say you need to see it (they can share the screen) and output no action tags.`;
+  }
+  const mod = process.platform === 'darwin' ? 'cmd' : 'ctrl';
+  const approval =
+    mode === 'ask'
+      ? 'Before anything happens the user sees a short summary of your actions and approves it with enter (esc cancels).'
+      : 'Your actions run right away, without asking the user first, so be careful.';
+  return `
+
+DOING THINGS ON SCREEN (agent mode)
+When the user asks you to DO something on their computer ("click next", "type my address in there", "clickity, do…", "save this", "scroll down", "agent: …"), you can operate the mouse and keyboard for them. Only act when they asked for something to be done; for questions, explanations or "where is…", just answer (and point) without action tags.
+To act, write ONE short sentence saying what you're about to do ("i'll click save for you."), then end the reply with action tags, in order:
+[CLICK:x,y:label:screenN] - left click. x,y are pixel coordinates in that screen's screenshot, exactly like POINT. Aim at the center of the element. label is 1-4 words naming it.
+[DOUBLECLICK:x,y:label:screenN] - double click.
+[RIGHTCLICK:x,y:label:screenN] - right click.
+[TYPE:text] - type text into whatever has keyboard focus (click the field first if it isn't focused). Write a literal ] as \\] and a backslash as \\\\. For a new line or to submit, use [KEY:enter].
+[KEY:${mod}+s] / [KEY:enter] / [KEY:tab] / [KEY:esc] / [KEY:${mod}+shift+t] - press one key or shortcut. Use plain key names joined with +: ${process.platform === 'darwin' ? 'cmd, ctrl, option, shift' : 'ctrl, alt, shift, win'}, letters, digits, enter, tab, esc, space, backspace, delete, up, down, left, right, home, end, pageup, pagedown, f1-f12.
+[SCROLL:x,y:down 5:screenN] - scroll with the mouse over x,y (up / down / left / right, then how many lines).
+[WAIT:500] - wait that many milliseconds (e.g. for a menu or page to open).
+[DONE] - the whole task is finished. Put it at the end of your final reply (that reply may still contain last actions).
+:screenN is optional and defaults to the screen with the cursor, like POINT.
+How it works: after your actions run, you automatically get a fresh screenshot ("done. here is the screen now…"). Look at it, check that the last step worked, then continue with the next few actions, or reply [DONE] with one short sentence about what you did. You get at most ${settings.companion.maxSteps} rounds of actions per request.
+Rules:
+- Prefer few, precise steps. Usually do one to three actions per round, and stop to look whenever the screen will change (a click that opens a menu, dialog or page). Never guess at things you can't see yet.
+- Only click things you can actually see in the current screenshot.
+- Never do anything destructive or irreversible (deleting, sending messages or email, posting, publishing, purchasing, paying, submitting forms, closing unsaved work, changing account or security settings) unless the user explicitly asked for exactly that in this conversation. If a step would do that and they didn't ask, stop and ask instead.
+- Never type passwords, card numbers or other secrets unless the user dictated them in this conversation.
+- If something unexpected happens (an error, a login wall, a captcha, the wrong window), stop and tell the user in one sentence, with [DONE].
+- ${approval}
+- Never mention the tags or coordinates in your words; the tags are never shown or spoken.`;
+}
+
 /** Clickity persona (heyclicky-style) + pointing protocol + this turn's screen list + custom instructions. */
 export function buildSystemPrompt(settings: Settings, screens: CapturedScreen[], opts: PromptOptions = {}): string {
   const fromWindow = opts.source === 'window';
@@ -266,6 +311,7 @@ You can fly over and point at things on the user's screen. When it would help th
 Pointing is turned off: never output [POINT:...] tags.`;
 
   const custom = settings.customInstructions.trim();
+  const agent = agentPrompt(settings, screens);
 
   return `You are Clickity, a friendly little AI companion that lives next to the user's mouse cursor on their ${platformName()} computer. The user holds a key, talks to you, and you can see their screen(s) through the screenshots attached to their latest message.
 
@@ -276,7 +322,7 @@ HOW TO REPLY
 - Answer about what's actually on the screen when that's relevant; be specific ("the blue share button in the top right") instead of generic.
 - The user's words come from speech-to-text and may contain mistakes; infer what they meant. If the request is truly unclear, ask one short question.
 - Earlier turns in the conversation are text only; only the newest message has screenshots, so trust the current screenshots over memory.
-${pointing}${channel}
+${pointing}${agent}${channel}
 
 SCREENS THIS TURN
 ${screenLines}${attachedLines}${custom ? `\n\nADDITIONAL INSTRUCTIONS FROM THE USER\n${custom}` : ''}`;
@@ -416,17 +462,28 @@ function chatContext(chatId: string, pairs: number): ChatMessage[] {
   const turns = chat.turns;
   for (let i = 0; i < turns.length - 1; i++) {
     const u = turns[i];
-    const a = turns[i + 1];
-    if (u.role !== 'user' || a.role !== 'assistant') continue;
-    i++;
-    if (a.error || !a.text.trim()) continue; // failed / stopped replies aren't context
+    if (u.role !== 'user' || turns[i + 1].role !== 'assistant') continue;
+    // an agent run stores one assistant turn per step: read them as one reply
+    const replies: ChatTurn[] = [];
+    while (i + 1 < turns.length && turns[i + 1].role === 'assistant') replies.push(turns[++i]);
+    const parts: string[] = [];
+    for (const a of replies) {
+      if (!a.text.trim() && !a.actions?.length) continue;
+      if (a.error && !a.actions?.length) {
+        if (a.error.startsWith('not done')) parts.push(`${a.text.trim()} (${a.error})`.trim());
+        continue; // failed / stopped replies aren't context
+      }
+      // Remember where we pointed / what we did so follow-ups ("and then?") make sense.
+      const pointedNote = a.points?.length ? ` (pointed at: ${a.points.join(', ')})` : '';
+      const didNote = a.actions?.length ? ` (did: ${a.actions.join(', ')})` : '';
+      parts.push(`${a.text}${pointedNote}${didNote}`.trim());
+    }
+    if (!parts.length) continue;
     const userText = u.text.trim() || (u.attachments?.length ? `(sent ${u.attachments.join(', ')})` : '');
     if (!userText) continue;
-    // Remember where we pointed so follow-ups ("and then?") make sense.
-    const pointedNote = a.points?.length ? ` (pointed at: ${a.points.join(', ')})` : '';
     out.push([
       { role: 'user', text: userText },
-      { role: 'assistant', text: `${a.text}${pointedNote}`.trim() },
+      { role: 'assistant', text: parts.join('\n') },
     ]);
   }
   return out.slice(-pairs).flat();
@@ -453,19 +510,14 @@ interface TurnInput {
   point: boolean;
 }
 
-/** Record the user turn, stream the reply (overlay + chats window), store it, then point and speak. */
+/** Record the user turn, stream the reply (overlay + chats window), store it, then point and speak.
+ * In agent mode a reply with action tags runs the act → look → continue loop (runAgent). */
 async function runTurn(turn: Turn, input: TurnInput): Promise<void> {
   const settings = getSettings();
-  const signal = turn.controller.signal;
   const kind = input.provider ?? settings.provider;
   const model = input.model || settings.models[kind] || PROVIDER_META[kind].defaultModel;
   const cfg = settings.providers[kind] ?? {};
   const { screens } = input;
-  // Overlay updates only while this turn still owns the companion.
-  const show = (state: OverlayState): void => {
-    if (isTurnCurrent(turn)) sendState(turn.overlay, state);
-  };
-  const thinking: OverlayState = { phase: 'thinking', transcript: input.userText || input.attachments?.join(', ') };
 
   const chatId = turn.chatId ?? resolveChat(null, false);
   turn.chatId = chatId;
@@ -480,12 +532,76 @@ async function runTurn(turn: Turn, input: TurnInput): Promise<void> {
     model,
   });
   if (userTurn) emitChat({ type: 'user', chatId, turn: userTurn });
+
+  const ctx: ModelCtx = { settings, kind, model, cfg, chatId, input };
+  const userMsg: ChatMessage = {
+    role: 'user',
+    text: input.modelText ?? input.userText,
+    images: [...screens.map((s) => s.image), ...(input.images ?? [])],
+  };
+  const res = await askModel(turn, ctx, [...prior, userMsg], screens, {
+    thinking: { phase: 'thinking', transcript: input.userText || input.attachments?.join(', ') },
+    imageNames: input.images?.map((i) => i.label),
+  });
+  if (!res || !isTurnCurrent(turn)) return;
+
+  if (agentEnabled(settings, input, screens) && res.actions.length) {
+    await runAgent(turn, ctx, { history: prior, userMsg, screens, first: res });
+    return;
+  }
+  await finishReply(turn, input, settings, res.reply, res.points, screens);
+}
+
+/* ───────────────────────── one model call ───────────────────────── */
+
+interface ModelCtx {
+  settings: Settings;
+  kind: ProviderKind;
+  model: string;
+  cfg: Settings['providers'][ProviderKind];
+  chatId: string;
+  input: TurnInput;
+}
+
+interface ModelReply {
+  assistantId: string;
+  /** the raw reply, tags included (agent-mode context for the next round) */
+  raw: string;
+  /** visible / spoken text */
+  reply: string;
+  points: ParsedPoint[];
+  actions: ParsedAction[];
+  done: boolean;
+}
+
+/** Visible text: POINT and action tags removed (a trailing partial tag hidden while streaming). */
+function visibleText(buffer: string, streaming: boolean): string {
+  const noActions = stripActionTags(buffer, streaming);
+  return streaming ? stripForDisplay(noActions) : stripPointTags(noActions);
+}
+
+/**
+ * Stream one assistant reply into a new stored assistant turn (overlay + chats window updates).
+ * Returns null when the turn was stopped (a 'stopped' turn is recorded); throws on errors
+ * (an error turn is recorded).
+ */
+async function askModel(
+  turn: Turn,
+  ctx: ModelCtx,
+  messages: ChatMessage[],
+  screens: CapturedScreen[],
+  opts: { thinking: OverlayState; step?: string; imageNames?: string[] },
+): Promise<ModelReply | null> {
+  const { settings, kind, model, cfg, chatId, input } = ctx;
+  const signal = turn.controller.signal;
+  const show = (state: OverlayState): void => {
+    if (isTurnCurrent(turn)) sendState(turn.overlay, state);
+  };
   const assistantId = store.newId();
   emitChat({ type: 'start', chatId, turnId: assistantId });
 
   let buffer = '';
   let recorded = false;
-  /** Store the assistant turn once (done, error or stopped) and tell the chats window. */
   const record = (text: string, points: ParsedPoint[], error?: string): void => {
     if (recorded) return;
     recorded = true;
@@ -503,15 +619,10 @@ async function runTurn(turn: Turn, input: TurnInput): Promise<void> {
   };
 
   try {
-    show(thinking);
-    const userMsg: ChatMessage = {
-      role: 'user',
-      text: input.modelText ?? input.userText,
-      images: [...screens.map((s) => s.image), ...(input.images ?? [])],
-    };
+    show(opts.thinking);
     const req: ChatRequest = {
-      system: buildSystemPrompt(settings, screens, { source: input.source, imageNames: input.images?.map((i) => i.label) }),
-      messages: [...prior, userMsg],
+      system: buildSystemPrompt(settings, screens, { source: input.source, imageNames: opts.imageNames }),
+      messages,
       model,
       signal,
     };
@@ -520,19 +631,20 @@ async function runTurn(turn: Turn, input: TurnInput): Promise<void> {
     let lastSent = '';
     let lastSentAt = 0;
     const pushVisible = (force: boolean): void => {
-      const visible = stripForDisplay(buffer);
+      const visible = visibleText(buffer, true);
       if (visible === lastSent) return;
       const now = Date.now();
       if (!force && now - lastSentAt < STATE_THROTTLE_MS) return;
       lastSent = visible;
       lastSentAt = now;
-      show(visible ? { phase: 'speaking', reply: visible } : thinking);
+      show(visible ? { phase: 'speaking', reply: visible, step: opts.step } : opts.thinking);
       emitChat({ type: 'delta', chatId, turnId: assistantId, text: visible });
     };
 
     const t0 = Date.now();
     let firstAt = 0;
-    log('turn', `${turn.id} ${input.source} → ${kind} / ${model}: ${screens.length} screenshot(s), ${prior.length} context message(s), ${userMsg.text.length} chars`);
+    const last = messages[messages.length - 1];
+    log('turn', `${turn.id} ${input.source}${opts.step ? ` (agent, after ${opts.step})` : ''} → ${kind} / ${model}: ${screens.length} screenshot(s), ${messages.length - 1} context message(s), ${last?.text.length ?? 0} chars`);
     if (!signal.aborted) {
       for await (const delta of getProvider(kind).stream(req, cfg)) {
         if (signal.aborted) break;
@@ -543,40 +655,351 @@ async function runTurn(turn: Turn, input: TurnInput): Promise<void> {
     }
     if (signal.aborted) {
       log('turn', `${turn.id} stopped after ${Date.now() - t0}ms`);
-      record(stripPointTags(buffer), [], 'stopped');
-      return;
+      record(visibleText(buffer, false), [], 'stopped');
+      return null;
     }
     log('turn', `${turn.id} reply from ${kind} / ${model}: first text ${firstAt ? firstAt - t0 : '-'}ms, total ${Date.now() - t0}ms, ${buffer.length} chars`);
     pushVisible(true);
 
-    const reply = stripPointTags(buffer);
+    const reply = visibleText(buffer, false);
     const points = settings.companion.pointing && input.point ? parsePointTags(buffer) : [];
-    if (process.env.CLICKY_DEBUG) console.log(`[clicky] raw reply: ${JSON.stringify(buffer)} points: ${JSON.stringify(points)}`);
-    if (!reply && points.length === 0) throw new Error('the model returned an empty reply');
+    const agentOn = agentEnabled(settings, input, screens);
+    const parsed = agentOn ? parseActionTags(buffer) : { actions: [], done: false };
+    if (process.env.CLICKY_DEBUG) console.log(`[clicky] raw reply: ${JSON.stringify(buffer)} points: ${JSON.stringify(points)} actions: ${JSON.stringify(parsed)}`);
+    if (agentOn && (parsed.actions.length || parsed.done)) log('agent', `${turn.id} reply: ${parsed.actions.length} action(s)${parsed.done ? ' + done' : ''}: ${JSON.stringify(parsed.actions).slice(0, 600)}`);
+    if (!reply && points.length === 0 && parsed.actions.length === 0 && !parsed.done) throw new Error('the model returned an empty reply');
     record(reply, points);
-    if (!isTurnCurrent(turn)) return;
-
-    show({ phase: 'speaking', reply });
-
-    // Point and speak concurrently.
-    const pointing = points.length ? walkPoints(turn, points, screens) : Promise.resolve();
-    const spokeAt = Date.now();
-    if (input.speak) await speak(turn, reply, settings);
-    else await delay(readingTime(reply), signal);
-    await pointing.catch(() => undefined);
-    // If speech ended early (muted, no system voices, very short clip), keep the companion
-    // on its target long enough to actually see where it is pointing.
-    if (points.length && isTurnCurrent(turn)) {
-      const left = readingTime(reply) - (Date.now() - spokeAt);
-      if (left > 0) await delay(left, turn.controller.signal).catch(() => undefined);
-    }
-    if (!isTurnCurrent(turn)) return;
-    log('turn', `${turn.id} done (${points.length} point(s))`);
-    endTurn(turn);
+    return { assistantId, raw: buffer, reply, points, actions: parsed.actions, done: parsed.done };
   } catch (err) {
-    record(stripPointTags(buffer), [], signal.aborted ? 'stopped' : errorMessage(err));
+    record(visibleText(buffer, false), [], signal.aborted ? 'stopped' : errorMessage(err));
     throw err;
   }
+}
+
+/** Point and speak a final reply (or let it be read), then return to idle. */
+async function finishReply(turn: Turn, input: TurnInput, settings: Settings, reply: string, points: ParsedPoint[], screens: CapturedScreen[], step?: string): Promise<void> {
+  if (!isTurnCurrent(turn)) return;
+  const signal = turn.controller.signal;
+  sendState(turn.overlay, { phase: 'speaking', reply, step });
+
+  // Point and speak concurrently.
+  const pointing = points.length ? walkPoints(turn, points, screens) : Promise.resolve();
+  const spokeAt = Date.now();
+  if (input.speak) await speak(turn, reply, settings);
+  else await delay(readingTime(reply), signal);
+  await pointing.catch(() => undefined);
+  // If speech ended early (muted, no system voices, very short clip), keep the companion
+  // on its target long enough to actually see where it is pointing.
+  if (points.length && isTurnCurrent(turn)) {
+    const left = readingTime(reply) - (Date.now() - spokeAt);
+    if (left > 0) await delay(left, signal).catch(() => undefined);
+  }
+  if (!isTurnCurrent(turn)) return;
+  log('turn', `${turn.id} done (${points.length} point(s))`);
+  endTurn(turn);
+}
+
+/* ───────────────────────── agent mode ───────────────────────── */
+
+/** fly to a click target, then click (the overlay's acting flight is ~300ms) */
+const ACT_FLY_MS = 380;
+/** let the UI react before taking the next screenshot */
+const ACT_SETTLE_MS = 700;
+const CONFIRM_TIMEOUT_MS = 60_000;
+const AGENT_FOLLOW_UP = 'done. here is the screen now. continue, or reply [DONE].';
+
+type ConfirmOutcome = 'allowed' | 'cancelled' | 'timeout';
+
+interface PendingConfirm {
+  /** assistant turn whose actions wait for approval */
+  turnId: string;
+  settle(outcome: ConfirmOutcome): void;
+}
+
+interface AgentState {
+  confirm: PendingConfirm | null;
+}
+
+/** Agent mode applies to this turn: actions on, the turn may point (voice / type / shared screen), and we can see. */
+function agentEnabled(settings: Settings, input: TurnInput, screens: CapturedScreen[]): boolean {
+  return settings.companion.actions !== 'off' && input.point && screens.length > 0;
+}
+
+function agentMaxSteps(settings: Settings): number {
+  const n = Math.round(Number(settings.companion.maxSteps));
+  return Number.isFinite(n) ? Math.min(20, Math.max(1, n)) : 8;
+}
+
+/** Where a click / scroll lands: global DIP for input.ts, plus the overlay + local point for the flight. */
+interface ResolvedTarget {
+  global: Point;
+  win: BrowserWindow | null;
+  local: OverlayPoint | null;
+}
+
+function resolveTarget(a: { x: number; y: number; screen?: number; label: string }, screens: CapturedScreen[]): ResolvedTarget | null {
+  const target = pickPointScreen({ x: a.x, y: a.y, label: a.label, screen: a.screen }, screens);
+  if (!target) return null;
+  const x = Math.min(Math.max(a.x, 0), target.image.width - 1);
+  const y = Math.min(Math.max(a.y, 0), target.image.height - 1);
+  const g = screenshotToGlobal(target, x, y);
+  const global = { x: Math.round(g.x), y: Math.round(g.y) };
+  const win = overlayForDisplay(target.displayId) ?? overlayForPoint(global);
+  if (!win) return { global, win: null, local: null };
+  const origin = overlayDisplay(win)?.bounds ?? win.getBounds();
+  return { global, win, local: { x: global.x - origin.x, y: global.y - origin.y, label: a.label } };
+}
+
+interface PlannedAction {
+  parsed: ParsedAction;
+  input: InputAction;
+  target: ResolvedTarget | null;
+}
+
+/** Screenshot pixels → global coordinates. Throws a bubble-ready error for a screen we didn't send. */
+export function planActions(actions: ParsedAction[], screens: CapturedScreen[]): PlannedAction[] {
+  return actions.map((a): PlannedAction => {
+    switch (a.type) {
+      case 'click':
+      case 'scroll': {
+        const t = resolveTarget(a, screens);
+        if (!t) throw userError(`couldn't find screen ${a.screen ?? '?'} to ${a.type} on — stopped`);
+        const input: InputAction =
+          a.type === 'click'
+            ? { type: 'click', x: t.global.x, y: t.global.y, button: a.button, count: a.count, label: a.label }
+            : { type: 'scroll', x: t.global.x, y: t.global.y, dy: a.dy, dx: a.dx };
+        return { parsed: a, input, target: t };
+      }
+      case 'type':
+        return { parsed: a, input: { type: 'type', text: a.text }, target: null };
+      case 'key':
+        return { parsed: a, input: { type: 'key', keys: a.keys }, target: null };
+      case 'wait':
+        return { parsed: a, input: { type: 'wait', ms: a.ms }, target: null };
+    }
+  });
+}
+
+/** "agent mode needs accessibility — settings › permissions" */
+function inputProblem(detail: string): string {
+  const d = (detail.trim().toLowerCase() || 'is unavailable here').replace(/^agent mode\s+/, '');
+  const where = /accessib|permission/.test(d) ? ' — settings › permissions' : '';
+  return `agent mode ${/^(needs|is|can|requires|has|isn't)\b/.test(d) ? d : `can't act: ${d}`}${where}`;
+}
+
+/** Keys while an agent run owns the companion: enter approves (only while asking), esc stops. */
+function grabAgentKeys(turn: Turn, confirming: boolean): void {
+  if (!isTurnCurrent(turn)) return setConfirmKeys(null);
+  setConfirmKeys(confirming ? { onEnter, onEscape } : { onEscape });
+}
+
+/** Show what's about to happen and wait for enter / the chats window's allow (esc / deny / 60s = no). */
+function confirmActions(turn: Turn, ctx: ModelCtx, res: ModelReply, summary: string, step: string | undefined): Promise<ConfirmOutcome> {
+  const signal = turn.controller.signal;
+  const agent = (turn.agent ??= { confirm: null });
+  return new Promise<ConfirmOutcome>((resolve, reject) => {
+    if (signal.aborted) return reject(abortError());
+    let settled = false;
+    const finish = (outcome: ConfirmOutcome | null): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal.removeEventListener('abort', onAbort);
+      if (agent.confirm === pending) agent.confirm = null;
+      grabAgentKeys(turn, false);
+      emitChat({ type: 'confirm', chatId: ctx.chatId, turnId: res.assistantId, summary, pending: false, outcome: outcome ?? 'cancelled' });
+      log('agent', `${turn.id} confirmation: ${outcome ?? 'aborted'}`);
+      if (outcome) resolve(outcome);
+      else reject(abortError());
+    };
+    const pending: PendingConfirm = { turnId: res.assistantId, settle: (o) => finish(o) };
+    const onAbort = (): void => finish(null);
+    const timer = setTimeout(() => finish('timeout'), CONFIRM_TIMEOUT_MS);
+    signal.addEventListener('abort', onAbort, { once: true });
+    agent.confirm = pending;
+    grabAgentKeys(turn, true);
+    sendState(turn.overlay, { phase: 'speaking', reply: res.reply, confirm: summary, step });
+    emitChat({ type: 'confirm', chatId: ctx.chatId, turnId: res.assistantId, summary, pending: true });
+    log('agent', `${turn.id} asking: ${summary}`);
+  });
+}
+
+/** Fly to each target, click / type / press, one action at a time. */
+async function performPlanned(turn: Turn, planned: PlannedAction[], step: string, reply: string): Promise<void> {
+  const signal = turn.controller.signal;
+  closeTyping(); // the type box is the only part of an overlay that takes clicks
+  let prev: BrowserWindow | null = null;
+  for (const p of planned) {
+    if (!isTurnCurrent(turn)) throw abortError();
+    const t = p.target;
+    if (t?.win && t.local) {
+      if (prev && prev !== t.win) {
+        sendToOverlay(prev, IPC.overlayPoint, null);
+        turn.pointed.delete(prev);
+      }
+      sendState(t.win, { phase: 'acting', reply: t.win === turn.overlay ? reply : undefined, step });
+      sendToOverlay(t.win, IPC.overlayPoint, t.local);
+      turn.pointed.add(t.win);
+      prev = t.win;
+      await delay(ACT_FLY_MS, signal);
+      if (p.input.type === 'click') sendToOverlay(t.win, IPC.overlayClick, t.local);
+    }
+    const keyboard = p.input.type === 'type' || p.input.type === 'key';
+    // our own synthetic keys must not reach the chord engine / the esc grab (an [KEY:esc] would stop us)
+    if (keyboard) {
+      setConfirmKeys(null);
+      setAgentKeysSuspended(true);
+    }
+    try {
+      await performActions([p.input], signal);
+    } finally {
+      if (keyboard) {
+        setAgentKeysSuspended(false);
+        grabAgentKeys(turn, false);
+      }
+    }
+  }
+}
+
+/**
+ * The act → look → continue loop. `first` is the reply that asked for actions; each round asks
+ * (in 'ask' mode), acts, waits for the UI, takes fresh screenshots and lets the model continue,
+ * until [DONE], a reply without actions, esc / stop, an error, or max steps.
+ */
+async function runAgent(
+  turn: Turn,
+  ctx: ModelCtx,
+  start: { history: ChatMessage[]; userMsg: ChatMessage; screens: CapturedScreen[]; first: ModelReply },
+): Promise<void> {
+  const { settings, input, chatId } = ctx;
+  const signal = turn.controller.signal;
+  const maxSteps = agentMaxSteps(settings);
+  let history = start.history;
+  let userMsg = start.userMsg;
+  let screens = start.screens;
+  let res = start.first;
+  let steps = 0;
+  let speech: Promise<void> = Promise.resolve();
+  let lastTurnId = res.assistantId;
+  turn.agent ??= { confirm: null };
+  log('agent', `${turn.id} agent run (${settings.companion.actions}, max ${maxSteps} steps)`);
+
+  const status = await agentInputStatus();
+  if (!status.ok) {
+    store.updateTurn(chatId, res.assistantId, { error: 'not done: agent mode is unavailable' });
+    throw userError(inputProblem(status.detail));
+  }
+  if (!isTurnCurrent(turn)) return;
+
+  /** Final words. `spoken`: the text was already said as the step's plan, so just let it be read. */
+  const end = async (text: string, step?: string, spoken = false): Promise<void> => {
+    await speech;
+    emitChat({ type: 'acting', chatId, turnId: lastTurnId, step: null });
+    setConfirmKeys(null);
+    if (!spoken || !input.speak) return finishReply(turn, input, settings, text, [], screens, step);
+    if (!isTurnCurrent(turn)) return;
+    sendState(turn.overlay, { phase: 'speaking', reply: text, step });
+    await delay(1500, signal);
+    if (!isTurnCurrent(turn)) return;
+    log('turn', `${turn.id} done (agent, ${steps} step(s))`);
+    endTurn(turn);
+  };
+
+  try {
+    grabAgentKeys(turn, false);
+    for (;;) {
+      if (!isTurnCurrent(turn)) return;
+      lastTurnId = res.assistantId;
+      if (!res.actions.length) {
+        // finished: "[DONE] saved it" or just an answer
+        await end(res.reply || 'done.', steps ? `${steps} step${steps === 1 ? '' : 's'}` : undefined);
+        return;
+      }
+      const planned = planActions(res.actions, screens);
+      const summary = summarizeActions(res.actions);
+      const nextStep = `step ${steps + 1} of ${maxSteps}`;
+
+      // say the one-line plan while waiting for approval / acting
+      await speech;
+      speech = input.speak && res.reply ? speak(turn, res.reply, settings).catch(() => undefined) : Promise.resolve();
+
+      if (settings.companion.actions === 'ask') {
+        const outcome = await confirmActions(turn, ctx, res, summary, steps ? `step ${steps} of ${maxSteps}` : undefined);
+        if (outcome !== 'allowed') {
+          sendToOverlay(turn.overlay, IPC.overlayStopSpeaking);
+          const updated = store.updateTurn(chatId, res.assistantId, { error: outcome === 'timeout' ? 'not done: no answer' : 'not done: cancelled' });
+          if (updated) emitChat({ type: 'done', chatId, turn: updated });
+          await end(outcome === 'timeout' ? "no answer, so i didn't do it." : "okay, i won't do that.");
+          return;
+        }
+      }
+
+      steps++;
+      emitChat({ type: 'acting', chatId, turnId: res.assistantId, step: nextStep });
+      sendState(turn.overlay, { phase: 'acting', reply: res.reply, step: nextStep });
+      log('agent', `${turn.id} ${nextStep}: ${JSON.stringify(planned.map((p) => p.input))}`);
+      try {
+        await performPlanned(turn, planned, nextStep, res.reply);
+      } catch (err) {
+        if (signal.aborted) throw err;
+        store.updateTurn(chatId, res.assistantId, { error: `couldn't act: ${errorMessage(err)}` });
+        throw userError(`couldn't do that: ${errorMessage(err)}`);
+      }
+      const past = res.actions.filter((a) => a.type !== 'wait').map((a) => describeAction(a, 'past'));
+      const updated = store.updateTurn(chatId, res.assistantId, { actions: past.length ? past : res.actions.map((a) => describeAction(a, 'past')) });
+      if (updated) emitChat({ type: 'done', chatId, turn: updated });
+
+      if (res.done) {
+        await end(res.reply || 'done.', nextStep, !!res.reply);
+        return;
+      }
+      if (steps >= maxSteps) {
+        log('agent', `${turn.id} stopped at max steps (${maxSteps})`);
+        await end(`i stopped after ${maxSteps} step${maxSteps === 1 ? '' : 's'} — ask me to keep going if there's more to do.`, nextStep);
+        return;
+      }
+
+      // look again: let the UI settle, then fresh screenshots (companion back home, bubble small)
+      recallPoints(turn);
+      sendState(turn.overlay, { phase: 'thinking', step: nextStep });
+      await delay(ACT_SETTLE_MS, signal);
+      const fresh = await safeCapture(screen.getCursorScreenPoint());
+      if (!isTurnCurrent(turn)) return;
+      if (!fresh.length) throw userError("couldn't see the screen after acting — stopped");
+      screens = fresh;
+      // only the newest message carries screenshots
+      history = [...history, { role: 'user', text: userMsg.text }, { role: 'assistant', text: res.raw.trim() || '(acted)' }];
+      userMsg = { role: 'user', text: AGENT_FOLLOW_UP, images: screens.map((s) => s.image) };
+      const next = await askModel(turn, ctx, [...history, userMsg], screens, { thinking: { phase: 'thinking', step: nextStep }, step: nextStep });
+      if (!next || !isTurnCurrent(turn)) return;
+      res = next;
+    }
+  } finally {
+    if (turn.agent) turn.agent.confirm = null;
+    setConfirmKeys(null);
+    setAgentKeysSuspended(false);
+    emitChat({ type: 'acting', chatId, turnId: lastTurnId, step: null });
+  }
+}
+
+/** Enter: approve the pending agent-mode actions (no-op unless a confirmation is waiting). */
+export function onEnter(): void {
+  const c = current?.agent?.confirm;
+  if (!c || !current || current.controller.signal.aborted) return;
+  log('agent', `${current.id} allowed (enter)`);
+  c.settle('allowed');
+}
+
+/** chats window "allow" / "cancel" for the actions of assistant turn `turnId`. */
+export function answerConfirm(turnId: string, allow: boolean): void {
+  const c = current?.agent?.confirm;
+  if (!c || c.turnId !== turnId) return;
+  c.settle(allow ? 'allowed' : 'cancelled');
+}
+
+/** Whether an agent confirmation is waiting (tests, hotkeys). */
+export function confirmPending(): boolean {
+  return !!current?.agent?.confirm;
 }
 
 /** How long a bubble should stay up to be read when nothing is spoken. */
@@ -1005,13 +1428,28 @@ function onTextSubmit(senderId: number, text: string): void {
   void processTypedTurn(turn, trimmed).catch((err) => failTurn(turn, err));
 }
 
+/** A typed turn on the overlay under the cursor, as if sent from the type box (test hook). */
+export function submitTypedText(text: string): void {
+  const win = overlayForPoint(screen.getCursorScreenPoint());
+  if (win) onTextSubmit(win.webContents.id, text);
+}
+
 /* ───────────────────────── escape / misc ───────────────────────── */
 
 export function onEscape(): void {
   closeTyping();
+  // agent mode waiting for approval: esc = "no" (said and recorded, unlike a plain stop)
+  const pending = current?.agent?.confirm;
+  if (pending) {
+    log('agent', `${current!.id} cancelled (escape)`);
+    pending.settle('cancelled');
+    clearErrorTimer();
+    return;
+  }
   // Escape is global (uiohook hears it in every app): pressing it in an editor must not kill a
-  // reply streaming into the chats window, which has its own stop button.
-  if (current && current.kind !== 'window') {
+  // reply streaming into the chats window, which has its own stop button. An agent run acting on
+  // the screen is the exception: esc always stops it.
+  if (current && (current.kind !== 'window' || current.agent)) {
     log('turn', `${current.id} cancelled (escape)`);
     cancelCurrent();
   }

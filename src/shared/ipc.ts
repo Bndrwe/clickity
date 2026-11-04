@@ -19,6 +19,7 @@ import type {
   Settings,
   SpeakCommand,
   KeyName,
+  InputStatus,
 } from './types';
 
 /** Streamed to the settings window while main records a keybind (IPC.recordKeys). */
@@ -62,6 +63,7 @@ export const IPC = {
   overlaySpeak: 'overlay:speak', // SpeakCommand
   overlayStopSpeaking: 'overlay:stop-speaking', // void
   overlayTextInput: 'overlay:text-input', // boolean — show/hide the type box (window is made focusable by main)
+  overlayClick: 'overlay:click', // OverlayPoint — agent mode: a click happens here now (ripple)
 
   /* overlay → main (ipcRenderer.send) */
   pttResult: 'ptt:result', // PttResult
@@ -94,6 +96,7 @@ export const IPC = {
   appQuit: 'app:quit', // () => void
   openLogs: 'app:open-logs', // () => void — open clickity.log (settings › about)
   appRelaunch: 'app:relaunch', // () => void — restart (macOS applies some permissions only after a relaunch)
+  inputStatus: 'input:status', // () => InputStatus — agent mode: can clickity click / type here?
 
   openChats: 'app:open-chats', // () => void — from settings (and tray / app menu in main)
   openSettings: 'app:open-settings', // () => void — from the chats window
@@ -108,6 +111,8 @@ export const IPC = {
   chatsSend: 'chats:send', // (req: ChatSendRequest) => { chatId } — reply streams via chatsEvent
   chatsStop: 'chats:stop', // (chatId) => void — abort a reply in progress
   chatsActive: 'chats:active', // () => string | null — id of the active conversation
+  chatsApprove: 'chats:approve', // (turnId) => void — agent mode: allow the pending actions
+  chatsDeny: 'chats:deny', // (turnId) => void — agent mode: cancel the pending actions
 
   /* main → chats window */
   chatsEvent: 'chats:event', // ChatEvent
@@ -133,6 +138,8 @@ export interface OverlayApi {
   onSpeak(cb: (cmd: SpeakCommand) => void): void;
   onStopSpeaking(cb: () => void): void;
   onTextInput(cb: (open: boolean) => void): void;
+  /** agent mode: a click lands here now (draw a ripple) */
+  onClick(cb: (p: OverlayPoint) => void): void;
   sendPttResult(r: PttResult): void;
   speechDone(): void;
   submitText(text: string): void;
@@ -183,6 +190,8 @@ export interface SettingsApi {
   openChats(): Promise<void>;
   /** open clickity.log in the default viewer */
   openLogs(): Promise<void>;
+  /** agent mode: whether clickity can click / type on this machine */
+  inputStatus(): Promise<InputStatus>;
 }
 
 /** Exposed as `window.chats` by src/preload/chats.ts */
@@ -196,6 +205,9 @@ export interface ChatsApi {
   send(req: ChatSendRequest): Promise<{ chatId: string }>;
   stop(chatId: string): Promise<void>;
   active(): Promise<string | null>;
+  /** agent mode: allow / cancel the actions a reply is waiting on (ChatEvent 'confirm') */
+  approve(turnId: string): Promise<void>;
+  deny(turnId: string): Promise<void>;
   onEvent(cb: (e: ChatEvent) => void): void;
   onChanged(cb: (list: ChatSummary[]) => void): void;
   // shared with the settings window

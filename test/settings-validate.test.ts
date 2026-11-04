@@ -6,7 +6,7 @@ const defaults = () => ({
   theme: 'system',
   hotkeys: { talk: ['Control', 'Alt'], type: ['Control', 'Alt', 'Space'], mode: 'hold' },
   speech: { stt: { provider: 'on-device' }, tts: { provider: 'system' } },
-  companion: { offsetX: 18, offsetY: 20 },
+  companion: { offsetX: 18, offsetY: 20, actions: 'ask', maxSteps: 8 },
 }) as any;
 
 test('bad enums fall back to defaults', () => {
@@ -27,4 +27,20 @@ test('a mac fn chord is replaced on linux / windows but kept on mac', () => {
   const m = defaults(); m.hotkeys.talk = ['Control', 'Fn'];
   fixEnums(m, defaults(), 'darwin');
   assert.deepEqual(m.hotkeys.talk, ['Control', 'Fn']);
+});
+
+test('agent mode: unknown actions → ask first, max steps clamped to 1–20', () => {
+  const s = defaults();
+  s.companion.actions = 'yolo'; s.companion.maxSteps = 99;
+  fixEnums(s, defaults(), 'linux');
+  assert.equal(s.companion.actions, 'ask');
+  assert.equal(s.companion.maxSteps, 20);
+  const t = defaults();
+  t.companion.actions = 'auto'; t.companion.maxSteps = 0.2;
+  fixEnums(t, defaults(), 'linux');
+  assert.equal(t.companion.actions, 'auto');
+  assert.equal(t.companion.maxSteps, 1);
+  const u = defaults(); u.companion.maxSteps = 'x';
+  fixEnums(u, defaults(), 'linux');
+  assert.equal(u.companion.maxSteps, 8);
 });

@@ -11,12 +11,14 @@ import { notifyHotkeyHeard, registerHotkeyIpc } from './hotkey-ipc';
 import { cleanupCaptures } from './capture';
 import { destroyOverlays, initOverlays, refreshOverlayConfigs, setOverlaysVisible } from './overlay';
 import {
+  answerConfirm,
   cancelTalk,
   clearHistory,
   getActiveChatId,
   initConversation,
   isListening,
   newChat,
+  onEnter,
   onEscape,
   onTalkDown,
   onTalkUp,
@@ -36,6 +38,7 @@ import { installAppMenu, launchedAtLogin } from './app-menu';
 import { applySettingsTheme, openSettingsWindow, sendToSettings } from './settings-window';
 import { log, logPath, logStartup } from './log';
 import { installTestHook } from './test-hook';
+import { agentInputStatus } from './agent-input';
 
 const isMac = process.platform === 'darwin';
 
@@ -233,6 +236,9 @@ function registerIpc(): void {
   ipcMain.handle(IPC.chatsSend, (_e, req: ChatSendRequest) => sendFromWindow(req));
   ipcMain.handle(IPC.chatsStop, (_e, id: unknown) => stopChat(assertId(id)));
   ipcMain.handle(IPC.chatsActive, () => getActiveChatId());
+  ipcMain.handle(IPC.chatsApprove, (_e, turnId: unknown) => answerConfirm(assertId(turnId), true));
+  ipcMain.handle(IPC.chatsDeny, (_e, turnId: unknown) => answerConfirm(assertId(turnId), false));
+  ipcMain.handle(IPC.inputStatus, () => agentInputStatus());
 
   ipcMain.handle(IPC.openLogs, async () => {
     log('app', 'open logs');
@@ -293,6 +299,8 @@ async function bootstrap(): Promise<void> {
         onType();
       },
       onEscape,
+      // agent mode: approves pending actions (ignored unless a confirmation is waiting)
+      onEnter,
       // AltGr / ctrl+alt+<key>: the chord was another shortcut, drop the recording quietly
       onTalkCancel: cancelTalk,
       isTalking: isListening,

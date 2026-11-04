@@ -53,6 +53,16 @@ jobs:
           chmod +x resources/mac/fnwatch
           codesign -s - -f resources/mac/fnwatch
           lipo -info resources/mac/fnwatch
+      - name: build agent-mode input helper (universal, ad-hoc signed)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p build/clickity-input resources/mac
+          swiftc -O -target arm64-apple-macos12 native/macos/clickity-input.swift -o build/clickity-input/clickity-input-arm64
+          swiftc -O -target x86_64-apple-macos12 native/macos/clickity-input.swift -o build/clickity-input/clickity-input-x64
+          lipo -create build/clickity-input/clickity-input-arm64 build/clickity-input/clickity-input-x64 -output resources/mac/clickity-input
+          chmod +x resources/mac/clickity-input
+          codesign -s - -f resources/mac/clickity-input
+          lipo -info resources/mac/clickity-input
       - run: npm run ${{ matrix.script }}
       - uses: actions/upload-artifact@v4
         with:

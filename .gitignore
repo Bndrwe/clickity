@@ -5,3 +5,5 @@ release/
 .DS_Store
 resources/mac/fnwatch*
 build/fnwatch/
+resources/mac/clickity-input*
+build/clickity-input/

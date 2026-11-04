@@ -32,6 +32,10 @@ mac:
   extraResources:
     - from: resources/mac/fnwatch
       to: fnwatch
+    # agent-mode input helper (native/macos/clickity-input.swift), `npm run build:input` / CI.
+    # Lands at process.resourcesPath/clickity-input; without it agent mode reports "input helper missing".
+    - from: resources/mac/clickity-input
+      to: clickity-input
   extendInfo:
     NSMicrophoneUsageDescription: clickity listens while you hold the talk key.
     NSAppleEventsUsageDescription: clickity uses apple events for system integration.

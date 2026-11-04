@@ -208,7 +208,7 @@ function startUiohook(cfg: HotkeySettings, handlers: HotkeyHandlers): boolean {
     hook.start();
     uio = mod;
     engine = eng;
-    eng.setSuspended(extSuspended || recSuspended);
+    eng.setSuspended(extSuspended || recSuspended || agentSuspended);
     // mac fn key → same engine (the helper is started by startHotkeys)
     offFn?.();
     offFn = onFn((down) => {
@@ -302,7 +302,7 @@ export function updateHotkeys(h: HotkeySettings): void {
 /** Pause all chord handling (used while the settings keybind recorder is open). */
 export function suspendHotkeys(suspended: boolean): void {
   extSuspended = suspended;
-  if (backend === 'uiohook') engine?.setSuspended(extSuspended || recSuspended);
+  if (backend === 'uiohook') engine?.setSuspended(extSuspended || recSuspended || agentSuspended);
   else if (backend === 'globalShortcut') {
     try {
       if (suspended) {
@@ -317,10 +317,55 @@ export function suspendHotkeys(suspended: boolean): void {
 /** Pause chord actions while main records a new keybind (raw keys still flow to onRawKey). */
 export function setRecordingSuspended(recording: boolean): void {
   recSuspended = recording;
-  if (backend === 'uiohook') engine?.setSuspended(extSuspended || recSuspended);
+  if (backend === 'uiohook') engine?.setSuspended(extSuspended || recSuspended || agentSuspended);
+}
+
+/* ───────────────────────── agent-mode confirmation keys ───────────────────────── */
+
+let confirmRegistered: string[] = [];
+
+/**
+ * While an agent-mode confirmation is pending, grab plain Enter / Escape as global shortcuts so the
+ * key goes to clickity instead of also submitting / closing something in the focused app (uiohook
+ * only listens; it can't swallow keys). The chord engine's onEnter / onEscape still fire as a
+ * backup (e.g. where a plain key can't be grabbed); the handlers must be idempotent.
+ * Pass null to release the keys.
+ */
+export function setConfirmKeys(handlers: { onEnter?(): void; onEscape?(): void } | null): void {
+  let globalShortcut: Electron.GlobalShortcut;
+  try {
+    ({ globalShortcut } = lazyRequire('electron'));
+  } catch {
+    return;
+  }
+  for (const a of confirmRegistered) {
+    try { globalShortcut.unregister(a); } catch { /* ignore */ }
+  }
+  confirmRegistered = [];
+  if (!handlers) return;
+  const reg = (accel: string, fn: () => void): void => {
+    try {
+      if (globalShortcut.isRegistered(accel)) return;
+      if (globalShortcut.register(accel, () => { try { fn(); } catch (e) { console.warn('[hotkey] confirm handler threw:', e); } })) confirmRegistered.push(accel);
+    } catch (e) {
+      console.warn(`[hotkey] could not grab ${accel}:`, e);
+    }
+  };
+  if (handlers.onEnter) reg('Return', handlers.onEnter);
+  if (handlers.onEscape) reg('Escape', handlers.onEscape);
+}
+
+let agentSuspended = false;
+
+/** Ignore chords while agent mode types / presses keys itself (its own keys must not trigger us). */
+export function setAgentKeysSuspended(suspended: boolean): void {
+  if (agentSuspended === suspended) return;
+  agentSuspended = suspended;
+  if (backend === 'uiohook') engine?.setSuspended(extSuspended || recSuspended || agentSuspended);
 }
 
 export function stopHotkeys(): void {
+  setConfirmKeys(null);
   try { engine?.dispose(); } catch { /* ignore */ }
   try { offFn?.(); } catch { /* ignore */ }
   offFn = null;

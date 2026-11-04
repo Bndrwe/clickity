@@ -8,6 +8,8 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "build:fnwatch": "sh scripts/build-fnwatch.sh",
+    "build:input": "sh scripts/build-input.sh",
+    "build:native": "sh scripts/build-fnwatch.sh && sh scripts/build-input.sh",
     "dev": "node scripts/build.mjs && electron .",
     "start": "electron .",
     "typecheck": "tsc --noEmit -p tsconfig.json",

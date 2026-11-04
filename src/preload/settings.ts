@@ -41,6 +41,7 @@ const api: SettingsApi = {
   quit: () => ipcRenderer.invoke(IPC.appQuit),
   openChats: () => ipcRenderer.invoke(IPC.openChats),
   openLogs: () => ipcRenderer.invoke(IPC.openLogs),
+  inputStatus: () => ipcRenderer.invoke(IPC.inputStatus),
 };
 
 contextBridge.exposeInMainWorld('clicky', api);

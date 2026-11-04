@@ -18,6 +18,7 @@ const api: OverlayApi = {
   onSpeak: (cb) => on(IPC.overlaySpeak, cb),
   onStopSpeaking: (cb) => on<void>(IPC.overlayStopSpeaking, () => cb()),
   onTextInput: (cb) => on(IPC.overlayTextInput, cb),
+  onClick: (cb) => on(IPC.overlayClick, cb),
   sendPttResult: (r) => ipcRenderer.send(IPC.pttResult, r),
   speechDone: () => ipcRenderer.send(IPC.speechDone),
   submitText: (text) => ipcRenderer.send(IPC.textSubmit, text),

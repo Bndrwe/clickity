@@ -397,6 +397,8 @@ export interface ChatTurn {
   attachments?: string[];
   /** labels the companion pointed at (assistant turns) */
   points?: string[];
+  /** agent mode: what this step did on screen, past tense ("clicked save", "typed hello") */
+  actions?: string[];
   provider?: ProviderKind;
   model?: string;
   /** assistant turn failed; text holds whatever streamed before the error */
@@ -444,7 +446,14 @@ export type ChatEvent =
   | { type: 'start'; chatId: string; turnId: string } // assistant turn begins
   | { type: 'delta'; chatId: string; turnId: string; text: string } // full visible text so far
   | { type: 'done'; chatId: string; turn: ChatTurn }
-  | { type: 'error'; chatId: string; turnId: string; error: string };
+  | { type: 'error'; chatId: string; turnId: string; error: string }
+  /**
+   * agent mode: the assistant turn `turnId` wants to act. pending=true → show "allow / cancel"
+   * (chats.approve / chats.deny); pending=false → settled (outcome says how).
+   */
+  | { type: 'confirm'; chatId: string; turnId: string; summary: string; pending: boolean; outcome?: 'allowed' | 'cancelled' | 'timeout' }
+  /** agent mode: acting on screen ("step 2 of 8"); step null = the agent run is over */
+  | { type: 'acting'; chatId: string; turnId: string; step: string | null };
 
 /* ───────────────────────── agent mode (input control) ───────────────────────── */
 

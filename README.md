@@ -173,6 +173,16 @@ the speaking rate is adjustable in settings.
 
 **windows** needs microphone access, which you can allow under settings → privacy & security → microphone. nothing else needs a separate prompt.
 
+## agent mode
+
+with agent mode on, the companion can also act on your screen: click, double-click, right-click, type text, press key chords (like cmd + s) and scroll. every action is written to the log (typed text only by its length), and escape stops a running sequence between actions.
+
+what each system needs:
+
+- **macos**: the **accessibility** permission (system settings › privacy & security › accessibility › clickity). clickity posts the input through a small bundled helper (`clickity-input`), which counts as clickity for this permission. building from source? run `npm run build:input` once (needs xcode's command line tools).
+- **windows**: nothing to install or allow. input goes through windows' own `SendInput`, driven by a hidden powershell. windows does not let a normal app click or type into apps that run as administrator; run clickity as administrator if you need that.
+- **linux**: install `xdotool` (`sudo apt install xdotool`, fedora: `sudo dnf install xdotool`) and use an x11 session. on wayland, agent mode only reaches x11 (xwayland) apps, and only when clickity itself runs under xwayland (`--ozone-platform=x11`, the default for the packaged app).
+
 ## privacy
 
 - screenshots are only taken when you press the talk or type chord. nothing is captured in the background.

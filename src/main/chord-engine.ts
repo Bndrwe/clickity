@@ -11,6 +11,11 @@ export interface HotkeyHandlers {
   onType(): void;
   onEscape(): void;
   /**
+   * Enter / numpad enter pressed on its own. Agent mode uses it to approve pending actions; the
+   * handler ignores it unless a confirmation is waiting.
+   */
+  onEnter?(): void;
+  /**
    * Another key was pressed while the talk chord was still held right after it fired: the chord
    * was part of a different shortcut (AltGr = Ctrl+Alt on Windows layouts when typing @ € { },
    * Ctrl+Alt+T / Ctrl+Alt+arrows on Linux desktops…). Drop the recording quietly instead of sending it.
@@ -102,6 +107,10 @@ export class ChordEngine {
     }
     if (key === 'Escape' && this.held.size === 1) {
       this.safe(() => this.handlers.onEscape());
+      return;
+    }
+    if ((key === 'Enter' || key === 'NumpadEnter') && this.held.size === 1 && this.handlers.onEnter) {
+      this.safe(() => this.handlers.onEnter!());
       return;
     }
     if (this.type.size && sameSet(this.held, this.type) && !sameSet(this.type, this.talk)) {
