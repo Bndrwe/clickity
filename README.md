@@ -86,7 +86,7 @@ after it opens, grant **microphone**, **screen recording** and **accessibility**
 
 1. pick a brain in the window that opens (see [choosing a brain](#choosing-a-brain)). for a subscription, click **sign in** next to it once.
 2. on mac, grant **microphone**, **screen recording** and **accessibility** in settings › permissions, then click **restart clickity**.
-3. hold **cmd + option** (mac) or **ctrl + alt** (windows / linux), say hi, and let go.
+3. hold **control + fn** (mac; fn is the globe key on newer keyboards) or **ctrl + alt** (windows / linux), say hi, and let go.
 
 clickity behaves like any app: clicking its icon opens settings, the companion keeps running while the window is closed, and you quit with cmd + q, the dock menu, or the menu-bar / tray icon. turn on *launch at login* to have it start quietly.
 
@@ -156,18 +156,20 @@ the speaking rate is adjustable in settings.
 
 ## keys
 
-- **talk key**: default cmd + option on mac, ctrl + alt on windows / linux. change it in settings by recording a new chord.
+- **talk key**: default control + fn on mac (fn is the 🌐 globe key on newer keyboards), ctrl + alt on windows / linux. any chord works: in settings › keys, click **record** and press it; the keys show up as you press them. windows and linux can't use fn, because the keyboard handles it before the os sees it.
+- **is it working?** settings › keys › status says whether clickity hears your keys. press the talk chord with settings open and it shows *heard control + fn ✓*.
 - **hold or toggle**: in *hold* mode, the companion listens while you hold the chord and sends when you let go. in *toggle* mode, press once to start and again to send.
-- **type instead**: cmd + option + space on mac (ctrl + alt + space elsewhere) opens a small text box next to the companion, for when you would rather type.
+- **type instead**: control + option + space on mac (ctrl + alt + space elsewhere) opens a small text box next to the companion, for when you would rather type.
 - **escape** cancels the current turn.
 
 ## permissions
 
-**macos** asks for three things, all in system settings → privacy & security:
+**macos** asks for three things (four if you use fn), all in system settings → privacy & security:
 
 - **microphone**: asked the first time you hold the talk key. the app declares why it needs it.
 - **screen recording**: needed to capture your displays when you press the talk key. without it, the companion can still talk, but it cannot see the screen.
 - **accessibility**: needed for real hold-to-talk, because the app has to see when you let go of the chord. without it, the chord falls back to a toggle, so you press once to start and once to send.
+- **input monitoring** (only if your chord uses fn): macos may ask for this so clickity can hear the fn key. grant it, then restart clickity.
 
 **windows** needs microphone access, which you can allow under settings → privacy & security → microphone. nothing else needs a separate prompt.
 

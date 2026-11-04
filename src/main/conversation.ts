@@ -38,15 +38,19 @@ import {
   sendToOverlay,
   setOverlayTyping,
 } from './overlay';
+import { log } from './log';
+import { ensureMicrophoneAccess, microphoneStatus, type MicAccess } from './permissions';
 
 /* ───────────────────────── tuning ───────────────────────── */
 
 const MIN_PRESS_MS = 250;
-const ERROR_CLEAR_MS = 4000;
+const ERROR_CLEAR_MS = 7000; // long enough to read "what to do" hints
 const STATE_THROTTLE_MS = 40;
 const POINT_STEP_MS = 2600;
-const PTT_TIMEOUT_LOCAL_MS = 120_000; // first on-device run may download the whisper model
+/** on-device: give up when the overlay reports no progress (model download %, loading…) for this long */
+const PTT_IDLE_TIMEOUT_LOCAL_MS = 90_000;
 const PTT_TIMEOUT_REMOTE_MS = 20_000;
+const REMOTE_STT_TIMEOUT_MS = 45_000;
 const TYPE_BOX_HIDE_MS = 90; // let the type box disappear before we screenshot
 /** a stored chat idle this long is closed: the next voice / type turn starts a new one */
 const CHAT_IDLE_MS = 30 * 60 * 1000;
@@ -67,6 +71,8 @@ interface Turn {
   pointed: Set<BrowserWindow>;
   /** stored chat this turn is recorded in (set once the turn reaches the model) */
   chatId: string | null;
+  /** voice turns: OS microphone check, then whether the overlay was told to record */
+  mic?: Promise<MicAccess & { started: boolean }>;
 }
 
 let current: Turn | null = null;
@@ -170,7 +176,7 @@ function sendState(win: BrowserWindow | null | undefined, state: OverlayState): 
 function errorMessage(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err ?? 'something went wrong');
   const line = raw.split('\n')[0].trim().toLowerCase() || 'something went wrong';
-  return line.length > 140 ? `${line.slice(0, 137)}…` : line;
+  return line.length > 220 ? `${line.slice(0, 217)}…` : line;
 }
 
 function isTurnCurrent(turn: Turn): boolean {
@@ -186,6 +192,7 @@ function clearErrorTimer(): void {
 function showError(win: BrowserWindow | null, message: string): void {
   clearErrorTimer();
   const seq = turnSeq;
+  log('bubble', `error: ${message}`);
   sendState(win, { phase: 'error', error: message });
   errorTimer = setTimeout(() => {
     errorTimer = null;
@@ -358,6 +365,7 @@ function failTurn(turn: Turn, err: unknown): void {
   if (turn.controller.signal.aborted || current !== turn) return; // cancelled: stay quiet
   const message = errorMessage(err);
   console.warn(`[conversation] turn ${turn.id} failed:`, err);
+  log('turn', `${turn.id} failed:`, err instanceof Error && !(err as { quiet?: boolean }).quiet ? err : message);
   endTurn(turn, null);
   showError(turn.overlay, message);
 }
@@ -557,17 +565,23 @@ async function runTurn(turn: Turn, input: TurnInput): Promise<void> {
       emitChat({ type: 'delta', chatId, turnId: assistantId, text: visible });
     };
 
+    const t0 = Date.now();
+    let firstAt = 0;
+    log('turn', `${turn.id} ${input.source} → ${kind} / ${model}: ${screens.length} screenshot(s), ${prior.length} context message(s), ${userMsg.text.length} chars`);
     if (!signal.aborted) {
       for await (const delta of getProvider(kind).stream(req, cfg)) {
         if (signal.aborted) break;
+        if (!firstAt) firstAt = Date.now();
         buffer += delta;
         pushVisible(false);
       }
     }
     if (signal.aborted) {
+      log('turn', `${turn.id} stopped after ${Date.now() - t0}ms`);
       record(stripPointTags(buffer), [], 'stopped');
       return;
     }
+    log('turn', `${turn.id} reply from ${kind} / ${model}: first text ${firstAt ? firstAt - t0 : '-'}ms, total ${Date.now() - t0}ms, ${buffer.length} chars`);
     pushVisible(true);
 
     const reply = stripPointTags(buffer);
@@ -592,6 +606,7 @@ async function runTurn(turn: Turn, input: TurnInput): Promise<void> {
       if (left > 0) await delay(left, turn.controller.signal).catch(() => undefined);
     }
     if (!isTurnCurrent(turn)) return;
+    log('turn', `${turn.id} done (${points.length} point(s))`);
     endTurn(turn);
   } catch (err) {
     record(stripPointTags(buffer), [], signal.aborted ? 'stopped' : errorMessage(err));
@@ -770,13 +785,49 @@ async function speak(turn: Turn, text: string, settings: Settings): Promise<void
 
 /* ───────────────────────── voice turn ───────────────────────── */
 
+const isMac = process.platform === 'darwin';
+/** peak below this: the OS fed us zeros (permission not honoured, muted / wrong input) */
+const SILENT_PEAK = 0.0005;
+/** peak below this: there was sound, but very little */
+const QUIET_PEAK = 0.02;
+
+/** An error whose message is meant for the bubble as-is (no stack in the log). */
+function userError(message: string): Error {
+  const e = new Error(message);
+  (e as { quiet?: boolean }).quiet = true;
+  return e;
+}
+
 export function onTalkDown(): void {
   if (current?.stage === 'recording') return; // already listening (e.g. key repeat)
   closeTyping();
   const cursor = screen.getCursorScreenPoint();
   const turn = beginTurn(overlayForPoint(cursor), 'recording');
-  sendToOverlay(turn.overlay, IPC.overlayPttStart);
+  const settings = getSettings();
+  const micStatus = microphoneStatus();
+  log('voice', `talk down: turn ${turn.id}, overlay ${turn.overlay ? 'ok' : 'missing'}, mic permission ${micStatus}, stt ${settings.speech.stt.provider}${settings.speech.stt.provider === 'on-device' ? ` (${settings.speech.stt.model})` : ''}`);
   sendState(turn.overlay, { phase: 'listening' });
+
+  const startRecording = (): boolean => {
+    if (!isTurnCurrent(turn) || turn.stage !== 'recording') return false;
+    sendToOverlay(turn.overlay, IPC.overlayPttStart);
+    return true;
+  };
+
+  if (micStatus === 'granted' || micStatus === 'unknown') {
+    // hot path: no await between the key and the mic
+    const started = startRecording();
+    turn.mic = Promise.resolve({ ok: true, prompted: false, status: micStatus, started });
+    return;
+  }
+  // not determined (first run: show the macOS prompt) or blocked
+  turn.mic = ensureMicrophoneAccess().then((access) => {
+    if (!access.ok) {
+      failTurn(turn, userError(access.message ?? 'microphone blocked'));
+      return { ...access, started: false };
+    }
+    return { ...access, started: startRecording() };
+  });
 }
 
 export function onTalkUp(): void {
@@ -784,41 +835,149 @@ export function onTalkUp(): void {
   if (!turn || turn.stage !== 'recording') return;
   turn.stage = 'processing';
   const held = Date.now() - turn.startedAt;
+  log('voice', `talk up: turn ${turn.id}, held ${held}ms`);
   if (held < MIN_PRESS_MS) {
-    // Accidental tap: discard quietly.
+    // Accidental tap: don't send anything, but say how push-to-talk works.
     sendToOverlay(turn.overlay, IPC.overlayPttCancel);
-    endTurn(turn);
+    log('turn', `${turn.id} failed: tap (${held}ms)`);
+    endTurn(turn, null);
+    showError(turn.overlay, "didn't catch that — hold the keys while you talk");
     return;
   }
   void processVoiceTurn(turn).catch((err) => failTurn(turn, err));
+}
+
+/**
+ * Wait for the overlay's PttResult. On-device transcription can include a first-use model
+ * download, so the deadline slides forward whenever the overlay reports progress.
+ */
+function waitForPttResult(turn: Turn, win: BrowserWindow, idleMs: number): Promise<PttResult> {
+  const signal = turn.controller.signal;
+  return new Promise<PttResult>((resolve, reject) => {
+    if (win.isDestroyed()) return reject(new Error('overlay closed'));
+    if (signal.aborted) return reject(abortError());
+    let timer: NodeJS.Timeout;
+    const arm = (): void => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        cleanup();
+        reject(
+          userError(
+            getSettings().speech.stt.provider === 'on-device'
+              ? 'transcription timed out — the voice model may still be downloading; check your connection and try again'
+              : 'timed out waiting for the recording — try again',
+          ),
+        );
+      }, idleMs);
+    };
+    const progress: ProgressWaiter = { senderId: win.webContents.id, onProgress: arm };
+    const cleanup = (): void => {
+      waiters.delete(waiter);
+      progressWaiters.delete(progress);
+      clearTimeout(timer);
+      signal.removeEventListener('abort', onAbort);
+    };
+    const waiter: Waiter = {
+      channel: IPC.pttResult,
+      senderId: win.webContents.id,
+      resolve: (p) => {
+        cleanup();
+        resolve(p as PttResult);
+      },
+    };
+    const onAbort = (): void => {
+      cleanup();
+      reject(abortError());
+    };
+    waiters.add(waiter);
+    progressWaiters.add(progress);
+    signal.addEventListener('abort', onAbort, { once: true });
+    arm();
+  });
+}
+
+interface ProgressWaiter {
+  senderId: number;
+  onProgress(): void;
+}
+const progressWaiters = new Set<ProgressWaiter>();
+let lastProgressLogged = '';
+
+function onPttProgress(senderId: number, note: unknown): void {
+  const text = String(note ?? '').slice(0, 120);
+  // log status changes, and download progress in 25% steps
+  const pct = /(\d+)%/.exec(text);
+  const key = pct ? text.replace(/\d+%/, `${Math.floor(Number(pct[1]) / 25) * 25}%`) : text;
+  if (key !== lastProgressLogged) {
+    lastProgressLogged = key;
+    log('voice', `overlay status: ${text}`);
+  }
+  for (const w of progressWaiters) if (w.senderId === senderId) w.onProgress();
+}
+
+/** What to say when no words came back. */
+function emptyTranscriptMessage(result: PttResult): string {
+  const peak = result.peak;
+  if (peak !== undefined && peak < SILENT_PEAK) {
+    return isMac
+      ? 'heard only silence — check your mic input in system settings › sound. if it moves there, toggle clickity off and on in privacy & security › microphone'
+      : 'heard only silence — check that the right microphone is selected and not muted';
+  }
+  if (peak !== undefined && peak < QUIET_PEAK) return "didn't catch that — it was very quiet; speak up or move closer to the mic";
+  return "didn't catch that — hold the keys while you talk, then let go";
 }
 
 async function processVoiceTurn(turn: Turn): Promise<void> {
   const settings = getSettings();
   const signal = turn.controller.signal;
   const overlay = turn.overlay;
-  if (!overlay) throw new Error('no overlay on this screen');
+  if (!overlay) throw userError('no overlay on this screen — try restarting clickity');
+
+  const mic = await (turn.mic ?? Promise.resolve({ ok: true, prompted: false, status: 'unknown' as const, started: true }));
+  if (!isTurnCurrent(turn)) return;
+  if (!mic.ok) throw userError(mic.message ?? 'microphone blocked');
+  if (!mic.started) {
+    // the macOS prompt was answered while the key was held: nothing was recorded yet
+    throw userError('microphone allowed — hold the keys and talk again');
+  }
 
   const stt = settings.speech.stt;
-  const timeout = stt.provider === 'on-device' ? PTT_TIMEOUT_LOCAL_MS : PTT_TIMEOUT_REMOTE_MS;
-  const resultP = waitForOverlay<PttResult>(overlay, IPC.pttResult, signal, timeout);
+  const timeout = stt.provider === 'on-device' ? PTT_IDLE_TIMEOUT_LOCAL_MS : PTT_TIMEOUT_REMOTE_MS;
+  const resultP = waitForPttResult(turn, overlay, timeout);
   sendToOverlay(overlay, IPC.overlayPttStop, { stt });
   sendState(overlay, { phase: 'transcribing' });
 
   // Screens are captured while the audio is being transcribed.
   const capturesP = safeCapture(screen.getCursorScreenPoint());
 
+  const t0 = Date.now();
   const result = await resultP;
   if (!isTurnCurrent(turn)) return;
-  if (result.error) throw new Error(result.error);
-  if (result.durationMs < MIN_PRESS_MS) return endTurn(turn);
+  log(
+    'voice',
+    `ptt result: turn ${turn.id}, ${result.durationMs}ms recorded, peak ${result.peak?.toFixed(4) ?? '?'}` +
+      (result.error ? `, error (${result.errorKind ?? '?'}): ${result.error}` : '') +
+      (result.text !== undefined ? `, on-device${result.sttDevice ? ` ${result.sttDevice}` : ''} ${result.sttMs ?? Date.now() - t0}ms → ${result.text.length} chars` : '') +
+      (result.wav ? `, wav ${result.wav.byteLength} bytes` : ''),
+  );
+  if (result.error) throw userError(result.error);
+  if (result.durationMs < MIN_PRESS_MS) throw userError("didn't catch that — hold the keys while you talk");
 
   let text = result.text?.trim() ?? '';
   if (!text && result.wav && result.wav.byteLength > 44) {
-    text = (await transcribe(Buffer.from(result.wav), settings, signal)).trim();
+    const t1 = Date.now();
+    const timeoutSignal = AbortSignal.any([signal, AbortSignal.timeout(REMOTE_STT_TIMEOUT_MS)]);
+    try {
+      text = (await transcribe(Buffer.from(result.wav), settings, timeoutSignal)).trim();
+    } catch (err) {
+      if (signal.aborted) throw err;
+      const reason = timeoutSignal.aborted ? `${stt.provider} took too long` : errorMessage(err);
+      throw userError(reason.startsWith('transcription') || reason.includes('transcription') ? reason : `transcription failed: ${reason}`);
+    }
+    log('voice', `stt ${stt.provider}${stt.model ? ` (${stt.model})` : ''}: ${Date.now() - t1}ms → ${text.length} chars`);
   }
   if (!isTurnCurrent(turn)) return;
-  if (!text || isNoise(text)) throw new Error("didn't catch that — try again");
+  if (!text || isNoise(text)) throw userError(emptyTranscriptMessage(result));
 
   sendState(overlay, { phase: 'thinking', transcript: text });
   const screens = await capturesP;
@@ -918,6 +1077,7 @@ export function initConversation(): void {
     activeSince = latest.updatedAt;
   }
   ipcMain.on(IPC.pttResult, (e, r: PttResult) => resolveWaiters(IPC.pttResult, e.sender.id, r ?? { durationMs: 0 }));
+  ipcMain.on(IPC.pttProgress, (e, note: unknown) => onPttProgress(e.sender.id, note));
   ipcMain.on(IPC.speechDone, (e) => resolveWaiters(IPC.speechDone, e.sender.id, undefined));
   ipcMain.on(IPC.textSubmit, (e, text: string) => onTextSubmit(e.sender.id, text));
   ipcMain.on(IPC.textCancel, (e) => {

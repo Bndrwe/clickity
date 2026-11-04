@@ -6,7 +6,7 @@ Shared contract: `src/shared/types.ts` (data shapes, defaults, provider metadata
 
 ## How a turn works
 
-1. User holds the talk chord (default `Meta + Alt` on mac, `Control + Alt` elsewhere). `hotkey.ts` → `conversation.onTalkDown()`.
+1. User holds the talk chord (default `Control + Fn` on mac — fn is the globe key — and `Control + Alt` elsewhere; any chord can be recorded in settings › keys). `hotkey.ts` → `conversation.onTalkDown()`.
 2. Conversation sends `IPC.overlayPttStart` to the overlay on the cursor's display; overlay records the mic and shows the *listening* state.
 3. Chord released → `conversation.onTalkUp()` → `IPC.overlayPttStop` with `{ stt }`. In parallel, `capture.captureScreens()` grabs every display.
 4. Overlay replies `IPC.pttResult`: either `text` (on-device whisper, `renderer/overlay/stt-local.ts`) or a 16 kHz mono `wav` that main transcribes with `speech/stt.ts`.
@@ -63,7 +63,23 @@ export function suspendHotkeys(suspended: boolean): void;
 export function stopHotkeys(): void;
 export function hotkeyLabel(keys: KeyName[], platform?: NodeJS.Platform): string; // "ctrl + option", "⌃ ⌥" style lowercase words
 ```
+Canonical key `'Fn'` (mac only) counts as a modifier; `orderKeys`/`hotkeyLabel` put it after cmd (`"control + fn"`). Also exported: `onRawKey(cb)` (every native key, even while suspended), `setRecordingSuspended(b)`, `hotkeyBackend()`.
+
 Primary backend `uiohook-napi` (real key down/up, modifier-only chords). In `toggle` mode, a press of the chord fires `onTalkDown`, the next press fires `onTalkUp`. Fallback to Electron `globalShortcut` (no key-up → behaves as toggle) when uiohook fails (e.g. macOS accessibility not granted) or the chord is not expressible.
+
+### `src/main/fn-key.ts` (macOS fn key)
+uiohook never reports fn on mac (libuiohook maps `kVK_Function` to `VC_UNDEFINED`). `native/macos/fnwatch.swift` is a tiny listen-only `CGEventTap` CLI that prints `{"ready":true}`, then `{"fn":true}` / `{"fn":false}` per change (flagsChanged on keycode 63 / 179 only), or `{"error":"no-permission"}` + exit 2 when the tap is refused (Input Monitoring / Accessibility). It exits when stdin closes.
+```ts
+export function startFnWatch(opts?: { prompt?: boolean }): void; // spawned by startHotkeys on darwin
+export function restartFnWatch(opts?: { prompt?: boolean }): void;
+export function stopFnWatch(): void;
+export function onFn(cb: (down: boolean) => void): () => void;  // hotkey.ts feeds this into the ChordEngine as 'Fn'
+export function fnStatus(): 'off' | 'starting' | 'running' | 'missing' | 'no-permission' | 'error';
+```
+Binary: `npm run build:fnwatch` (universal, ad-hoc signed) → `resources/mac/fnwatch` (dev path, gitignored); CI builds it in `release.yml`, and `electron-builder.yml` `mac.extraResources` ships it as `process.resourcesPath/fnwatch`. Missing helper = no fn, never a crash.
+
+### `src/main/hotkey-ipc.ts`, `key-recorder.ts`
+Settings › keys: `recordKeysStart()` → main suspends chord actions and streams `IPC.recordKeys` `{ held, chord, done }` from the native hook (sees fn); `{ native: false }` → the renderer records DOM key events instead (and it also falls back if the native hook stays silent). `hotkeyStatus()` / `IPC.hotkeyStatusChanged` report backend, accessibility and the fn helper; `IPC.hotkeyHeard` fires when a chord triggers ("heard control + fn ✓").
 
 ### `src/main/speech/stt.ts`
 ```ts

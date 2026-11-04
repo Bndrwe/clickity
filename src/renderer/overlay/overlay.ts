@@ -2,10 +2,10 @@
 // Talks to main only through window.overlay (see src/shared/ipc.ts).
 import type { OverlayApi } from '../../shared/ipc';
 import type { CompanionPhase, OverlayConfig, OverlayPoint, OverlayState, PttStopRequest, SpeakCommand } from '../../shared/types';
-import { MicRecorder, encodeWav, resampleTo16k } from './audio';
+import { MicRecorder, encodeWav, peakLevel, resampleTo16k } from './audio';
 import { Spring2D, clamp, ease, spring } from './motion';
 import { Speaker } from './speech';
-import { preloadLocalModel, transcribeLocal } from './stt-local';
+import { ModelLoadError, localSttStatus, onLocalSttStatus, preloadLocalModel, transcribeLocal, type LocalSttStatus } from './stt-local';
 
 const api: OverlayApi = window.overlay;
 
@@ -28,6 +28,7 @@ const transcriptEl = $('transcript');
 const replyEl = $('reply');
 const replyTextEl = $('reply-text');
 const errorEl = $('error');
+const noteEl = $('note');
 const typePos = $('typebox-pos');
 const typeForm = $<HTMLFormElement>('typebox');
 const typeInput = $<HTMLInputElement>('typebox-input');
@@ -100,6 +101,10 @@ let reply = '';
 let shownReply = '';
 let errorText = '';
 let errorTimer = 0;
+/** status line from main (OverlayState.note) */
+let serverNote = '';
+/** status line from this overlay: voice model download / load, mic trouble while listening */
+let localNote = '';
 let lingerTimer = 0;
 let lingering = false;
 let transcriptTimer = 0;
@@ -410,6 +415,11 @@ function renderBubble(): void {
   const isError = phase === 'error' && !!errorText;
   const wantTranscript = showBubble && !!transcript && (phase === 'transcribing' || phase === 'thinking');
   const wantReply = showBubble && !!reply && (phase === 'thinking' || phase === 'speaking' || lingering);
+  // status lines are shown even with the reply bubble turned off: they explain why nothing happens
+  const note = phase === 'listening' || phase === 'transcribing' ? localNote || serverNote : phase !== 'idle' && phase !== 'error' ? serverNote : '';
+  const wantNote = !!note;
+  noteEl.textContent = note;
+  bubbleEl.classList.toggle('has-note', wantNote);
 
   if (wantTranscript) transcriptEl.textContent = transcript;
   if (wantTranscript !== transcriptOpen) {
@@ -431,7 +441,7 @@ function renderBubble(): void {
   bubbleEl.classList.toggle('is-error', isError);
   errorEl.textContent = isError ? errorText : '';
 
-  const want = isError || wantTranscript || wantReply;
+  const want = isError || wantTranscript || wantReply || wantNote;
   if (want !== bubbleIn) {
     bubbleIn = want;
     if (want) bubbleSnap = true;
@@ -449,6 +459,9 @@ function onState(s: OverlayState): void {
   phase = s.phase;
   root.dataset.phase = phase;
   transcript = (s.transcript ?? '').trim();
+  serverNote = (s.note ?? '').trim();
+  if (phase !== 'listening' && phase !== 'transcribing') micNote = '';
+  localNote = modelNote || micNote;
 
   if (phase === 'listening') {
     // new turn: clear the old reply, head home if we were pointing
@@ -465,7 +478,7 @@ function onState(s: OverlayState): void {
     errorTimer = window.setTimeout(() => {
       errorText = '';
       renderBubble();
-    }, 4500);
+    }, 8000);
   } else errorText = '';
 
   clearTimeout(lingerTimer);
@@ -547,17 +560,59 @@ window.addEventListener('blur', () => {
 
 /* ───────── mic / push-to-talk ───────── */
 let pttStartedAt = 0;
-let lastStt: PttStopRequest['stt'] | null = null;
 const preloaded = new Set<string>();
+/** model status line ("downloading the voice model… 42%") while it matters */
+let modelNote = '';
+/** mic trouble spotted while still listening */
+let micNote = '';
+/** a ptt result is pending: forward status to main so it keeps waiting */
+let awaitingResult = false;
 
-function maybePreload(stt: PttStopRequest['stt'] | null): void {
+/** Peak below this is digital silence: the OS is feeding zeros (permission not honoured, muted input). */
+const SILENT_PEAK = 0.0005;
+
+function log(level: 'info' | 'warn' | 'error', message: string): void {
+  try {
+    api.log({ level, message });
+  } catch {
+    /* preload missing in tests */
+  }
+}
+
+function refreshNote(): void {
+  localNote = modelNote || micNote;
+  if (awaitingResult && localNote) api.pttProgress(localNote);
+  renderBubble();
+}
+
+function onModelStatus(st: LocalSttStatus): void {
+  if (config.stt?.provider !== 'on-device' || st.model !== config.stt.model) return;
+  if (st.state === 'downloading') modelNote = `downloading the voice model… ${st.progress}%`;
+  else if (st.state === 'loading') modelNote = awaitingResult ? 'loading the voice model…' : '';
+  else modelNote = '';
+  if (st.state === 'ready') log('info', `voice model ready: ${st.model} on ${st.device} in ${st.ms}ms`);
+  if (st.state === 'error') log('error', `voice model failed: ${st.model}: ${st.message}`);
+  refreshNote();
+}
+onLocalSttStatus(onModelStatus);
+
+function maybePreload(stt: OverlayConfig['stt'] | undefined): void {
   if (!stt || stt.provider !== 'on-device' || !stt.model || preloaded.has(stt.model)) return;
   preloaded.add(stt.model);
+  log('info', `preloading voice model ${stt.model}`);
   try {
     preloadLocalModel(stt.model);
   } catch (e) {
     console.warn('[overlay] preload failed', e);
   }
+}
+
+let preloadTimer = 0;
+/** Warm up the on-device model shortly after start, so the first talk isn't a long wait. */
+function schedulePreload(): void {
+  if (!config.preloadStt || config.stt?.provider !== 'on-device' || preloaded.has(config.stt.model)) return;
+  clearTimeout(preloadTimer);
+  preloadTimer = window.setTimeout(() => maybePreload(config.stt), 2500);
 }
 
 function errMessage(e: unknown): string {
@@ -567,33 +622,96 @@ function errMessage(e: unknown): string {
 
 function onPttStart(): void {
   pttStartedAt = performance.now();
-  maybePreload(lastStt);
+  micNote = '';
+  maybePreload(config.stt);
+  const st = config.stt?.provider === 'on-device' ? localSttStatus(config.stt.model) : undefined;
+  if (st?.state === 'downloading') modelNote = `downloading the voice model… ${st.progress}%`;
   speaker.stop();
-  mic.start().catch((e: unknown) => console.warn('[overlay] mic start failed', e));
+  mic
+    .start()
+    .then(() => {
+      const d = mic.details;
+      if (d) log('info', `mic started: "${d.device}" ${d.sampleRate}hz context=${d.contextState} capture=${d.capture}`);
+    })
+    .catch((e: unknown) => {
+      // tell the user now, not only after they let go
+      micNote = errMessage(e);
+      log('error', `mic start failed: ${errMessage(e)} (${(e as { name?: string })?.name ?? 'error'})`);
+      refreshNote();
+    });
   kick();
 }
 
 async function onPttStop(req: PttStopRequest): Promise<void> {
-  lastStt = req.stt;
   const durationMs = pttStartedAt ? Math.round(performance.now() - pttStartedAt) : 0;
   pttStartedAt = 0;
+  awaitingResult = true;
+  let peak: number | undefined;
   try {
-    const rec = await mic.stop();
-    if (!rec.pcm.length) throw new Error('no audio captured');
-    const pcm = await resampleTo16k(rec.pcm, rec.sampleRate);
-    if (req.stt.provider === 'on-device') {
-      if (durationMs < 250) {
-        api.sendPttResult({ text: '', durationMs }); // accidental tap; main ignores it
-        return;
-      }
-      preloaded.add(req.stt.model);
-      const text = await transcribeLocal(pcm, req.stt.model, req.stt.language || undefined);
-      api.sendPttResult({ text: text.trim(), durationMs });
-    } else {
-      api.sendPttResult({ wav: encodeWav(pcm, 16000), durationMs });
+    let rec: Awaited<ReturnType<MicRecorder['stop']>>;
+    try {
+      rec = await mic.stop();
+    } catch (e) {
+      api.sendPttResult({ error: errMessage(e), errorKind: 'mic', durationMs });
+      return;
     }
+    if (!rec.pcm.length) {
+      const why = rec.contextState === 'suspended' ? 'the audio engine was suspended' : 'no samples arrived';
+      log('error', `no audio captured after ${durationMs}ms (${why})`);
+      api.sendPttResult({ error: 'no audio from the microphone — check your input device in sound settings', errorKind: 'mic', durationMs, peak: 0 });
+      return;
+    }
+    peak = peakLevel(rec.pcm);
+    log('info', `mic stopped: ${durationMs}ms, ${(rec.pcm.length / rec.sampleRate).toFixed(2)}s of audio at ${rec.sampleRate}hz, peak ${peak.toFixed(4)}`);
+    if (durationMs < 250 || peak < SILENT_PEAK) {
+      // accidental tap or pure silence: nothing to transcribe; main explains
+      api.sendPttResult({ text: '', durationMs, peak });
+      return;
+    }
+    const pcm = await resampleTo16k(rec.pcm, rec.sampleRate);
+    if (req.stt.provider !== 'on-device') {
+      api.sendPttResult({ wav: encodeWav(pcm, 16000), durationMs, peak });
+      return;
+    }
+    const st = localSttStatus(req.stt.model);
+    if (!st || st.state !== 'ready') {
+      modelNote = st?.state === 'downloading' ? `downloading the voice model… ${st.progress}%` : 'loading the voice model…';
+      refreshNote();
+    }
+    preloaded.add(req.stt.model);
+    const t0 = performance.now();
+    let text: string;
+    try {
+      text = await transcribeLocal(pcm, req.stt.model, req.stt.language || undefined);
+    } catch (e) {
+      const reason = errMessage(e).split('\n')[0].slice(0, 120);
+      log('error', `on-device transcription failed: ${reason}`);
+      if (e instanceof ModelLoadError) {
+        api.sendPttResult({
+          error: `voice model failed to load — check your connection or pick another speech-to-text in settings › voice (${reason})`,
+          errorKind: 'model',
+          durationMs,
+          peak,
+        });
+      } else {
+        api.sendPttResult({ error: `transcription failed: ${reason}`, errorKind: 'stt', durationMs, peak });
+      }
+      return;
+    }
+    const done = localSttStatus(req.stt.model);
+    api.sendPttResult({
+      text: text.trim(),
+      durationMs,
+      peak,
+      sttMs: Math.round(performance.now() - t0),
+      sttDevice: done?.state === 'ready' ? done.device : undefined,
+    });
   } catch (e) {
-    api.sendPttResult({ error: errMessage(e), durationMs });
+    api.sendPttResult({ error: errMessage(e), durationMs, peak });
+  } finally {
+    awaitingResult = false;
+    modelNote = '';
+    refreshNote();
   }
 }
 
@@ -611,6 +729,7 @@ api.onConfig((c) => {
     follow.snap(t.x, t.y);
   }
   if (!c.companion.pointing && mode !== 'follow') returnToCursor();
+  schedulePreload();
   renderBubble();
   kick();
 });
@@ -645,8 +764,12 @@ api.onPttStart(onPttStart);
 api.onPttStop((req) => void onPttStop(req));
 api.onPttCancel(() => {
   pttStartedAt = 0;
+  micNote = '';
   mic.cancel();
 });
+
+// Uncaught renderer errors end up in clickity.log too (console errors are forwarded by main).
+window.addEventListener('unhandledrejection', (e) => log('error', `unhandled rejection: ${errMessage(e.reason)}`));
 
 api.onSpeak((cmd: SpeakCommand) => {
   clearTimeout(autoReturnTimer);
