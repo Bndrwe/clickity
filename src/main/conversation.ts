@@ -1011,7 +1011,10 @@ export function onEscape(): void {
   closeTyping();
   // Escape is global (uiohook hears it in every app): pressing it in an editor must not kill a
   // reply streaming into the chats window, which has its own stop button.
-  if (current?.kind !== 'window') cancelCurrent();
+  if (current && current.kind !== 'window') {
+    log('turn', `${current.id} cancelled (escape)`);
+    cancelCurrent();
+  }
   clearErrorTimer();
 }
 
