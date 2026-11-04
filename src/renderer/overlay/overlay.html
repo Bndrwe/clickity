@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>clicky overlay</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap"
+    />
+    <link rel="stylesheet" href="./overlay.css" />
+    <script>
+      // theme before first paint; config refines it once it arrives
+      if (matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.classList.add('dark');
+    </script>
+  </head>
+  <body>
+    <div id="stage" class="stage is-hidden" aria-hidden="true">
+      <div id="ripples" class="ripples"></div>
+      <div id="pill-pos" class="pos"><div id="pill" class="pill"></div></div>
+
+      <div id="companion" class="pos companion">
+        <div class="shadow"></div>
+        <div id="body" class="body">
+          <div class="ring"></div>
+          <svg id="arrow" class="arrow" viewBox="0 0 32 32" aria-hidden="true">
+            <path class="halo" d="M16 3 L26 27 L16 21.5 L6 27 Z" />
+            <path class="fill" d="M16 3 L26 27 L16 21.5 L6 27 Z" />
+          </svg>
+        </div>
+        <div class="aux">
+          <div id="wave" class="wave"><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="dots"><i></i><i></i><i></i></div>
+        </div>
+      </div>
+
+      <div id="bubble-pos" class="pos">
+        <div id="bubble" class="bubble" role="status" aria-live="polite">
+          <div class="collapse transcript-wrap"><div><p id="transcript" class="transcript"></p></div></div>
+          <div id="reply" class="reply"><div id="reply-text" class="reply-text"></div></div>
+          <p id="error" class="error"></p>
+        </div>
+      </div>
+
+      <div id="typebox-pos" class="pos">
+        <form id="typebox" class="typebox" autocomplete="off">
+          <input id="typebox-input" type="text" placeholder="ask clicky…" aria-label="ask clicky" spellcheck="false" />
+        </form>
+      </div>
+    </div>
+    <script src="./overlay.js"></script>
+  </body>
+</html>
