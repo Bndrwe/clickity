@@ -19,6 +19,7 @@ import { canonicalCode, chordLabel, orderChord, validateChord } from './keys';
 const api = window.clicky;
 let settings: Settings = structuredClone(DEFAULT_SETTINGS);
 let platform: string = 'darwin';
+let packaged = true;
 const syncers: Array<() => void> = [];
 const pending = new Set<() => void>();
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -728,12 +729,60 @@ function initKeys(): void {
 
 /* ───────────── companion ───────────── */
 
+// The companion's color is the user's content, so it's the one place real colors appear.
+const BUDDY_COLORS: Array<{ name: string; value: string }> = [
+  { name: 'ink', value: '' },
+  { name: 'white', value: '#ffffff' },
+  { name: 'blue', value: '#2f6bff' },
+  { name: 'violet', value: '#7c4dff' },
+  { name: 'pink', value: '#ff4f9a' },
+  { name: 'red', value: '#ff3b30' },
+  { name: 'orange', value: '#ff8a00' },
+  { name: 'yellow', value: '#ffcc00' },
+  { name: 'green', value: '#1fbf5b' },
+  { name: 'teal', value: '#14b8b0' },
+];
+function initColor(): void {
+  const box = $('color-swatches');
+  const custom = h('input', { type: 'color', class: 'swatch-custom', 'aria-label': 'custom color', title: 'custom color' }) as HTMLInputElement;
+  const buttons = BUDDY_COLORS.map((c) => {
+    const b = h('button', { type: 'button', role: 'radio', class: 'swatch', 'aria-label': c.name, title: c.name });
+    if (c.value) b.style.setProperty('--sw', c.value);
+    else b.classList.add('swatch-ink');
+    b.dataset.value = c.value;
+    b.addEventListener('click', () => pick(c.value));
+    return b;
+  });
+  const pick = (value: string) => {
+    settings = { ...settings, companion: { ...settings.companion, color: value } };
+    sync();
+    void save({ companion: { color: value } });
+  };
+  custom.addEventListener('input', () => pick(custom.value.toLowerCase()));
+  const customWrap = h('label', { class: 'swatch swatch-custom-wrap', title: 'custom color' }, custom);
+  box.append(...buttons, customWrap);
+  const sync = () => {
+    const cur = (settings.companion.color || '').toLowerCase();
+    const preset = BUDDY_COLORS.some((c) => c.value === cur);
+    for (const b of buttons) b.setAttribute('aria-checked', String(b.dataset.value === cur));
+    customWrap.classList.toggle('on', !preset);
+    if (!preset && cur) {
+      customWrap.style.setProperty('--sw', cur);
+      custom.value = cur;
+    }
+  };
+  syncers.push(sync);
+  sync();
+}
+
+
 function initCompanion(): void {
   bindSwitch($('sw-follow'), () => settings.companion.followCursor, (v) => ({ companion: { followCursor: v } }));
   bindSwitch($('sw-bubble'), () => settings.companion.showBubble, (v) => ({ companion: { showBubble: v } }));
   bindSwitch($('sw-point'), () => settings.companion.pointing, (v) => ({ companion: { pointing: v } }));
   bindSwitch($('sw-login'), () => settings.launchAtLogin, (v) => ({ launchAtLogin: v }));
   bindRange($<HTMLInputElement>('scale'), $('scale-out'), () => settings.companion.scale, (n) => `${n.toFixed(2)}×`, (n) => ({ companion: { scale: n } }));
+  initColor();
   bindText($<HTMLTextAreaElement>('instructions'), () => settings.customInstructions, (v) => ({ customInstructions: v }));
   bindText($<HTMLInputElement>('turns'), () => String(settings.historyTurns), (v) => {
     const n = Math.max(0, Math.min(50, Math.round(Number(v))));
@@ -771,6 +820,14 @@ function permRows(container: HTMLElement): () => void {
       container.append(h('div', { class: 'row' }, h('span', { class: 'row-label' }), h('div', { class: 'row-value muted', text: `nothing to grant on ${platformName()}` })));
       return;
     }
+    if (!packaged) {
+      container.append(
+        h('div', { class: 'row' }, h('span', { class: 'row-label', text: 'heads up' }), h('div', { class: 'row-value' }, h('p', {
+          class: 'perm-note',
+          text: "you're running clicky from a terminal (npm run dev), so macos asks on behalf of that terminal — turn the switches on for terminal, iterm or vs code, not clicky. the installed app shows up as itself.",
+        }))),
+      );
+    }
     for (const p of PERMS) {
       const state = perms?.[p.kind] ?? 'unknown';
       const granted = state === 'granted';
@@ -795,6 +852,12 @@ function permRows(container: HTMLElement): () => void {
   render();
   return render;
 }
+/** Screen recording and accessibility only take effect after a relaunch on macOS. */
+function restartRow(): HTMLElement {
+  const btn = h('button', { class: 'text-btn', type: 'button' }, h('span', { text: 'restart clicky' }));
+  btn.addEventListener('click', () => void api.relaunch());
+  return h('div', { class: 'row' }, h('span', { class: 'row-label', text: 'granted something?' }), h('div', { class: 'row-value' }, h('span', { class: 'muted', text: 'macos applies screen recording and accessibility after a restart. ' }), btn));
+}
 const platformName = () => ({ darwin: 'macos', win32: 'windows', linux: 'linux' } as Record<string, string>)[platform] ?? platform;
 async function pollPerms(): Promise<void> {
   try {
@@ -810,6 +873,9 @@ async function initAbout(): Promise<void> {
   try {
     const info = await api.appInfo();
     platform = info.platform;
+    packaged = info.packaged;
+    if (platform === 'darwin') $('perm-sheet').after(h('div', { class: 'sheet' }, restartRow()));
+    permListeners.forEach((f) => f());
     $('app-version').textContent = `v${info.version}`;
     $('app-platform').textContent = `· ${platformName()}`;
   } catch {}

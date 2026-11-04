@@ -213,8 +213,14 @@
       <div class="row">
         <label class="row-label" for="scale">size</label>
         <div class="row-value range-row">
-          <input id="scale" type="range" min="0.75" max="1.5" step="0.05">
+          <input id="scale" type="range" min="0.5" max="2.5" step="0.05">
           <output class="tnum" id="scale-out" for="scale"></output>
+        </div>
+      </div>
+      <div class="row">
+        <span class="row-label" id="color-label">color</span>
+        <div class="row-value">
+          <div class="swatches" role="radiogroup" aria-labelledby="color-label" id="color-swatches"></div>
         </div>
       </div>
       <div class="row">

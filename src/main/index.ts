@@ -19,6 +19,7 @@ import {
 } from './conversation';
 import { getPermissions, installPermissionHandlers, requestPermission } from './permissions';
 import { createTray, destroyTray, refreshTray } from './tray';
+import { installAppMenu, launchedAtLogin } from './app-menu';
 import { applySettingsTheme, openSettingsWindow, sendToSettings } from './settings-window';
 
 const isMac = process.platform === 'darwin';
@@ -41,6 +42,13 @@ function syncHotkeySuspension(): void {
   suspendHotkeys(paused || suspendedBySettings);
 }
 
+const appMenuActions = {
+  openSettings: () => void openSettingsWindow(),
+  isPaused: () => paused,
+  setPaused: (p: boolean) => setPaused(p),
+  clearConversation: () => clearHistory(),
+};
+
 function setPaused(next: boolean): void {
   if (paused === next) return;
   paused = next;
@@ -48,6 +56,7 @@ function setPaused(next: boolean): void {
   setOverlaysVisible(!paused);
   syncHotkeySuspension();
   refreshTray();
+  installAppMenu(appMenuActions); // keep the menu's pause checkbox in sync
 }
 
 /* ───────────────────────── settings side effects ───────────────────────── */
@@ -56,7 +65,8 @@ function applyLaunchAtLogin(enabled: boolean): void {
   // In dev this would register the bare electron binary, which can't start the app.
   if (!app.isPackaged) return;
   try {
-    app.setLoginItemSettings({ openAtLogin: enabled });
+    // --hidden: start quietly in the menu bar / tray when the OS launches us at login.
+    app.setLoginItemSettings({ openAtLogin: enabled, args: ['--hidden'] });
   } catch (err) {
     console.warn('[main] setLoginItemSettings failed:', err);
   }
@@ -141,7 +151,11 @@ function registerIpc(): void {
     }
     await shell.openExternal(url);
   });
-  ipcMain.handle(IPC.appInfo, () => ({ version: app.getVersion(), platform: process.platform }));
+  ipcMain.handle(IPC.appInfo, () => ({ version: app.getVersion(), platform: process.platform, packaged: app.isPackaged }));
+  ipcMain.handle(IPC.appRelaunch, () => {
+    app.relaunch();
+    app.exit(0);
+  });
   ipcMain.handle(IPC.testSpeak, () => testSpeak());
   ipcMain.handle(IPC.appQuit, () => app.quit());
 }
@@ -170,11 +184,10 @@ async function bootstrap(): Promise<void> {
       /* ignore */
     }
   });
-  // mac: clicking the dock icon (shown while settings are open) or re-launching from Finder.
+  // mac: clicking the dock icon or re-launching from Finder / Launchpad.
   app.on('activate', () => openSettingsWindow());
 
   await app.whenReady();
-  if (isMac) app.dock?.hide();
 
   const settings = loadSettings();
   applySettingsTheme(settings.theme);
@@ -200,7 +213,11 @@ async function bootstrap(): Promise<void> {
     quit: () => app.quit(),
   });
 
+  installAppMenu(appMenuActions);
+
   onSettingsChanged(handleSettingsChanged);
 
-  if (!settings.onboarded) openSettingsWindow();
+  // Opening the app from its icon shows the settings window, like any app.
+  // Started by the OS at login: stay quiet in the menu bar / tray.
+  if (!settings.onboarded || !launchedAtLogin()) openSettingsWindow();
 }

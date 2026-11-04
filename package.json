@@ -10,17 +10,28 @@
     "dev": "node scripts/build.mjs && electron .",
     "start": "electron .",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "dist": "node scripts/build.mjs && electron-builder"
+    "dist": "node scripts/build.mjs && electron-builder --publish never",
+    "dist:mac": "node scripts/build.mjs && electron-builder --mac --publish never",
+    "dist:win": "node scripts/build.mjs && electron-builder --win --publish never",
+    "dist:linux": "node scripts/build.mjs && electron-builder --linux --publish never"
   },
   "dependencies": {
-    "@huggingface/transformers": "^4.3.2",
     "uiohook-napi": "^1.5.5"
   },
   "devDependencies": {
+    "@huggingface/transformers": "^4.3.2",
     "@types/node": "^22.10.0",
     "electron": "^45.2.2",
     "electron-builder": "^26.0.12",
     "esbuild": "^0.28.2",
     "typescript": "^5.7.2"
+  },
+  "author": {
+    "name": "clickyclone contributors"
+  },
+  "homepage": "https://github.com/bndrwe/clickyclone",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bndrwe/clickyclone.git"
   }
 }

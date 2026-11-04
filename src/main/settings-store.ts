@@ -112,7 +112,8 @@ function validate(s: Settings): Settings {
   if (!PROVIDER_KINDS.includes(s.provider)) s.provider = d.provider;
   if (!isKeyList(s.hotkeys.talk)) s.hotkeys.talk = [...d.hotkeys.talk];
   if (!isKeyList(s.hotkeys.type)) s.hotkeys.type = [...d.hotkeys.type];
-  s.companion.scale = clamp(s.companion.scale, 0.75, 1.5, d.companion.scale);
+  s.companion.scale = clamp(s.companion.scale, 0.5, 2.5, d.companion.scale);
+  if (typeof s.companion.color !== 'string' || (s.companion.color !== '' && !/^#[0-9a-f]{6}$/i.test(s.companion.color))) s.companion.color = '';
   s.speech.tts.rate = clamp(s.speech.tts.rate, 0.5, 2, d.speech.tts.rate);
   s.historyTurns = Math.round(clamp(s.historyTurns, 0, 20, d.historyTurns));
   return s;

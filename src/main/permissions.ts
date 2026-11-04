@@ -7,6 +7,7 @@ const isMac = process.platform === 'darwin';
 const isWin = process.platform === 'win32';
 
 const SCREEN_PREFS_URL = 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture';
+const ACCESSIBILITY_PREFS_URL = 'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility';
 const MIC_PREFS_URL = 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone';
 
 function mediaStatus(kind: 'microphone' | 'screen'): PermissionState {
@@ -43,7 +44,8 @@ export async function requestPermission(kind: PermissionKind): Promise<Permissio
         break;
       }
       case 'accessibility':
-        systemPreferences.isTrustedAccessibilityClient(true);
+        // Shows the system prompt the first time; afterwards open the list directly.
+        if (!systemPreferences.isTrustedAccessibilityClient(true)) await shell.openExternal(ACCESSIBILITY_PREFS_URL);
         break;
     }
   } catch (err) {

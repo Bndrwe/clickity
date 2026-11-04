@@ -237,8 +237,10 @@ export interface CompanionSettings {
   /** px offset from the cursor tip */
   offsetX: number;
   offsetY: number;
-  /** 0.75 – 1.5 */
+  /** 0.5 – 2.5 */
   scale: number;
+  /** companion color as #rrggbb; '' = follow the theme (ink) */
+  color: string;
   /** show streamed reply text in a bubble next to the companion */
   showBubble: boolean;
   /** let the companion fly to and point at things on screen */
@@ -285,7 +287,7 @@ export const DEFAULT_SETTINGS: Settings = {
     tts: { provider: 'system', voice: '', rate: 1.05 },
   },
   hotkeys: { talk: ['Control', 'Alt'], mode: 'hold', type: ['Control', 'Alt', 'Space'] },
-  companion: { followCursor: true, offsetX: 18, offsetY: 20, scale: 1, showBubble: true, pointing: true },
+  companion: { followCursor: true, offsetX: 18, offsetY: 20, scale: 1, color: '', showBubble: true, pointing: true },
   theme: 'system',
   customInstructions: '',
   historyTurns: 6,
