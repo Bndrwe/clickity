@@ -52,14 +52,11 @@ function darkTray(): boolean {
 
 /** Same glyph, every opaque pixel painted white (assets/tray.png is near-black). */
 function whiten(img: NativeImage): NativeImage {
-  const out = nativeImage.createEmpty();
-  for (const scaleFactor of img.getScaleFactors()) {
-    const size = img.getSize(scaleFactor);
-    const bmp = img.toBitmap({ scaleFactor }); // BGRA / RGBA: either way alpha is byte 3
-    for (let i = 0; i < bmp.length; i += 4) bmp[i] = bmp[i + 1] = bmp[i + 2] = 255;
-    const rep = nativeImage.createFromBitmap(bmp, { width: size.width * scaleFactor, height: size.height * scaleFactor, scaleFactor });
-    out.addRepresentation({ scaleFactor, width: size.width, height: size.height, buffer: rep.toPNG() });
-  }
+  const scaleFactor = Math.max(1, ...img.getScaleFactors());
+  const { width, height } = img.getSize(scaleFactor);
+  const bmp = img.toBitmap({ scaleFactor }); // BGRA or RGBA: either way alpha is byte 3
+  for (let i = 0; i < bmp.length; i += 4) bmp[i] = bmp[i + 1] = bmp[i + 2] = 255;
+  const out = nativeImage.createFromBitmap(bmp, { width: width * scaleFactor, height: height * scaleFactor, scaleFactor });
   return out.isEmpty() ? img : out;
 }
 
