@@ -106,9 +106,23 @@ const clamp = (v: unknown, lo: number, hi: number, fallback: number): number =>
 const isKeyList = (v: unknown): v is string[] =>
   Array.isArray(v) && v.length > 0 && v.every((k) => typeof k === 'string' && k.length > 0);
 
+/** Hotkey defaults per platform: cmd + option on mac, ctrl + alt elsewhere. */
+const MAC_HOTKEYS = { talk: ['Meta', 'Alt'], type: ['Meta', 'Alt', 'Space'] };
+const OLD_MAC_DEFAULT_TALK = 'Control+Alt';
+
+/** DEFAULT_SETTINGS adjusted for this platform. */
+export function platformDefaults(): Settings {
+  const d = clone(DEFAULT_SETTINGS);
+  if (process.platform === 'darwin') {
+    d.hotkeys.talk = [...MAC_HOTKEYS.talk];
+    d.hotkeys.type = [...MAC_HOTKEYS.type];
+  }
+  return d;
+}
+
 /** Fixes values that would break the app; mutates and returns s. */
 function validate(s: Settings): Settings {
-  const d = DEFAULT_SETTINGS;
+  const d = platformDefaults();
   if (!PROVIDER_KINDS.includes(s.provider)) s.provider = d.provider;
   if (!isKeyList(s.hotkeys.talk)) s.hotkeys.talk = [...d.hotkeys.talk];
   if (!isKeyList(s.hotkeys.type)) s.hotkeys.type = [...d.hotkeys.type];
@@ -192,7 +206,13 @@ export function loadSettings(): Settings {
     }
   }
 
-  const merged = merge(asObj(clone(DEFAULT_SETTINGS)), stored);
+  const merged = merge(asObj(platformDefaults()), stored);
+  // One-time move of mac installs still on the old ctrl + option default to cmd + option.
+  const mergedHotkeys = (merged as unknown as Settings).hotkeys;
+  if (process.platform === 'darwin' && mergedHotkeys && mergedHotkeys.talk.join('+') === OLD_MAC_DEFAULT_TALK && mergedHotkeys.type.join('+') === 'Control+Alt+Space') {
+    mergedHotkeys.talk = [...MAC_HOTKEYS.talk];
+    mergedHotkeys.type = [...MAC_HOTKEYS.type];
+  }
   let upgradePlaintext = false;
   forEachSecret(merged, (h) => {
     if (typeof h.apiKey !== 'string') {
@@ -233,7 +253,7 @@ export function updateSettings(patch: DeepPartial<Settings>): Settings {
 /** Restores defaults for everything (secrets included), persists and notifies. */
 export function resetSettings(): Settings {
   const prev = ensureLoaded();
-  const next = validate(clone(DEFAULT_SETTINGS));
+  const next = validate(platformDefaults());
   current = next;
   scheduleWrite();
   notify(next, prev);
