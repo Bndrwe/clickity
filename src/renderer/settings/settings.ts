@@ -200,6 +200,9 @@ function applyTheme(theme: Theme): void {
   btn.innerHTML = theme === 'system' ? ICON.monitor : dark ? ICON.moon : ICON.sun;
   btn.setAttribute('aria-label', `theme: ${theme}`);
   btn.title = `theme: ${theme}`;
+  for (const b of document.querySelectorAll<HTMLButtonElement>('#theme-seg button')) {
+    b.setAttribute('aria-checked', String(b.dataset.theme === theme));
+  }
 }
 mq.addEventListener('change', () => {
   if (settings.theme === 'system') applyTheme('system');
@@ -208,11 +211,16 @@ function initTheme(): void {
   syncers.push(() => applyTheme(settings.theme));
   $('theme-toggle').addEventListener('click', () => {
     const order: Theme[] = ['system', 'light', 'dark'];
-    const next = order[(order.indexOf(settings.theme) + 1) % 3];
-    settings = { ...settings, theme: next };
-    applyTheme(next);
-    void save({ theme: next });
+    setTheme(order[(order.indexOf(settings.theme) + 1) % 3]);
   });
+  for (const b of document.querySelectorAll<HTMLButtonElement>('#theme-seg button')) {
+    b.addEventListener('click', () => setTheme(b.dataset.theme as Theme));
+  }
+}
+function setTheme(next: Theme): void {
+  settings = { ...settings, theme: next };
+  applyTheme(next);
+  void save({ theme: next });
 }
 
 /* ───────────── top bar, scroll, hero ───────────── */
