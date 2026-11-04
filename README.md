@@ -73,6 +73,12 @@ clickity behaves like any app: clicking its icon opens settings, the companion k
 - **behavior** — follow the cursor or park in a corner, show or hide the bubble, pointing on or off, custom instructions.
 
 <p align="center">
+  <img src="docs/screenshots/chats.png" width="720" alt="the clickity chats window: saved chats, a dark glass composer and a model picker">
+</p>
+
+every conversation — spoken, typed next to the cursor, or written in the chats window — is saved. open **chats** from the menu-bar icon or settings to search, rename, continue or delete them.
+
+<p align="center">
   <img src="docs/screenshots/dark-settings.png" width="560" alt="clickity settings in dark mode">
 </p>
 
