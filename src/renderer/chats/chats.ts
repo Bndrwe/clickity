@@ -360,7 +360,7 @@ async function renderModelPop(): Promise<void> {
   const box = h('div', { class: 'pop-scroll' });
   for (const m of models) {
     box.append(
-      menuItem((m.label || m.id).toLowerCase(), m.label && m.label !== m.id ? m.id : null, m.id === cur, () => {
+      menuItem((m.label || m.id).toLowerCase(), m.label && m.label.toLowerCase() !== m.id.toLowerCase() ? m.id : null, m.id === cur, () => {
         closePopovers();
         void save({ models: { [kind]: m.id } as Settings['models'] });
       }),
