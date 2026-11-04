@@ -1,18 +1,30 @@
 // The turn orchestrator: push-to-talk → transcript + screenshots → streamed model reply
 // → pointing → speech → back to idle. See ARCHITECTURE.md "How a turn works".
-import { BrowserWindow, ipcMain, screen, type Point } from 'electron';
+// Every turn (voice, overlay type box, chats window) runs through runTurn() and is recorded
+// in the active stored chat (chat-store.ts); the chats window gets live ChatEvents.
+import { BrowserWindow, ipcMain, nativeImage, screen, type Point } from 'electron';
 import { IPC } from '../shared/ipc';
 import {
+  PROVIDER_KINDS,
   PROVIDER_META,
+  type Chat,
+  type ChatAttachment,
+  type ChatEvent,
   type ChatMessage,
   type ChatRequest,
+  type ChatSendRequest,
+  type ChatTurn,
+  type ImageInput,
   type OverlayPoint,
   type OverlayState,
+  type ProviderKind,
   type PttResult,
   type Settings,
 } from '../shared/types';
 import { getSettings } from './settings-store';
-import { captureScreens, cleanupCaptures, screenshotToGlobal, type CapturedScreen } from './capture';
+import { captureScreens, cleanupCaptures, screenshotToGlobal, writeTempImage, type CapturedScreen } from './capture';
+import * as store from './chat-store';
+import { sendToChats } from './chats-window';
 import { transcribe } from './speech/stt';
 import { synthesize } from './speech/tts';
 import { getProvider } from './providers/index';
@@ -36,6 +48,11 @@ const POINT_STEP_MS = 2600;
 const PTT_TIMEOUT_LOCAL_MS = 120_000; // first on-device run may download the whisper model
 const PTT_TIMEOUT_REMOTE_MS = 20_000;
 const TYPE_BOX_HIDE_MS = 90; // let the type box disappear before we screenshot
+/** a stored chat idle this long is closed: the next voice / type turn starts a new one */
+const CHAT_IDLE_MS = 30 * 60 * 1000;
+const MAX_ATTACHMENTS = 10;
+const MAX_ATTACHMENT_TEXT = 200_000; // chars inlined per text file
+const ATTACH_MAX_SIDE = 1568;
 
 /* ───────────────────────── state ───────────────────────── */
 
@@ -48,11 +65,16 @@ interface Turn {
   stage: 'recording' | 'processing';
   /** overlays we sent a point to, so we can recall the companion */
   pointed: Set<BrowserWindow>;
+  /** stored chat this turn is recorded in (set once the turn reaches the model) */
+  chatId: string | null;
 }
 
 let current: Turn | null = null;
 let turnSeq = 0;
-let history: ChatMessage[] = [];
+/** the stored chat voice / type turns continue (null = start a new one lazily) */
+let activeChatId: string | null = null;
+/** when the active chat was made active (opening an old chat shouldn't instantly expire it) */
+let activeSince = 0;
 /** overlay currently showing the type box */
 let typingOverlay: BrowserWindow | null = null;
 let errorTimer: NodeJS.Timeout | null = null;
@@ -230,13 +252,32 @@ function platformName(): string {
   return 'Linux';
 }
 
+export interface PromptOptions {
+  /** where the user's message came from; 'window' = typed in the chats window, not read aloud */
+  source?: ChatTurn['source'];
+  /** names of attached images (sent after the screenshots) */
+  imageNames?: string[];
+}
+
 /** Clickity persona (heyclicky-style) + pointing protocol + this turn's screen list + custom instructions. */
-export function buildSystemPrompt(settings: Settings, screens: CapturedScreen[]): string {
+export function buildSystemPrompt(settings: Settings, screens: CapturedScreen[], opts: PromptOptions = {}): string {
+  const fromWindow = opts.source === 'window';
   const screenLines = screens.length
     ? screens
         .map((s) => `- screen ${s.index}${s.isCursorScreen ? ' (the mouse cursor is on this one)' : ''}: "${s.image.label}", ${s.image.width}x${s.image.height} pixels`)
         .join('\n')
-    : '- (no screenshots this turn; screen capture is unavailable, so do not point)';
+    : fromWindow
+      ? '- (no screenshots this turn; the user did not share their screen, so do not point)'
+      : '- (no screenshots this turn; screen capture is unavailable, so do not point)';
+  const attachedLines = opts.imageNames?.length
+    ? `\n\nATTACHED IMAGES (sent after the screenshots; you cannot point at these)\n${opts.imageNames.map((n) => `- "${n}"`).join('\n')}`
+    : '';
+  const channel = fromWindow
+    ? `
+
+THIS MESSAGE
+The user typed this message in Clickity's chat window instead of speaking. Your reply is shown as text there and is not read aloud, so you can be a little longer when it genuinely helps, and short markdown (a list, a code block) is fine when it makes the answer clearer. Attached text files are included inline in the message.`
+    : '';
 
   const pointing = settings.companion.pointing
     ? `
@@ -264,10 +305,10 @@ HOW TO REPLY
 - Answer about what's actually on the screen when that's relevant; be specific ("the blue share button in the top right") instead of generic.
 - The user's words come from speech-to-text and may contain mistakes; infer what they meant. If the request is truly unclear, ask one short question.
 - Earlier turns in the conversation are text only; only the newest message has screenshots, so trust the current screenshots over memory.
-${pointing}
+${pointing}${channel}
 
 SCREENS THIS TURN
-${screenLines}${custom ? `\n\nADDITIONAL INSTRUCTIONS FROM THE USER\n${custom}` : ''}`;
+${screenLines}${attachedLines}${custom ? `\n\nADDITIONAL INSTRUCTIONS FROM THE USER\n${custom}` : ''}`;
 }
 
 /* ───────────────────────── turn lifecycle ───────────────────────── */
@@ -300,6 +341,7 @@ function beginTurn(overlay: BrowserWindow | null, stage: Turn['stage']): Turn {
     startedAt: Date.now(),
     stage,
     pointed: new Set(),
+    chatId: null,
   };
   current = turn;
   return turn;
@@ -330,74 +372,332 @@ async function safeCapture(cursor: Point): Promise<CapturedScreen[]> {
   }
 }
 
-/** Stream the reply, point, speak, and record history. */
-async function runTurn(turn: Turn, userText: string, screens: CapturedScreen[]): Promise<void> {
+/* ───────────────────────── stored chats ───────────────────────── */
+
+function emitChat(ev: ChatEvent): void {
+  sendToChats(IPC.chatsEvent, ev);
+}
+
+function activate(id: string | null): void {
+  activeChatId = id;
+  activeSince = Date.now();
+}
+
+/** The chat voice / type turns continue, or null when there is none (or it went idle). */
+export function getActiveChatId(): string | null {
+  if (!activeChatId) return null;
+  const sum = store.getSummary(activeChatId);
+  if (!sum || Date.now() - Math.max(sum.updatedAt, activeSince) > CHAT_IDLE_MS) activeChatId = null;
+  return activeChatId;
+}
+
+/**
+ * The chat a new turn goes into. `explicit` (chats window): the requested chat if it exists,
+ * else a new one. Otherwise: the active chat, or a new one.
+ */
+function resolveChat(requested: string | null, explicit: boolean): string {
+  if (explicit) {
+    if (requested && store.hasChat(requested)) {
+      activate(requested);
+      return requested;
+    }
+  } else {
+    const id = getActiveChatId();
+    if (id) return id;
+  }
+  const chat = store.createChat();
+  activate(chat.id);
+  return chat.id;
+}
+
+/** Start an empty chat and make it active (chats window "new chat"). */
+export function newChat(): Chat {
+  const chat = store.createChat();
+  activate(chat.id);
+  return chat;
+}
+
+/** Make a stored chat the active conversation, so the next voice turn continues it. */
+export function openChat(id: string): void {
+  if (store.hasChat(id)) activate(id);
+}
+
+/** Delete a stored chat; stops a reply streaming into it and forgets it if active. */
+export function removeChat(id: string): void {
+  if (current?.chatId === id) cancelCurrent();
+  if (activeChatId === id) activeChatId = null;
+  store.deleteChat(id);
+}
+
+/** Abort the reply streaming into `chatId` (chats window stop button). */
+export function stopChat(chatId: string): void {
+  if (current && current.chatId === chatId) cancelCurrent();
+}
+
+/** Last `pairs` completed user → assistant exchanges of a chat, as text-only model context. */
+function chatContext(chatId: string, pairs: number): ChatMessage[] {
+  if (pairs <= 0) return [];
+  const chat = store.getChat(chatId);
+  if (!chat) return [];
+  const out: ChatMessage[][] = [];
+  const turns = chat.turns;
+  for (let i = 0; i < turns.length - 1; i++) {
+    const u = turns[i];
+    const a = turns[i + 1];
+    if (u.role !== 'user' || a.role !== 'assistant') continue;
+    i++;
+    if (a.error || !a.text.trim()) continue; // failed / stopped replies aren't context
+    const userText = u.text.trim() || (u.attachments?.length ? `(sent ${u.attachments.join(', ')})` : '');
+    if (!userText) continue;
+    // Remember where we pointed so follow-ups ("and then?") make sense.
+    const pointedNote = a.points?.length ? ` (pointed at: ${a.points.join(', ')})` : '';
+    out.push([
+      { role: 'user', text: userText },
+      { role: 'assistant', text: `${a.text}${pointedNote}`.trim() },
+    ]);
+  }
+  return out.slice(-pairs).flat();
+}
+
+/* ───────────────────────── the turn ───────────────────────── */
+
+interface TurnInput {
+  source: NonNullable<ChatTurn['source']>;
+  /** what the user said / typed: stored in the chat and shown in the bubble */
+  userText: string;
+  /** sent to the model instead of userText (e.g. with text attachments inlined) */
+  modelText?: string;
+  screens: CapturedScreen[];
+  /** extra images sent after the screenshots (chats window attachments) */
+  images?: ImageInput[];
+  /** attachment names, stored with the user turn */
+  attachments?: string[];
+  provider?: ProviderKind;
+  model?: string;
+  /** read the reply aloud (off for chats-window messages) */
+  speak: boolean;
+  /** fly to POINT targets (needs screenshots) */
+  point: boolean;
+}
+
+/** Record the user turn, stream the reply (overlay + chats window), store it, then point and speak. */
+async function runTurn(turn: Turn, input: TurnInput): Promise<void> {
   const settings = getSettings();
   const signal = turn.controller.signal;
-  const kind = settings.provider;
-  const model = settings.models[kind] || PROVIDER_META[kind].defaultModel;
+  const kind = input.provider ?? settings.provider;
+  const model = input.model || settings.models[kind] || PROVIDER_META[kind].defaultModel;
   const cfg = settings.providers[kind] ?? {};
+  const { screens } = input;
+  // Overlay updates only while this turn still owns the companion.
+  const show = (state: OverlayState): void => {
+    if (isTurnCurrent(turn)) sendState(turn.overlay, state);
+  };
+  const thinking: OverlayState = { phase: 'thinking', transcript: input.userText || input.attachments?.join(', ') };
 
-  sendState(turn.overlay, { phase: 'thinking', transcript: userText });
-
-  const keep = Math.max(0, settings.historyTurns) * 2;
-  const prior = keep > 0 ? history.slice(-keep) : [];
-  const userMsg: ChatMessage = { role: 'user', text: userText, images: screens.map((s) => s.image) };
-  const req: ChatRequest = {
-    system: buildSystemPrompt(settings, screens),
-    messages: [...prior, userMsg],
+  const chatId = turn.chatId ?? resolveChat(null, false);
+  turn.chatId = chatId;
+  const prior = chatContext(chatId, Math.max(0, settings.historyTurns));
+  const userTurn = store.appendTurn(chatId, {
+    role: 'user',
+    text: input.userText,
+    source: input.source,
+    screenshots: screens.length,
+    attachments: input.attachments?.length ? input.attachments : undefined,
+    provider: kind,
     model,
-    signal,
-  };
+  });
+  if (userTurn) emitChat({ type: 'user', chatId, turn: userTurn });
+  const assistantId = store.newId();
+  emitChat({ type: 'start', chatId, turnId: assistantId });
 
-  // Stream, pushing throttled visible-text updates to the overlay.
   let buffer = '';
-  let lastSent = '';
-  let lastSentAt = 0;
-  const pushVisible = (force: boolean): void => {
-    const visible = stripForDisplay(buffer);
-    if (visible === lastSent) return;
-    const now = Date.now();
-    if (!force && now - lastSentAt < STATE_THROTTLE_MS) return;
-    lastSent = visible;
-    lastSentAt = now;
-    sendState(turn.overlay, visible ? { phase: 'speaking', reply: visible } : { phase: 'thinking', transcript: userText });
+  let recorded = false;
+  /** Store the assistant turn once (done, error or stopped) and tell the chats window. */
+  const record = (text: string, points: ParsedPoint[], error?: string): void => {
+    if (recorded) return;
+    recorded = true;
+    const stored = store.appendTurn(chatId, {
+      id: assistantId,
+      role: 'assistant',
+      text,
+      points: points.length ? points.map((p) => p.label) : undefined,
+      provider: kind,
+      model,
+      error,
+    });
+    if (error || !stored) emitChat({ type: 'error', chatId, turnId: assistantId, error: error ?? 'chat was deleted' });
+    else emitChat({ type: 'done', chatId, turn: stored });
   };
 
-  for await (const delta of getProvider(kind).stream(req, cfg)) {
-    if (signal.aborted) return;
-    buffer += delta;
-    pushVisible(false);
+  try {
+    show(thinking);
+    const userMsg: ChatMessage = {
+      role: 'user',
+      text: input.modelText ?? input.userText,
+      images: [...screens.map((s) => s.image), ...(input.images ?? [])],
+    };
+    const req: ChatRequest = {
+      system: buildSystemPrompt(settings, screens, { source: input.source, imageNames: input.images?.map((i) => i.label) }),
+      messages: [...prior, userMsg],
+      model,
+      signal,
+    };
+
+    // Stream, pushing throttled visible-text updates to the overlay and the chats window.
+    let lastSent = '';
+    let lastSentAt = 0;
+    const pushVisible = (force: boolean): void => {
+      const visible = stripForDisplay(buffer);
+      if (visible === lastSent) return;
+      const now = Date.now();
+      if (!force && now - lastSentAt < STATE_THROTTLE_MS) return;
+      lastSent = visible;
+      lastSentAt = now;
+      show(visible ? { phase: 'speaking', reply: visible } : thinking);
+      emitChat({ type: 'delta', chatId, turnId: assistantId, text: visible });
+    };
+
+    if (!signal.aborted) {
+      for await (const delta of getProvider(kind).stream(req, cfg)) {
+        if (signal.aborted) break;
+        buffer += delta;
+        pushVisible(false);
+      }
+    }
+    if (signal.aborted) {
+      record(stripPointTags(buffer), [], 'stopped');
+      return;
+    }
+    pushVisible(true);
+
+    const reply = stripPointTags(buffer);
+    const points = settings.companion.pointing && input.point ? parsePointTags(buffer) : [];
+    if (process.env.CLICKY_DEBUG) console.log(`[clicky] raw reply: ${JSON.stringify(buffer)} points: ${JSON.stringify(points)}`);
+    if (!reply && points.length === 0) throw new Error('the model returned an empty reply');
+    record(reply, points);
+    if (!isTurnCurrent(turn)) return;
+
+    show({ phase: 'speaking', reply });
+
+    // Point and speak concurrently.
+    const pointing = points.length ? walkPoints(turn, points, screens) : Promise.resolve();
+    const spokeAt = Date.now();
+    if (input.speak) await speak(turn, reply, settings);
+    else await delay(readingTime(reply), signal);
+    await pointing.catch(() => undefined);
+    // If speech ended early (muted, no system voices, very short clip), keep the companion
+    // on its target long enough to actually see where it is pointing.
+    if (points.length && isTurnCurrent(turn)) {
+      const left = readingTime(reply) - (Date.now() - spokeAt);
+      if (left > 0) await delay(left, turn.controller.signal).catch(() => undefined);
+    }
+    if (!isTurnCurrent(turn)) return;
+    endTurn(turn);
+  } catch (err) {
+    record(stripPointTags(buffer), [], signal.aborted ? 'stopped' : errorMessage(err));
+    throw err;
   }
-  if (!isTurnCurrent(turn)) return;
+}
 
-  const reply = stripPointTags(buffer);
-  const points = settings.companion.pointing ? parsePointTags(buffer) : [];
-  if (process.env.CLICKY_DEBUG) console.log(`[clicky] raw reply: ${JSON.stringify(buffer)} points: ${JSON.stringify(points)}`);
-  if (!reply && points.length === 0) throw new Error('the model returned an empty reply');
+/** How long a bubble should stay up to be read when nothing is spoken. */
+function readingTime(text: string): number {
+  return Math.min(12_000, Math.max(3000, text.length * 55));
+}
 
-  sendState(turn.overlay, { phase: 'speaking', reply });
+/* ───────────────────────── chats window turns ───────────────────────── */
 
-  // History is text only; remember where we pointed so follow-ups ("and then?") make sense.
-  const pointedNote = points.length ? ` (pointed at: ${points.map((p) => p.label).join(', ')})` : '';
-  history.push({ role: 'user', text: userText }, { role: 'assistant', text: `${reply}${pointedNote}`.trim() });
-  const maxKept = Math.max(0, settings.historyTurns) * 2;
-  if (history.length > maxKept) history = maxKept > 0 ? history.slice(-maxKept) : [];
+interface PreparedAttachments {
+  images: ImageInput[];
+  /** text files, already fenced, to append to the model text */
+  inlined: string[];
+  names: string[];
+}
 
-  // Point and speak concurrently.
-  const pointing = points.length ? walkPoints(turn, points, screens) : Promise.resolve();
-  const spokeAt = Date.now();
-  await speak(turn, reply, settings);
-  await pointing.catch(() => undefined);
-  // If speech ended early (muted, no system voices, very short clip), keep the companion
-  // on its target long enough to actually see where it is pointing.
-  if (points.length && isTurnCurrent(turn)) {
-    const minLinger = Math.min(12_000, Math.max(3000, reply.length * 55));
-    const left = minLinger - (Date.now() - spokeAt);
-    if (left > 0) await delay(left, turn.controller.signal).catch(() => undefined);
+/** A fence longer than any backtick run in the content. */
+function fenceFor(content: string): string {
+  const longest = Math.max(0, ...[...content.matchAll(/`+/g)].map((m) => m[0].length));
+  return '`'.repeat(Math.max(3, longest + 1));
+}
+
+async function prepareAttachments(list: ChatAttachment[]): Promise<PreparedAttachments> {
+  const out: PreparedAttachments = { images: [], inlined: [], names: [] };
+  for (const a of list.slice(0, MAX_ATTACHMENTS)) {
+    if (!a || typeof a !== 'object') continue;
+    const name = String(a.name || 'file').replace(/[\r\n]+/g, ' ').slice(0, 200);
+    const mime = String(a.mime || '').toLowerCase();
+    const data = Buffer.from(String(a.base64 || ''), 'base64');
+    out.names.push(name);
+
+    if (mime.startsWith('image/')) {
+      const img = nativeImage.createFromBuffer(data);
+      if (img.isEmpty()) throw new Error(`couldn't read the image ${name}`);
+      const size = img.getSize();
+      const scale = Math.min(1, ATTACH_MAX_SIDE / Math.max(size.width, size.height));
+      const passthrough = scale === 1 && (mime === 'image/png' || mime === 'image/jpeg' || mime === 'image/jpg');
+      const resized = scale < 1 ? img.resize({ width: Math.round(size.width * scale), height: Math.round(size.height * scale), quality: 'good' }) : img;
+      const asPng = mime === 'image/png' || (!passthrough && mime !== 'image/jpeg' && mime !== 'image/jpg');
+      const bytes = passthrough ? data : asPng ? resized.toPNG() : resized.toJPEG(85);
+      const { width, height } = resized.getSize();
+      const file = await writeTempImage(bytes, asPng ? 'png' : 'jpg');
+      out.images.push({ mime: asPng ? 'image/png' : 'image/jpeg', base64: bytes.toString('base64'), path: file, label: name, width, height });
+      continue;
+    }
+
+    // Anything else is treated as text, unless it is clearly binary.
+    if (data.subarray(0, 8192).includes(0)) {
+      out.inlined.push(`[attached file "${name}" is binary and was not included]`);
+      continue;
+    }
+    let content = data.toString('utf8');
+    if (content.length > MAX_ATTACHMENT_TEXT) content = `${content.slice(0, MAX_ATTACHMENT_TEXT)}\n… (truncated)`;
+    const fence = fenceFor(content);
+    out.inlined.push(`file: ${name}\n${fence}\n${content.replace(/\n$/, '')}\n${fence}`);
   }
-  if (!isTurnCurrent(turn)) return;
-  endTurn(turn);
+  return out;
+}
+
+/**
+ * A message typed in the chats window: no push-to-talk, optional screenshots and attachments.
+ * Shown on the companion as usual but never spoken; it only points when the screen was shared.
+ * Resolves once the turn has started; the reply streams as ChatEvents.
+ */
+export async function sendFromWindow(req: ChatSendRequest): Promise<{ chatId: string }> {
+  if (!req || typeof req !== 'object') throw new Error('bad request');
+  const text = String(req.text ?? '').trim();
+  const prepared = await prepareAttachments(Array.isArray(req.attachments) ? req.attachments : []);
+  if (!text && prepared.names.length === 0) throw new Error('nothing to send');
+  let provider: ProviderKind | undefined;
+  if (req.provider !== undefined && req.provider !== null) {
+    if (!PROVIDER_KINDS.includes(req.provider)) throw new Error(`unknown provider: ${String(req.provider)}`);
+    provider = req.provider;
+  }
+  const model = typeof req.model === 'string' && req.model.trim() ? req.model.trim() : undefined;
+
+  closeTyping();
+  const chatId = resolveChat(typeof req.chatId === 'string' ? req.chatId : null, true);
+  const cursor = screen.getCursorScreenPoint();
+  const turn = beginTurn(overlayForPoint(cursor), 'processing');
+  turn.chatId = chatId;
+
+  const modelText = [text, ...prepared.inlined].filter(Boolean).join('\n\n');
+  void (async () => {
+    sendState(turn.overlay, { phase: 'thinking', transcript: text || prepared.names.join(', ') });
+    const screens = req.includeScreen ? await safeCapture(cursor) : [];
+    // Even if stopped while capturing, runTurn records the message (and a 'stopped' reply).
+    await runTurn(turn, {
+      source: 'window',
+      userText: text,
+      modelText,
+      screens,
+      images: prepared.images,
+      attachments: prepared.names,
+      provider,
+      model,
+      speak: false,
+      point: !!req.includeScreen,
+    });
+  })().catch((err) => failTurn(turn, err));
+  return { chatId };
 }
 
 /** Resolve a parsed point to an overlay + overlay-local DIP point. */
@@ -523,7 +823,7 @@ async function processVoiceTurn(turn: Turn): Promise<void> {
   sendState(overlay, { phase: 'thinking', transcript: text });
   const screens = await capturesP;
   if (!isTurnCurrent(turn)) return;
-  await runTurn(turn, text, screens);
+  await runTurn(turn, { source: 'voice', userText: text, screens, speak: true, point: true });
 }
 
 /** Whisper hallucinations on silence, e.g. "[BLANK_AUDIO]", "(music)", "you". */
@@ -560,7 +860,7 @@ async function processTypedTurn(turn: Turn, text: string): Promise<void> {
   sendState(turn.overlay, { phase: 'thinking', transcript: text });
   const screens = await safeCapture(screen.getCursorScreenPoint());
   if (!isTurnCurrent(turn)) return;
-  await runTurn(turn, text, screens);
+  await runTurn(turn, { source: 'type', userText: text, screens, speak: true, point: true });
 }
 
 function onTextSubmit(senderId: number, text: string): void {
@@ -581,9 +881,9 @@ export function onEscape(): void {
   clearErrorTimer();
 }
 
-/** Forget the conversation (tray "clear conversation", settings). */
+/** Start over (tray "clear conversation", settings): the next turn opens a new stored chat. */
 export function clearHistory(): void {
-  history = [];
+  activeChatId = null;
 }
 
 /** Companion says a short line with the current voice settings (settings → "test voice"). */
@@ -611,6 +911,12 @@ export async function testSpeak(): Promise<void> {
 export function initConversation(): void {
   if (initialized) return;
   initialized = true;
+  // Pick up where we left off if the last chat is recent; otherwise a new one starts lazily.
+  const latest = store.listChats()[0];
+  if (latest && Date.now() - latest.updatedAt < CHAT_IDLE_MS) {
+    activeChatId = latest.id;
+    activeSince = latest.updatedAt;
+  }
   ipcMain.on(IPC.pttResult, (e, r: PttResult) => resolveWaiters(IPC.pttResult, e.sender.id, r ?? { durationMs: 0 }));
   ipcMain.on(IPC.speechDone, (e) => resolveWaiters(IPC.speechDone, e.sender.id, undefined));
   ipcMain.on(IPC.textSubmit, (e, text: string) => onTextSubmit(e.sender.id, text));

@@ -184,6 +184,10 @@ export function getChat(id: string): Chat | null {
   return chat ? clone(chat) : null;
 }
 
+export function getSummary(id: string): ChatSummary | null {
+  return (isValidId(id) && loadIndex().get(id)) || null;
+}
+
 export function hasChat(id: string): boolean {
   return isValidId(id) && loadIndex().has(id);
 }
