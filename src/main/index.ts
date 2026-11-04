@@ -26,7 +26,7 @@ import {
 } from './conversation';
 import { getChat, listChats, onChatsChanged, renameChat } from './chat-store';
 import { openChatsWindow, sendToChats } from './chats-window';
-import { getPermissions, installPermissionHandlers, requestPermission } from './permissions';
+import { getPermissions, installPermissionHandlers, requestPermission, resetPermissions } from './permissions';
 import { createTray, destroyTray, refreshTray } from './tray';
 import { installAppMenu, launchedAtLogin } from './app-menu';
 import { applySettingsTheme, openSettingsWindow, sendToSettings } from './settings-window';
@@ -171,6 +171,7 @@ function registerIpc(): void {
 
   ipcMain.handle(IPC.permissionsGet, () => getPermissions());
   ipcMain.handle(IPC.permissionsRequest, (_e, kind: unknown) => requestPermission(assertPermission(kind)));
+  ipcMain.handle(IPC.permissionsReset, () => resetPermissions());
 
   ipcMain.handle(IPC.historyClear, () => clearHistory());
   ipcMain.handle(IPC.openExternal, async (_e, url: unknown) => {

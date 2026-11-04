@@ -32,6 +32,7 @@ const api: SettingsApi = {
   },
   getPermissions: () => ipcRenderer.invoke(IPC.permissionsGet),
   requestPermission: (kind) => ipcRenderer.invoke(IPC.permissionsRequest, kind),
+  resetPermissions: () => ipcRenderer.invoke(IPC.permissionsReset),
   clearHistory: () => ipcRenderer.invoke(IPC.historyClear),
   openExternal: (url) => ipcRenderer.invoke(IPC.openExternal, url),
   appInfo: () => ipcRenderer.invoke(IPC.appInfo),

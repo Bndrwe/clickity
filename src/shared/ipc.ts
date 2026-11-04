@@ -86,6 +86,7 @@ export const IPC = {
   hotkeyStatusGet: 'hotkey:status', // () => HotkeyStatus
   permissionsGet: 'permissions:get', // () => PermissionsStatus
   permissionsRequest: 'permissions:request', // (kind) => PermissionsStatus
+  permissionsReset: 'permissions:reset', // () => void — macOS: clear clickity's privacy entries (tccutil) and relaunch
   historyClear: 'history:clear', // () => void
   openExternal: 'app:open-external', // (url) => void
   appInfo: 'app:info', // () => { version, platform }
@@ -170,6 +171,8 @@ export interface SettingsApi {
   onHotkeyHeard(cb: (e: HotkeyHeard) => void): void;
   getPermissions(): Promise<PermissionsStatus>;
   requestPermission(kind: PermissionKind): Promise<PermissionsStatus>;
+  /** macOS: forget stale privacy grants from older builds, then restart so macOS asks again */
+  resetPermissions(): Promise<void>;
   clearHistory(): Promise<void>;
   openExternal(url: string): Promise<void>;
   /** packaged = running as the installed app (false under `npm run dev`) */

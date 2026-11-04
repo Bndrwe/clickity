@@ -132,3 +132,27 @@ export function installPermissionHandlers(): void {
     return ownPage(wc, url) || url === 'file:///' || url === 'null' || url === '';
   });
 }
+
+/**
+ * macOS ties privacy grants to an app's code signature. Clickity's free builds are
+ * ad-hoc signed, so every new version looks like a different app: the old switches
+ * stay "on" in System Settings but don't apply. Clearing our entries makes macOS
+ * ask again for the copy that is actually running.
+ */
+export async function resetPermissions(): Promise<void> {
+  if (!isMac) return;
+  const { execFile } = await import('node:child_process');
+  const { app } = await import('electron');
+  const bundleId = app.isPackaged ? 'com.clickity.app' : 'com.github.Electron';
+  const services = ['Microphone', 'ScreenCapture', 'Accessibility', 'ListenEvent'];
+  await Promise.all(
+    services.map(
+      (svc) =>
+        new Promise<void>((resolve) => {
+          execFile('/usr/bin/tccutil', ['reset', svc, bundleId], () => resolve());
+        }),
+    ),
+  );
+  app.relaunch();
+  app.exit(0);
+}

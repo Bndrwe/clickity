@@ -1015,7 +1015,27 @@ function permRows(container: HTMLElement): () => void {
 function restartRow(): HTMLElement {
   const btn = h('button', { class: 'text-btn', type: 'button' }, h('span', { text: 'restart clickity' }));
   btn.addEventListener('click', () => void api.relaunch());
-  return h('div', { class: 'row' }, h('span', { class: 'row-label', text: 'granted something?' }), h('div', { class: 'row-value' }, h('span', { class: 'muted', text: 'macos applies screen recording and accessibility after a restart. ' }), btn));
+  const reset = h('button', { class: 'text-btn', type: 'button' }, h('span', { text: 'reset permissions' }));
+  reset.addEventListener('click', () => {
+    (reset.firstElementChild as HTMLElement).textContent = 'resetting…';
+    void api.resetPermissions();
+  });
+  return h(
+    'div',
+    {},
+    h('div', { class: 'row' }, h('span', { class: 'row-label', text: 'granted something?' }), h('div', { class: 'row-value' }, h('span', { class: 'muted', text: 'macos applies screen recording and accessibility after a restart. ' }), btn)),
+    h(
+      'div',
+      { class: 'row' },
+      h('span', { class: 'row-label', text: 'switched on but says not allowed?' }),
+      h(
+        'div',
+        { class: 'row-value' },
+        h('span', { class: 'muted', text: 'each new clickity version looks like a different app to macos, so old switches stop applying. reset clears them and restarts clickity so macos asks again. ' }),
+        reset,
+      ),
+    ),
+  );
 }
 const platformName = () => ({ darwin: 'macos', win32: 'windows', linux: 'linux' } as Record<string, string>)[platform] ?? platform;
 async function pollPerms(): Promise<void> {
