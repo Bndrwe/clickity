@@ -237,7 +237,7 @@ export async function resampleTo16k(pcm: Float32Array, rate: number): Promise<Fl
   try {
     const off = new OfflineAudioContext(1, outLen, target);
     const buf = off.createBuffer(1, pcm.length, rate);
-    buf.copyToChannel(pcm, 0);
+    buf.copyToChannel(new Float32Array(pcm), 0);
     const src = off.createBufferSource();
     src.buffer = buf;
     src.connect(off.destination);
