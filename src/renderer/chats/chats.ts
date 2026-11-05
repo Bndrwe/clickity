@@ -639,8 +639,18 @@ function renderUpdate(u: UpdateState): void {
             : u.status === 'error' && u.latest && u.latest !== u.current
               ? 'retry update'
               : null;
-  updatePill.hidden = !text;
-  if (!text) return;
+  updatePill.hidden = false;
+  updatePill.classList.toggle('quiet', !text);
+  if (!text) {
+    // always visible: the running version; click checks for updates
+    const label = u.status === 'checking' ? 'checking…' : u.status === 'unsupported' ? `v${u.current} · dev` : `v${u.current}`;
+    updatePill.disabled = u.status === 'checking';
+    updatePill.classList.remove('busy', 'err');
+    updatePill.title = u.status === 'unsupported' ? `${u.error ?? 'updates are off here'} — running from source? update with git pull` : 'click to check for updates';
+    updatePill.setAttribute('aria-label', `clickity ${label} — check for updates`);
+    updatePill.replaceChildren(h('span', { text: label }));
+    return;
+  }
   const busy = u.status === 'downloading' || u.status === 'installing' || (u.status === 'ready' && !u.message);
   updatePill.disabled = busy;
   updatePill.classList.toggle('busy', busy);
@@ -654,6 +664,19 @@ updatePill.addEventListener('click', () => {
   if (!update) return;
   // "finish update" (mac couldn't swap in place / .deb): the details live in settings › about
   if (update.status === 'ready') return void api.openSettings('about');
+  if (updatePill.classList.contains('quiet')) {
+    const span = updatePill.querySelector('span');
+    if (span) span.textContent = 'checking…';
+    void api.checkForUpdate().then((u) => {
+      renderUpdate(u);
+      const s = updatePill.querySelector('span');
+      if (u.status === 'up-to-date' && s) {
+        s.textContent = 'up to date';
+        setTimeout(() => update && renderUpdate(update), 1600);
+      }
+    }).catch(() => undefined);
+    return;
+  }
   renderUpdate({ ...update, status: 'downloading', progress: update.progress ?? 0, error: undefined });
   void api.installUpdate().then(renderUpdate).catch(() => undefined);
 });

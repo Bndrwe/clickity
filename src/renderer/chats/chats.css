@@ -510,3 +510,7 @@ button, input, textarea, a, .composer, .popover, .row { -webkit-app-region: no-d
 /* keep the centered chat title clear of the wider top-right group */
 .topbar:has(.update-pill:not([hidden])) { padding-right: 260px; padding-left: 260px; }
 @media (max-width: 640px) { .topbar:has(.update-pill:not([hidden])) .topbar-title { display: none; } }
+
+/* the update pill doubles as a quiet version chip when there's nothing to install */
+.update-pill.quiet { background: transparent; color: var(--ink-muted, rgba(255,255,255,.5)); box-shadow: none; }
+.update-pill.quiet:hover { color: var(--ink, #fff); }

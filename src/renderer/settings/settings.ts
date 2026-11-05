@@ -1256,9 +1256,23 @@ function statusText(u: UpdateState): string {
 function renderUpdate(u: UpdateState): void {
   update = u;
   const pill = $<HTMLButtonElement>('update-pill');
-  const text = pillText(u);
-  pill.hidden = !text;
-  if (text) {
+  // always visible: the running version (click = check for updates), or the update action
+  const quiet = !pillText(u);
+  const text = pillText(u) || quietPillText(u);
+  pill.hidden = false;
+  pill.classList.toggle('quiet', quiet);
+  if (quiet) {
+    pill.replaceChildren(h('span', { class: 'tnum', text }));
+    pill.disabled = u.status === 'checking';
+    pill.classList.remove('busy', 'err');
+    pill.title =
+      u.status === 'unsupported'
+        ? `${u.error ?? 'updates are off here'} — running from source? update with git pull`
+        : u.status === 'error'
+          ? `couldn't check for updates: ${u.error ?? 'offline?'} — click to try again`
+          : 'click to check for updates';
+    pill.setAttribute('aria-label', `clickity ${text} — check for updates`);
+  } else {
     // "update to v1.0.42"; the " to v…" part folds away when the top bar is tight
     const [head, tail] = u.status === 'available' ? ['update', ` to v${u.latest}`] : [text, ''];
     pill.replaceChildren(h('i', { class: 'update-dot', 'aria-hidden': 'true' }), h('span', {}, head, tail ? h('span', { class: 'pill-v', text: tail }) : null));
@@ -1303,6 +1317,31 @@ function renderUpdate(u: UpdateState): void {
   if (!u.updatedFrom) delete note.dataset.for;
 }
 
+/** the version chip shown when there's nothing to install */
+function quietPillText(u: UpdateState): string {
+  if (u.status === 'checking') return 'checking…';
+  return u.status === 'unsupported' ? `v${u.current} · dev` : `v${u.current}`;
+}
+
+async function checkFromPill(): Promise<void> {
+  const pill = $<HTMLButtonElement>('update-pill');
+  const label = () => pill.querySelector('span') as HTMLElement | null;
+  if (label()) label()!.textContent = 'checking…';
+  let u: UpdateState | null = null;
+  try {
+    u = await api.checkForUpdate();
+  } catch {}
+  if (!u) return;
+  renderUpdate(u);
+  if (u.status === 'up-to-date' && label()) {
+    label()!.textContent = 'up to date';
+    setTimeout(() => update && renderUpdate(update), 1600);
+  } else if ((u.status === 'unsupported' || u.status === 'error') && label()) {
+    label()!.textContent = u.status === 'unsupported' ? 'dev build: git pull' : "couldn't check";
+    setTimeout(() => update && renderUpdate(update), 2200);
+  }
+}
+
 function startInstall(): void {
   if (!update) return;
   // instant feedback; main's broadcasts take over from here
@@ -1313,6 +1352,7 @@ function startInstall(): void {
 async function initUpdates(): Promise<void> {
   $('update-pill').addEventListener('click', () => {
     if (update?.status === 'ready') return scrollToId('about');
+    if (update && !pillText(update)) return void checkFromPill();
     startInstall();
   });
   $('update-install').addEventListener('click', startInstall);

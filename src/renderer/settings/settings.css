@@ -330,3 +330,7 @@ dialog#onboard .ob-actions { margin-top: 32px; }
 @media (prefers-reduced-motion: reduce) {
   .update-pill, .update-dot { animation: none !important; }
 }
+
+/* the update pill doubles as a quiet version chip when there's nothing to install */
+.update-pill.quiet { background: transparent; color: var(--ink-muted, rgba(255,255,255,.5)); box-shadow: none; }
+.update-pill.quiet:hover { color: var(--ink, #fff); }
