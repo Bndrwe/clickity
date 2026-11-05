@@ -1,7 +1,7 @@
 // Overlay renderer: the cursor companion, reply bubble, pointing flight, mic capture and speech playback.
 // Talks to main only through window.overlay (see src/shared/ipc.ts).
 import type { OverlayApi } from '../../shared/ipc';
-import type { CompanionPhase, OverlayConfig, OverlayPoint, OverlayState, PttStopRequest, SpeakCommand } from '../../shared/types';
+import type { CompanionPhase, InkCommand, OverlayConfig, OverlayPoint, OverlayState, PttStopRequest, SpeakCommand } from '../../shared/types';
 import { MicRecorder, encodeWav, peakLevel, resampleTo16k } from './audio';
 import { Spring2D, clamp, ease, spring } from './motion';
 import { Speaker } from './speech';
@@ -35,10 +35,11 @@ const confirmTextEl = $('confirm-text');
 const typePos = $('typebox-pos');
 const typeForm = $<HTMLFormElement>('typebox');
 const typeInput = $<HTMLInputElement>('typebox-input');
+const inkCanvas = $<HTMLCanvasElement>('ink');
 
 /* ───────── config / theme ───────── */
 let config: OverlayConfig = {
-  companion: { followCursor: true, offsetX: 18, offsetY: 20, scale: 1, color: '', showBubble: true, pointing: true, actions: 'ask', maxSteps: 8 },
+  companion: { followCursor: true, show: 'always', offsetX: 18, offsetY: 20, scale: 1, color: '', showBubble: true, pointing: true, actions: 'ask', maxSteps: 8 },
   theme: 'system',
   displayBounds: { x: window.screenX, y: window.screenY, width: window.innerWidth, height: window.innerHeight },
   hotkeyLabel: '',
@@ -94,7 +95,8 @@ let autoReturnTimer = 0;
 /** where the companion's tip wants to be when it follows the cursor */
 function followTarget(): { x: number; y: number } {
   const c = config.companion;
-  if (!c.followCursor) return { x: window.innerWidth - 72 * scale, y: window.innerHeight - 84 * scale };
+  // with no visible companion there's nothing to park: the invisible one always tracks the cursor
+  if (!c.followCursor && c.show !== 'never') return { x: window.innerWidth - 72 * scale, y: window.innerHeight - 84 * scale };
   if (!cursorLocal) return { x: posX, y: posY };
   return { x: cursorLocal.x + c.offsetX, y: cursorLocal.y + c.offsetY };
 }
@@ -164,6 +166,20 @@ function kick(): void {
     lastT = performance.now();
     rafId = requestAnimationFrame(frame);
   }
+}
+
+/** settings › companion › show companion: 'never' = no arrow (pointing shows only ripple + label) */
+function arrowless(): boolean {
+  return config.companion.show === 'never';
+}
+
+/** 'active' mode: the arrow shows while it works (any non-idle phase) or is away pointing. */
+let presenceOn = false;
+function syncPresence(): void {
+  const on = (phase !== 'idle' && phase !== 'error') || mode !== 'follow' || !!currentPoint;
+  if (on === presenceOn) return;
+  presenceOn = on;
+  root.classList.toggle('buddy-on', on);
 }
 
 function setVisible(v: boolean): void {
@@ -258,6 +274,7 @@ function frame(now: number): void {
   }
 
   placeBubble(dt);
+  syncPresence();
 
   const settled = mode === 'follow' && follow.settled(target.x, target.y);
   const needLoop = visible ? true : !settled || bubbleIn || speaker.active;
@@ -378,6 +395,19 @@ function pointAt(p: OverlayPoint): void {
   returning = null;
   hidePill();
   setVisible(true);
+  if (arrowless()) {
+    // nothing flies: mark the spot (agent clicks draw their own ripple) and label it
+    if (mode !== 'follow') {
+      mode = 'follow';
+      flight = null;
+      const t = followTarget();
+      follow.snap(t.x, t.y);
+    }
+    if (phase !== 'acting') ripple(p.x, p.y);
+    showPill();
+    kick();
+    return;
+  }
   if (reducedMotion) {
     flight = null;
     mode = 'pointing';
@@ -420,7 +450,15 @@ function pointAt(p: OverlayPoint): void {
 
 function returnToCursor(): void {
   clearTimeout(autoReturnTimer);
-  if (mode === 'follow' || mode === 'returning') return;
+  if (mode === 'follow' || mode === 'returning') {
+    // arrowless pointing only left a label behind
+    if (currentPoint && mode === 'follow') {
+      currentPoint = null;
+      hidePill();
+      if (!cursorOnDisplay && !typeOpen) setVisible(false);
+    }
+    return;
+  }
   currentPoint = null;
   flight = null;
   hidePill();
@@ -439,7 +477,7 @@ function returnToCursor(): void {
 /** If main never sends point:null after the reply, drift home on our own once things are quiet. */
 function scheduleAutoReturn(): void {
   clearTimeout(autoReturnTimer);
-  if ((mode === 'pointing' || mode === 'flying') && !speaker.active && (phase === 'idle' || phase === 'error')) {
+  if ((mode === 'pointing' || mode === 'flying' || currentPoint) && !speaker.active && (phase === 'idle' || phase === 'error')) {
     autoReturnTimer = window.setTimeout(returnToCursor, 2200);
   }
 }
@@ -568,6 +606,7 @@ function onState(s: OverlayState): void {
   }
   if (phase !== 'idle' && phase !== 'error') clearTimeout(autoReturnTimer);
   else scheduleAutoReturn();
+  syncPresence();
   renderBubble();
 }
 
@@ -795,26 +834,171 @@ async function onPttStop(req: PttStopRequest): Promise<void> {
   }
 }
 
+/* ───────── ink trail ─────────
+ * While the talk chord is held, every overlay draws the cursor's path (main broadcasts the
+ * cursor to all of them), so a circle that crosses displays shows on each. It stays until the
+ * screenshots are taken (they may capture it; main also draws it into them), then fades. */
+const INK_JITTER = 6; // px of total extent before anything is drawn: a plain talk leaves no scribble
+const INK_WIDTH = 3;
+const INK_MAX_POINTS = 1200;
+const inkCtx = inkCanvas.getContext('2d');
+let ink: { pts: Array<{ x: number; y: number }>; recording: boolean; shown: boolean; fading: boolean } | null = null;
+let inkColors: { ink: string; halo: string } | null = null;
+let inkFade: Animation | null = null;
+let inkRaf = 0;
+let inkSafety = 0;
+let cursorGlobal: { x: number; y: number } | null = null;
+
+function sizeInkCanvas(): void {
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.round(window.innerWidth * dpr);
+  const h = Math.round(window.innerHeight * dpr);
+  if (inkCanvas.width !== w || inkCanvas.height !== h) {
+    inkCanvas.width = w;
+    inkCanvas.height = h;
+    drawInk();
+  }
+}
+window.addEventListener('resize', sizeInkCanvas);
+sizeInkCanvas();
+
+/** Same taper as the screenshot stroke (src/main/gesture.ts): thin tail, full body, slightly thin tip. */
+function inkTaper(f: number): number {
+  const s = (e0: number, e1: number, x: number) => {
+    const t = clamp((x - e0) / (e1 - e0), 0, 1);
+    return t * t * (3 - 2 * t);
+  };
+  return 0.35 + 0.65 * s(0, 0.18, f) * (1 - 0.3 * s(0.9, 1, f));
+}
+
+function resetInk(): void {
+  clearTimeout(inkSafety);
+  inkFade?.cancel();
+  inkFade = null;
+  ink = null;
+  if (inkCtx) inkCtx.clearRect(0, 0, inkCanvas.width, inkCanvas.height);
+}
+
+function scheduleInk(): void {
+  if (!inkRaf) inkRaf = requestAnimationFrame(() => {
+    inkRaf = 0;
+    drawInk();
+  });
+}
+
+function drawInk(): void {
+  if (!inkCtx) return;
+  const ctx = inkCtx;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, inkCanvas.width, inkCanvas.height);
+  if (!ink?.shown || ink.pts.length < 2) return;
+  if (!inkColors) {
+    const cs = getComputedStyle(root);
+    inkColors = {
+      ink: cs.getPropertyValue('--buddy').trim() || cs.getPropertyValue('--ink').trim() || '#111',
+      halo: cs.getPropertyValue('--bg-elev').trim() || '#fff',
+    };
+  }
+  const dpr = window.devicePixelRatio || 1;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const b = config.displayBounds;
+  const pts = ink.pts.map((p) => ({ x: p.x - b.x, y: p.y - b.y }));
+  const n = pts.length;
+  const cum = [0];
+  for (let i = 1; i < n; i++) cum.push(cum[i - 1]! + Math.hypot(pts[i]!.x - pts[i - 1]!.x, pts[i]!.y - pts[i - 1]!.y));
+  const total = cum[n - 1] || 1;
+  const mid = (a: { x: number; y: number }, c: { x: number; y: number }) => ({ x: (a.x + c.x) / 2, y: (a.y + c.y) / 2 });
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  // two passes: a soft halo so it shows on any background, then the ink.
+  // Each piece is a quadratic through the midpoints (smooth), with its own width (taper).
+  for (const pass of ['halo', 'ink'] as const) {
+    ctx.strokeStyle = pass === 'halo' ? inkColors.halo : inkColors.ink;
+    for (let i = 1; i < n; i++) {
+      const from = i === 1 ? pts[0]! : mid(pts[i - 1]!, pts[i]!);
+      const to = i === n - 1 ? pts[i]! : mid(pts[i]!, pts[i + 1]!);
+      const w = INK_WIDTH * inkTaper(cum[i]! / total);
+      ctx.lineWidth = pass === 'halo' ? w + 2.5 : w;
+      ctx.beginPath();
+      ctx.moveTo(from.x, from.y);
+      if (i === n - 1) ctx.lineTo(to.x, to.y);
+      else ctx.quadraticCurveTo(pts[i]!.x, pts[i]!.y, to.x, to.y);
+      ctx.stroke();
+    }
+  }
+}
+
+function inkCursor(p: { x: number; y: number }): void {
+  cursorGlobal = { x: p.x, y: p.y };
+  if (!ink?.recording) return;
+  const last = ink.pts[ink.pts.length - 1];
+  if (last && Math.hypot(p.x - last.x, p.y - last.y) < 1.5) return;
+  ink.pts.push({ x: p.x, y: p.y });
+  if (ink.pts.length > INK_MAX_POINTS) ink.pts = ink.pts.filter((_, i, a) => i === 0 || i === a.length - 1 || i % 2 === 0);
+  if (!ink.shown) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const q of ink.pts) {
+      minX = Math.min(minX, q.x);
+      minY = Math.min(minY, q.y);
+      maxX = Math.max(maxX, q.x);
+      maxY = Math.max(maxY, q.y);
+    }
+    if (Math.max(maxX - minX, maxY - minY) < INK_JITTER) return;
+    ink.shown = true;
+  }
+  scheduleInk();
+}
+
+function onInk(cmd: InkCommand): void {
+  if (cmd === 'start') {
+    resetInk();
+    inkColors = null;
+    ink = { pts: cursorGlobal ? [cursorGlobal] : [], recording: true, shown: false, fading: false };
+    return;
+  }
+  if (!ink) return;
+  if (cmd === 'end') {
+    ink.recording = false;
+    // main clears it once the screenshots are taken; never leave a stray trail behind
+    clearTimeout(inkSafety);
+    inkSafety = window.setTimeout(() => onInk('clear'), 15_000);
+    return;
+  }
+  // 'clear'
+  if (ink.fading) return;
+  ink.recording = false;
+  if (!ink.shown || reducedMotion) return resetInk();
+  ink.fading = true;
+  clearTimeout(inkSafety);
+  inkFade = inkCanvas.animate([{ opacity: 0.85 }, { opacity: 0 }], { duration: 1500, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)', fill: 'forwards' });
+  inkFade.onfinish = () => resetInk();
+}
+
 /* ───────── wiring ───────── */
 api.onConfig((c) => {
   const prevFollow = config.companion.followCursor;
+  const prevShow = config.companion.show;
   config = c;
+  root.dataset.show = c.companion.show || 'always';
   scale = clamp(c.companion.scale || 1, 0.5, 2.5);
   root.style.setProperty('--s', String(scale));
   if (c.companion.color) root.style.setProperty('--buddy', c.companion.color);
   else root.style.removeProperty('--buddy');
   applyTheme();
-  if (prevFollow !== c.companion.followCursor && mode === 'follow') {
+  if ((prevFollow !== c.companion.followCursor || prevShow !== c.companion.show) && mode === 'follow') {
     const t = followTarget();
     follow.snap(t.x, t.y);
   }
-  if (!c.companion.pointing && mode !== 'follow') returnToCursor();
+  if (!c.companion.pointing && (mode !== 'follow' || currentPoint)) returnToCursor();
+  if (c.companion.show === 'never' && mode !== 'follow' && currentPoint) pointAt(currentPoint);
+  if (ink) inkColors = null;
   schedulePreload();
   renderBubble();
   kick();
 });
 
 api.onCursor((p) => {
+  inkCursor(p);
   const b = config.displayBounds;
   const inside = p.x >= b.x && p.y >= b.y && p.x < b.x + b.width && p.y < b.y + b.height;
   cursorLocal = { x: p.x - b.x, y: p.y - b.y };
@@ -829,7 +1013,7 @@ api.onCursor((p) => {
     }
   }
   cursorOnDisplay = inside;
-  setVisible(inside || mode !== 'follow' || typeOpen);
+  setVisible(inside || mode !== 'follow' || typeOpen || !!currentPoint);
   if (inside || mode !== 'follow') kick();
 });
 
@@ -841,6 +1025,7 @@ api.onPoint((p) => {
   else returnToCursor();
 });
 api.onClick(clickAt);
+api.onInk(onInk);
 
 api.onPttStart(onPttStart);
 api.onPttStop((req) => void onPttStop(req));
@@ -862,6 +1047,7 @@ api.onStopSpeaking(() => speaker.stop());
 api.onTextInput(setTypeBox);
 
 root.dataset.phase = phase;
+root.dataset.show = 'always';
 applyTheme();
 api.ready();
 

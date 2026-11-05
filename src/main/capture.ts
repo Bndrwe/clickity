@@ -1,5 +1,5 @@
 // Screen capture: grabs every display, downscales to the model's size limit, writes JPEG temp files.
-import { desktopCapturer, screen, systemPreferences, type Display, type NativeImage, type DesktopCapturerSource, type Point, type Rectangle } from 'electron';
+import { desktopCapturer, nativeImage, screen, systemPreferences, type Display, type NativeImage, type DesktopCapturerSource, type Point, type Rectangle } from 'electron';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -48,8 +48,17 @@ function isBlack(img: NativeImage): boolean {
   }
 }
 
+/**
+ * Draws on a screenshot before it is encoded (the talk gesture's ink stroke). Gets the raw
+ * BGRA bitmap of the downscaled image; returns true when it changed it.
+ */
+export type CaptureAnnotator = (
+  screen: { index: number; bounds: Rectangle; image: { width: number; height: number } },
+  bitmap: Buffer,
+) => boolean;
+
 /** Captures every display. The cursor's display comes first, then the rest left to right. */
-export async function captureScreens(cursor: Point): Promise<CapturedScreen[]> {
+export async function captureScreens(cursor: Point, annotate?: CaptureAnnotator): Promise<CapturedScreen[]> {
   cleanupCaptures();
 
   const displays = screen.getAllDisplays();
@@ -96,7 +105,7 @@ export async function captureScreens(cursor: Point): Promise<CapturedScreen[]> {
     const isCursorScreen = display.id === cursorDisplay.id;
     const size = thumb.getSize();
     const scale = Math.min(1, MAX_SIDE / Math.max(size.width, size.height));
-    const img =
+    let img =
       scale < 1
         ? thumb.resize({
             width: Math.round(size.width * scale),
@@ -105,6 +114,16 @@ export async function captureScreens(cursor: Point): Promise<CapturedScreen[]> {
           })
         : thumb;
     const { width, height } = img.getSize();
+    if (annotate) {
+      try {
+        const bitmap = img.toBitmap();
+        if (bitmap.length === width * height * 4 && annotate({ index, bounds: display.bounds, image: { width, height } }, bitmap)) {
+          img = nativeImage.createFromBitmap(bitmap, { width, height });
+        }
+      } catch (err) {
+        console.warn('[capture] annotate failed:', err);
+      }
+    }
     const data = img.toJPEG(JPEG_QUALITY);
     const file = path.join(TEMP_DIR, `screen-${index}-${Date.now()}.jpg`);
     await fs.promises.writeFile(file, data);

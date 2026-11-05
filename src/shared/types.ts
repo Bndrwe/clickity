@@ -236,6 +236,12 @@ export type Theme = 'system' | 'light' | 'dark';
 export interface CompanionSettings {
   /** follow the mouse. if false the companion parks in the bottom-right corner */
   followCursor: boolean;
+  /**
+   * when the companion (the arrow) is drawn. 'always' = always; 'active' = only while it
+   * listens / thinks / speaks / acts / points, hidden while idle; 'never' = no arrow at all,
+   * but it still tracks the cursor invisibly so the reply bubble opens there.
+   */
+  show: 'always' | 'active' | 'never';
   /** px offset from the cursor tip */
   offsetX: number;
   offsetY: number;
@@ -297,7 +303,7 @@ export const DEFAULT_SETTINGS: Settings = {
     tts: { provider: 'system', voice: '', rate: 1.05 },
   },
   hotkeys: { talk: ['Control', 'Alt'], mode: 'hold', type: ['Control', 'Alt', 'Space'] },
-  companion: { followCursor: true, offsetX: 18, offsetY: 20, scale: 1, color: '', showBubble: true, pointing: true, actions: 'ask', maxSteps: 8 },
+  companion: { followCursor: true, show: 'always', offsetX: 18, offsetY: 20, scale: 1, color: '', showBubble: true, pointing: true, actions: 'ask', maxSteps: 8 },
   theme: 'system',
   customInstructions: '',
   historyTurns: 6,
@@ -364,6 +370,13 @@ export interface PttResult {
   errorKind?: 'mic' | 'model' | 'stt';
 }
 
+/**
+ * The ink trail drawn on every overlay while the talk chord is held (main → overlay).
+ * 'start' = begin a new trail at the cursor; 'end' = stop extending it (keep it visible);
+ * 'clear' = the screenshots are taken: fade it out.
+ */
+export type InkCommand = 'start' | 'end' | 'clear';
+
 export type SpeakCommand =
   | { mode: 'system'; text: string; voice: string; rate: number }
   | { mode: 'audio'; mime: string; data: ArrayBuffer };
@@ -399,6 +412,8 @@ export interface ChatTurn {
   points?: string[];
   /** agent mode: what this step did on screen, past tense ("clicked save", "typed hello") */
   actions?: string[];
+  /** user turns: what they did with the cursor while talking ("circled an area on screen 1") */
+  gesture?: string;
   provider?: ProviderKind;
   model?: string;
   /** assistant turn failed; text holds whatever streamed before the error */

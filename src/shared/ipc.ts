@@ -20,6 +20,7 @@ import type {
   SpeakCommand,
   KeyName,
   InputStatus,
+  InkCommand,
 } from './types';
 
 /** Streamed to the settings window while main records a keybind (IPC.recordKeys). */
@@ -85,6 +86,7 @@ export const IPC = {
   overlayStopSpeaking: 'overlay:stop-speaking', // void
   overlayTextInput: 'overlay:text-input', // boolean — show/hide the type box (window is made focusable by main)
   overlayClick: 'overlay:click', // OverlayPoint — agent mode: a click happens here now (ripple)
+  overlayInk: 'overlay:ink', // InkCommand — the cursor's ink trail while talking (every overlay)
 
   /* overlay → main (ipcRenderer.send) */
   pttResult: 'ptt:result', // PttResult
@@ -181,6 +183,8 @@ export interface OverlayApi {
   onTextInput(cb: (open: boolean) => void): void;
   /** agent mode: a click lands here now (draw a ripple) */
   onClick(cb: (p: OverlayPoint) => void): void;
+  /** the talk chord's ink trail: start / end / clear */
+  onInk(cb: (cmd: InkCommand) => void): void;
   sendPttResult(r: PttResult): void;
   speechDone(): void;
   submitText(text: string): void;

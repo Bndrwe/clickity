@@ -1011,7 +1011,35 @@ function initAgentMode(): void {
   void refresh();
 }
 
+/* show companion: always · while working · never */
+function initShowCompanion(): void {
+  type Show = Settings['companion']['show'];
+  const seg = [...document.querySelectorAll<HTMLButtonElement>('#show-seg button')];
+  const hint = $('show-hint');
+  const HINTS: Record<Show, string> = {
+    always: 'the companion always sits by your cursor.',
+    active: 'hidden until you talk to it; it fades in while it listens, thinks, speaks or points.',
+    never: 'no companion — replies still open at your cursor, and pointing shows just a ring and a label.',
+  };
+  const sync = () => {
+    const m = settings.companion.show;
+    for (const b of seg) b.setAttribute('aria-checked', String(b.dataset.show === m));
+    hint.textContent = HINTS[m] ?? '';
+  };
+  for (const b of seg) {
+    b.addEventListener('click', () => {
+      const v = b.dataset.show as Show;
+      settings = { ...settings, companion: { ...settings.companion, show: v } };
+      sync();
+      void save({ companion: { show: v } });
+    });
+  }
+  syncers.push(sync);
+  sync();
+}
+
 function initCompanion(): void {
+  initShowCompanion();
   bindSwitch($('sw-follow'), () => settings.companion.followCursor, (v) => ({ companion: { followCursor: v } }));
   bindSwitch($('sw-bubble'), () => settings.companion.showBubble, (v) => ({ companion: { showBubble: v } }));
   bindSwitch($('sw-point'), () => settings.companion.pointing, (v) => ({ companion: { pointing: v } }));

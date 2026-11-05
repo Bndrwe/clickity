@@ -26,6 +26,12 @@ The model may end its reply with zero or more tags:
 
 Mapping: `globalX = bounds.x + x * bounds.width / imageWidth` (same for y), then `localX = globalX - overlayDisplay.bounds.x`.
 
+## Cursor gestures ("circle while you talk")
+
+`conversation.onTalkDown` starts recording the cursor path (`overlay.onCursorMove`, global DIP, timestamped; `gesture.ts` drops < 2px moves, caps at 600 points by thinning) and broadcasts `IPC.overlayInk 'start'`: every overlay draws the path as a tapered ink stroke on a canvas outside the stage (only after ≥ 6px of movement), so it shows on each display the path crosses. Talk up → `'end'`; the screenshots are taken with a `CaptureAnnotator` that draws the same stroke into each screenshot's bitmap before JPEG encoding (`gesture.drawStroke`, pure — on X11 the transparent overlay is not in `desktopCapturer` images, elsewhere it may be; drawing it ourselves is the reliable path), then `'clear'` fades the trail (instant with reduced motion). `gesture.summarizeGesture` classifies the path per screen (circle / line / point (dwell) / area / still) and describes it in screenshot pixels plus the final cursor position; that sentence goes into the system prompt (`THE USER'S CURSOR … This turn: …`) for the turn's own screenshots only. Typed turns get the cursor position. The user turn stores only a short `gesture` note ("circled an area on screen 1").
+
+`companion.show` ('always' | 'active' | 'never'): the overlay sets `data-show` and toggles `.buddy-on` (non-idle phase or pointing) to hide the arrow; 'never' skips the flight (ripple + label pill at the target) and ignores `followCursor` so the bubble opens at the cursor.
+
 ## Agent mode (action tags)
 
 When `settings.companion.actions !== 'off'` and the turn has screenshots, the system prompt also offers action tags (screenshot pixels, like POINT): `[CLICK|DOUBLECLICK|RIGHTCLICK:x,y:label:screenN]`, `[TYPE:text]` (`\]` / `\\` escapes), `[KEY:cmd+s]`, `[SCROLL:x,y:down 5:screenN]`, `[WAIT:500]`, `[DONE]`. `action-tags.ts` parses / strips them (pure, unit tested; human key names → canonical `KeyName`).

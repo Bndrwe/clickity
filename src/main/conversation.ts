@@ -2,7 +2,7 @@
 // → pointing → speech → back to idle. See ARCHITECTURE.md "How a turn works".
 // Every turn (voice, overlay type box, chats window) runs through runTurn() and is recorded
 // in the active stored chat (chat-store.ts); the chats window gets live ChatEvents.
-import { BrowserWindow, ipcMain, nativeImage, screen, type Point } from 'electron';
+import { BrowserWindow, ipcMain, nativeImage, nativeTheme, screen, type Point } from 'electron';
 import { IPC } from '../shared/ipc';
 import {
   PROVIDER_KINDS,
@@ -23,7 +23,8 @@ import {
   type Settings,
 } from '../shared/types';
 import { getSettings } from './settings-store';
-import { captureScreens, cleanupCaptures, screenshotToGlobal, writeTempImage, type CapturedScreen } from './capture';
+import { captureScreens, cleanupCaptures, screenshotToGlobal, writeTempImage, type CaptureAnnotator, type CapturedScreen } from './capture';
+import { MEANINGFUL_PX, addPoint, drawStroke, extentOf, finishPath, globalToScreenshot, hexToRgb, newPath, summarizeGesture, type GesturePath } from './gesture';
 import * as store from './chat-store';
 import { sendToChats } from './chats-window';
 import { transcribe } from './speech/stt';
@@ -34,6 +35,7 @@ import { describeAction, parseActionTags, stripActionTags, summarizeActions, wan
 import { agentInputStatus, performActions } from './agent-input';
 import {
   broadcastToOverlays,
+  onCursorMove,
   overlayDisplay,
   overlayForDisplay,
   overlayForPoint,
@@ -80,6 +82,8 @@ interface Turn {
   mic?: Promise<MicAccess & { started: boolean }>;
   /** set once the turn runs agent-mode actions (esc then stops it even from the chats window) */
   agent?: AgentState;
+  /** voice turns: the cursor's path while the talk chord is held (global DIP) */
+  gesture?: { path: GesturePath; stop: (() => void) | null; cleared?: boolean };
 }
 
 let current: Turn | null = null;
@@ -186,6 +190,53 @@ function sendState(win: BrowserWindow | null | undefined, state: OverlayState): 
   sendToOverlay(win, IPC.overlayState, state);
 }
 
+/* ───────────────────────── cursor gesture (ink trail) ───────────────────────── */
+
+/** Start recording the cursor path for a voice turn and start the ink trail on every overlay. */
+function startGesture(turn: Turn, cursor: Point): void {
+  const path = newPath(cursor, Date.now());
+  const stop = onCursorMove((p, t) => addPoint(path, p.x, p.y, t));
+  turn.gesture = { path, stop };
+  broadcastToOverlays(IPC.overlayInk, 'start');
+}
+
+/** Stop recording (talk up): the trail stays on screen until the screenshots are taken. */
+function stopGesture(turn: Turn): GesturePath | null {
+  const g = turn.gesture;
+  if (!g) return null;
+  if (g.stop) {
+    g.stop();
+    g.stop = null;
+    const p = screen.getCursorScreenPoint();
+    finishPath(g.path, p.x, p.y, Date.now());
+    broadcastToOverlays(IPC.overlayInk, 'end');
+  }
+  return g.path;
+}
+
+/** Fade the trail out (screenshots taken, turn cancelled or over). Idempotent. */
+function clearInk(turn: Turn): void {
+  if (!turn.gesture) return;
+  stopGesture(turn);
+  if (turn.gesture.cleared) return;
+  turn.gesture.cleared = true;
+  broadcastToOverlays(IPC.overlayInk, 'clear');
+}
+
+/** Draws the talk gesture into the screenshots (whether or not the OS captured the on-screen trail). */
+function gestureAnnotator(path: GesturePath | null, settings: Settings): CaptureAnnotator | undefined {
+  if (!path || extentOf(path.points) < MEANINGFUL_PX) return undefined;
+  const dark = nativeTheme.shouldUseDarkColors;
+  const ink: [number, number, number] = dark ? [242, 242, 240] : [17, 17, 17];
+  const color = hexToRgb(settings.companion.color || '', ink);
+  const halo: [number, number, number] = dark ? [20, 20, 20] : [255, 255, 255];
+  return (s, bitmap) => {
+    const k = s.image.width / s.bounds.width;
+    const pts = path.points.map((p) => globalToScreenshot(s, p.x, p.y));
+    return drawStroke(bitmap, s.image.width, s.image.height, pts, { width: Math.max(3, 3.5 * k), color, halo, alpha: 0.9 });
+  };
+}
+
 /** Short, lowercase, single-line error for the bubble. */
 function errorMessage(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err ?? 'something went wrong');
@@ -233,6 +284,8 @@ export interface PromptOptions {
   source?: ChatTurn['source'];
   /** names of attached images (sent after the screenshots) */
   imageNames?: string[];
+  /** where the user's cursor is / what they circled with it this turn (gesture.ts summary) */
+  cursorNote?: string;
 }
 
 /** The agent-mode section of the system prompt ('' when actions are off). */
@@ -323,6 +376,12 @@ Pointing is turned off: never output [POINT:...] tags.`;
 
   const custom = settings.customInstructions.trim();
   const agent = agentPrompt(settings, screens);
+  const cursor = screens.length && !fromWindow
+    ? `
+
+THE USER'S CURSOR
+While they talk, the user may circle, underline or point at things with their mouse cursor to show you what they mean. Their stroke is drawn as a thin ink line in the screenshot (it is their gesture, not part of the app on screen). When they say "this", "that", "here" or "it" without naming anything, they mean what they circled or pointed at, or what is under their cursor. Explain or point at that.${opts.cursorNote ? `\nThis turn: ${opts.cursorNote}` : ''}`
+    : '';
 
   return `You are Clickity, a friendly little AI companion that lives next to the user's mouse cursor on their ${platformName()} computer. The user holds a key, talks to you, and you can see their screen(s) through the screenshots attached to their latest message.
 
@@ -333,7 +392,7 @@ HOW TO REPLY
 - Answer about what's actually on the screen when that's relevant; be specific ("the blue share button in the top right") instead of generic.
 - The user's words come from speech-to-text and may contain mistakes; infer what they meant. If the request is truly unclear, ask one short question.
 - Earlier turns in the conversation are text only; only the newest message has screenshots, so trust the current screenshots over memory.
-${pointing}${agent}${channel}
+${pointing}${agent}${cursor}${channel}
 
 SCREENS THIS TURN
 ${screenLines}${attachedLines}${custom ? `\n\nADDITIONAL INSTRUCTIONS FROM THE USER\n${custom}` : ''}`;
@@ -352,6 +411,7 @@ function cancelCurrent(): void {
   if (!turn) return;
   current = null;
   turn.controller.abort();
+  clearInk(turn);
   if (turn.stage === 'recording') sendToOverlay(turn.overlay, IPC.overlayPttCancel);
   sendToOverlay(turn.overlay, IPC.overlayStopSpeaking);
   for (const win of turn.pointed) sendToOverlay(win, IPC.overlayStopSpeaking);
@@ -379,6 +439,7 @@ function beginTurn(overlay: BrowserWindow | null, stage: Turn['stage'], kind: Tu
 function endTurn(turn: Turn, finalState: OverlayState | null = { phase: 'idle' }): void {
   if (current !== turn) return;
   current = null;
+  clearInk(turn);
   recallPoints(turn);
   if (finalState) sendState(turn.overlay, finalState);
 }
@@ -392,10 +453,10 @@ function failTurn(turn: Turn, err: unknown): void {
   showError(turn.overlay, message);
 }
 
-async function safeCapture(cursor: Point): Promise<CapturedScreen[]> {
+async function safeCapture(cursor: Point, annotate?: CaptureAnnotator): Promise<CapturedScreen[]> {
   try {
     cleanupCaptures();
-    return await captureScreens(cursor);
+    return await captureScreens(cursor, annotate);
   } catch (err) {
     console.warn('[conversation] screen capture failed:', err);
     return [];
@@ -490,7 +551,7 @@ function chatContext(chatId: string, pairs: number): ChatMessage[] {
       parts.push(`${a.text}${pointedNote}${didNote}`.trim());
     }
     if (!parts.length) continue;
-    const userText = u.text.trim() || (u.attachments?.length ? `(sent ${u.attachments.join(', ')})` : '');
+    const userText = (u.text.trim() || (u.attachments?.length ? `(sent ${u.attachments.join(', ')})` : '')) + (u.text.trim() && u.gesture ? ` (${u.gesture})` : '');
     if (!userText) continue;
     out.push([
       { role: 'user', text: userText },
@@ -519,6 +580,10 @@ interface TurnInput {
   speak: boolean;
   /** fly to POINT targets (needs screenshots) */
   point: boolean;
+  /** where the cursor is / what the user circled, for the system prompt of this turn's screenshots */
+  cursorNote?: string;
+  /** tiny note stored with the user turn ("circled an area on screen 1") */
+  gestureNote?: string;
 }
 
 /** Record the user turn, stream the reply (overlay + chats window), store it, then point and speak.
@@ -539,6 +604,7 @@ async function runTurn(turn: Turn, input: TurnInput): Promise<void> {
     source: input.source,
     screenshots: screens.length,
     attachments: input.attachments?.length ? input.attachments : undefined,
+    gesture: input.gestureNote || undefined,
     provider: kind,
     model,
   });
@@ -658,11 +724,14 @@ async function askModel(
   try {
     show(opts.thinking);
     const req: ChatRequest = {
-      system: buildSystemPrompt(settings, screens, { source: input.source, imageNames: opts.imageNames }),
+      // the cursor note describes this turn's own screenshots, not an agent step's fresh ones
+      system: buildSystemPrompt(settings, screens, { source: input.source, imageNames: opts.imageNames, cursorNote: screens === input.screens ? input.cursorNote : undefined }),
       messages,
       model,
       signal,
     };
+
+    if (process.env.CLICKY_DEBUG) console.log(`[clicky] system prompt: ${req.system}`);
 
     // Stream, pushing throttled visible-text updates to the overlay and the chats window.
     let lastSent = '';
@@ -1236,6 +1305,7 @@ export function onTalkDown(): void {
   const micStatus = microphoneStatus();
   log('voice', `talk down: turn ${turn.id}, overlay ${turn.overlay ? 'ok' : 'missing'}, mic permission ${micStatus}, stt ${settings.speech.stt.provider}${settings.speech.stt.provider === 'on-device' ? ` (${settings.speech.stt.model})` : ''}`);
   sendState(turn.overlay, { phase: 'listening' });
+  startGesture(turn, cursor);
 
   const startRecording = (): boolean => {
     if (!isTurnCurrent(turn) || turn.stage !== 'recording') return false;
@@ -1263,6 +1333,7 @@ export function onTalkUp(): void {
   const turn = current;
   if (!turn || turn.stage !== 'recording') return;
   turn.stage = 'processing';
+  stopGesture(turn);
   const held = Date.now() - turn.startedAt;
   log('voice', `talk up: turn ${turn.id}, held ${held}ms`);
   if (held < MIN_PRESS_MS) {
@@ -1383,8 +1454,11 @@ async function processVoiceTurn(turn: Turn): Promise<void> {
   sendToOverlay(overlay, IPC.overlayPttStop, { stt });
   sendState(overlay, { phase: 'transcribing' });
 
-  // Screens are captured while the audio is being transcribed.
-  const capturesP = safeCapture(screen.getCursorScreenPoint());
+  // Screens are captured while the audio is being transcribed. The cursor's ink trail is still
+  // on screen and is also drawn into the screenshots; it fades once they're taken.
+  const path = stopGesture(turn);
+  const cursor = screen.getCursorScreenPoint();
+  const capturesP = safeCapture(cursor, gestureAnnotator(path, settings)).finally(() => clearInk(turn));
 
   const t0 = Date.now();
   const result = await resultP;
@@ -1419,7 +1493,9 @@ async function processVoiceTurn(turn: Turn): Promise<void> {
   sendState(overlay, { phase: 'thinking', transcript: text });
   const screens = await capturesP;
   if (!isTurnCurrent(turn)) return;
-  await runTurn(turn, { source: 'voice', userText: text, screens, speak: true, point: true });
+  const gesture = summarizeGesture(path, cursor, screens);
+  if (gesture.parts.length) log('voice', `gesture: ${gesture.parts.map((p) => `${p.kind} on screen ${p.screen} (${p.box.minX},${p.box.minY})–(${p.box.maxX},${p.box.maxY})`).join(', ')}`);
+  await runTurn(turn, { source: 'voice', userText: text, screens, speak: true, point: true, cursorNote: gesture.text, gestureNote: gesture.note });
 }
 
 /** Whisper hallucinations on silence, e.g. "[BLANK_AUDIO]", "(music)", "you". */
@@ -1454,9 +1530,11 @@ function closeTyping(): void {
 async function processTypedTurn(turn: Turn, text: string): Promise<void> {
   await delay(TYPE_BOX_HIDE_MS, turn.controller.signal);
   sendState(turn.overlay, { phase: 'thinking', transcript: text });
-  const screens = await safeCapture(screen.getCursorScreenPoint());
+  const cursor = screen.getCursorScreenPoint();
+  const screens = await safeCapture(cursor);
   if (!isTurnCurrent(turn)) return;
-  await runTurn(turn, { source: 'type', userText: text, screens, speak: true, point: true });
+  const cursorNote = summarizeGesture(null, cursor, screens).text;
+  await runTurn(turn, { source: 'type', userText: text, screens, speak: true, point: true, cursorNote });
 }
 
 function onTextSubmit(senderId: number, text: string): void {

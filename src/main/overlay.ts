@@ -134,11 +134,22 @@ function scheduleRebuild(): void {
 
 /* ───────────────────────── cursor polling ───────────────────────── */
 
+/** main-process listeners for cursor moves (conversation.ts records the talk gesture) */
+const cursorListeners = new Set<(p: Point, t: number) => void>();
+
 function pollCursor(): void {
   const p = screen.getCursorScreenPoint();
   if (p.x === lastCursor.x && p.y === lastCursor.y) return;
   lastCursor = p;
   broadcastToOverlays(IPC.overlayCursor, { x: p.x, y: p.y });
+  const t = Date.now();
+  for (const cb of cursorListeners) cb(p, t);
+}
+
+/** Called with every cursor move (global DIP, epoch ms) at the ~60 Hz poll rate. Returns unsubscribe. */
+export function onCursorMove(cb: (p: Point, t: number) => void): () => void {
+  cursorListeners.add(cb);
+  return () => cursorListeners.delete(cb);
 }
 
 /* ───────────────────────── public API ───────────────────────── */

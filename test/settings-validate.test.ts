@@ -6,7 +6,7 @@ const defaults = () => ({
   theme: 'system',
   hotkeys: { talk: ['Control', 'Alt'], type: ['Control', 'Alt', 'Space'], mode: 'hold' },
   speech: { stt: { provider: 'on-device' }, tts: { provider: 'system' } },
-  companion: { offsetX: 18, offsetY: 20, actions: 'ask', maxSteps: 8 },
+  companion: { offsetX: 18, offsetY: 20, actions: 'ask', maxSteps: 8, show: 'always' },
 }) as any;
 
 test('bad enums fall back to defaults', () => {
@@ -43,4 +43,13 @@ test('agent mode: unknown actions → ask first, max steps clamped to 1–20', (
   const u = defaults(); u.companion.maxSteps = 'x';
   fixEnums(u, defaults(), 'linux');
   assert.equal(u.companion.maxSteps, 8);
+});
+
+test('show companion: missing / unknown → always, valid values kept', () => {
+  const s = defaults(); delete s.companion.show;
+  fixEnums(s, defaults(), 'linux');
+  assert.equal(s.companion.show, 'always');
+  const t = defaults(); t.companion.show = 'never';
+  fixEnums(t, defaults(), 'linux');
+  assert.equal(t.companion.show, 'never');
 });

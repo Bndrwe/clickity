@@ -109,12 +109,17 @@ no need to come back here for new versions. clickity checks github for the lates
 3. the reply streams into a bubble and is read out loud.
 4. if the model points at something, the companion flies there and lands next to it.
 
+### circle while you talk
+
+while you hold the talk key, move your mouse around the thing you mean: circle it, underline it, or just rest the cursor on it. a thin ink line follows your cursor (tiny wiggles are ignored), and it is drawn into the screenshot too, so the model sees exactly what you marked. clickity also tells the model where you circled and where your cursor ended, so "what is this?" or "make that bigger" means the thing you marked. the line fades once the screenshots are taken. typed questions include your cursor position as well.
+
 ## make it yours
 
 - **look** — light, dark, or follow the system. pick the companion's color and size (0.5×–2.5×).
 - **keys** — record any chord for talking and for typing; hold-to-talk or tap-to-toggle.
 - **voice** — on-device whisper, openai, groq, gemini or a local server to listen; your system voice, openai or elevenlabs to speak.
 - **behavior** — follow the cursor or park in a corner, show or hide the bubble, pointing on or off, custom instructions.
+- **show companion** — *always*, *while working* (hidden while idle; it fades in while it listens, thinks, speaks or points), or *never*. with *never* there's no companion at all, so nothing distracts you, but it still follows your cursor invisibly: the reply bubble opens where your cursor is, a small waveform / dots sit next to the cursor while it listens and thinks, and pointing shows just a ring and a label at the target.
 
 <p align="center">
   <img src="docs/screenshots/chats.png" width="720" alt="the clickity chats window: saved chats, a dark glass composer and a model picker">

@@ -214,6 +214,34 @@ body {
   padding-bottom: calc(6px * var(--s));
 }
 
+/* ───────── show companion: always · while working · never ───────── */
+.companion .body,
+.companion .shadow {
+  transition: opacity 0.45s var(--ease-soft);
+}
+/* 'active': the arrow fades in while it listens / thinks / speaks / acts / points */
+[data-show='active']:not(.buddy-on) .companion .body,
+[data-show='active']:not(.buddy-on) .companion .shadow,
+/* 'never': no arrow at all; it still tracks the cursor so the bubble opens there */
+[data-show='never'] .companion .body,
+[data-show='never'] .companion .shadow {
+  opacity: 0 !important; /* the shadow's opacity is also set inline every frame */
+}
+/* without an arrow, the waveform / thinking dots sit right beside the cursor */
+[data-show='never'] .aux {
+  left: calc(2px * var(--s));
+  top: calc(-2px * var(--s));
+}
+
+/* ───────── ink trail (circle / underline while talking) ───────── */
+.ink {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.85;
+}
+
 /* ───────── pointing ───────── */
 .ripples {
   position: absolute;

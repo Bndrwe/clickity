@@ -7,6 +7,7 @@ const MODES = ['hold', 'toggle'];
 const STT = ['on-device', 'openai', 'groq', 'gemini', 'local'];
 const TTS = ['system', 'openai', 'elevenlabs', 'off'];
 const ACTIONS = ['off', 'ask', 'auto'];
+const SHOW = ['always', 'active', 'never'];
 
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
@@ -23,6 +24,8 @@ export function fixEnums(s: Settings, d: Settings, platform: string): Settings {
   if (!finite(s.companion.offsetX)) s.companion.offsetX = d.companion.offsetX;
   if (!finite(s.companion.offsetY)) s.companion.offsetY = d.companion.offsetY;
   // agent mode: anything unknown falls back to the default ('ask first'), never to 'auto'
+  // older settings.json files have no `show`: the defaults merge fills it; anything else → 'always'
+  if (!SHOW.includes(s.companion.show)) s.companion.show = d.companion.show;
   if (!ACTIONS.includes(s.companion.actions)) s.companion.actions = d.companion.actions;
   s.companion.maxSteps = finite(s.companion.maxSteps) ? Math.min(20, Math.max(1, Math.round(s.companion.maxSteps))) : d.companion.maxSteps;
   // 'Fn' only exists on mac (fn-key helper). A settings.json synced / copied from a mac would
