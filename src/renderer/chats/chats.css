@@ -403,6 +403,25 @@ kbd {
 @media (prefers-reduced-motion: reduce) { .agent-confirm, .agent-note.live { animation: none; } }
 .body:empty + .err { margin-top: 2px; }
 
+/* choices ([ASK:…]): the options as quiet pills under the reply */
+.ask { margin-top: 10px; animation: agent-in 0.5s var(--ease) both; }
+.ask-opts { display: flex; flex-wrap: wrap; gap: 8px; }
+.ask-opt {
+  display: inline-flex; align-items: baseline; gap: 8px; min-height: 30px; padding: 5px 14px 6px; border-radius: 999px;
+  font-size: 13px; font-weight: 500; text-transform: lowercase; text-align: left; color: var(--text-2);
+  background: var(--glass); border: 1px solid var(--line-2);
+  transition: background 0.2s var(--ease), color 0.2s var(--ease), border-color 0.2s var(--ease), opacity 0.3s var(--ease);
+}
+.ask-n { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.ask-opt:hover:not(:disabled) { background: var(--surface-2); color: #fff; }
+.ask-opt:focus-visible { outline: none; box-shadow: 0 0 0 1.5px #f2f2f0; }
+.ask-opt.other { background: transparent; border-color: transparent; color: var(--muted); font-weight: 400; }
+.ask-opt:disabled { cursor: default; opacity: 0.45; }
+.ask-opt.chosen, .ask-opt.chosen:disabled { opacity: 1; color: #fff; border-color: rgba(255, 255, 255, 0.6); background: var(--glass-hi); }
+.ask.closed .ask-opt.other { display: none; }
+.ask-note { margin-top: 6px; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) { .ask { animation: none; } }
+
 .caret {
   display: inline-block; width: 8px; height: 1.05em; margin-left: 2px; vertical-align: -0.17em;
   border-radius: 2px; background: rgba(220, 235, 250, 0.75);
@@ -514,3 +533,44 @@ button, input, textarea, a, .composer, .popover, .row { -webkit-app-region: no-d
 /* the update pill doubles as a quiet version chip when there's nothing to install */
 .update-pill.quiet { background: transparent; color: var(--ink-muted, rgba(255,255,255,.5)); box-shadow: none; }
 .update-pill.quiet:hover { color: var(--ink, #fff); }
+
+/* choices as a vertical stack under the reply (one row per option, hairlines between) */
+.ask-opts { flex-direction: column; flex-wrap: nowrap; gap: 0; max-width: 440px; border-top: 1px solid var(--line); }
+.ask-opt {
+  display: flex; align-items: baseline; gap: 12px; width: 100%; min-height: 0;
+  padding: 10px 10px 11px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0;
+  background: transparent; font-size: 13.5px;
+}
+.ask-n {
+  flex: none; width: 20px; height: 20px; display: inline-grid; place-items: center;
+  border-radius: 6px; background: var(--surface-2); color: var(--muted); font-size: 11px; transform: translateY(2px);
+}
+.ask-opt:hover:not(:disabled) { background: var(--surface); }
+.ask-opt:focus-visible { box-shadow: inset 0 0 0 1px #f2f2f0; border-radius: 8px; }
+.ask-opt.other { border-bottom: 0; }
+.ask-opt.chosen, .ask-opt.chosen:disabled { background: transparent; border-color: var(--line); color: #fff; }
+.ask-opt.chosen .ask-n { background: #f2f2f0; color: #000; }
+
+/* cards / 3D models under an assistant message (visuals.ts + ../shared/visuals.css) */
+.msg-visuals { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px; margin-top: 14px; }
+.msg-visuals .vcard { --v-bg: var(--surface); box-shadow: 0 0 0 1px var(--line-2), 0 18px 36px -18px rgba(0, 0, 0, 0.8); }
+
+/* ───────────── clicky switcher (named companions) ───────────── */
+.clicky-switch {
+  margin: 0 0 0 -8px; padding: 4px 8px 4px 8px; border-radius: 10px; max-width: calc(var(--side-w) - 40px);
+  transition: background 0.2s; -webkit-app-region: no-drag;
+}
+.clicky-switch:hover, .clicky-switch[aria-expanded='true'] { background: rgba(255, 255, 255, 0.06); }
+.clicky-switch .mark { transition: color 0.4s var(--ease); }
+.clicky-switch .wordmark { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.clicky-switch .chev { width: 14px; height: 14px; color: rgba(255, 255, 255, 0.4); transform: translateY(1px); transition: transform 0.25s var(--ease); }
+.clicky-switch[aria-expanded='true'] .chev { transform: translateY(1px) rotate(180deg); }
+.clicky-scope { display: block; margin-top: 2px; font-size: 11.5px; color: rgba(255, 255, 255, 0.38); padding-left: 1px; }
+.clicky-pop { transform-origin: top left; }
+.clicky-pop .mark { flex: none; filter: none; }
+.row-mark-wrap { flex: none; display: grid; place-items: center; width: 14px; }
+.row-mark-wrap .mark { width: 12px; height: 12px; filter: none; }
+
+/* reply copy button / always-allow undo, in the meta line */
+.meta-copy { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; text-decoration-color: transparent; transition: color .2s, text-decoration-color .2s; }
+.meta-copy:hover, .meta-copy:focus-visible { color: var(--ink, #fff); text-decoration-color: currentColor; }

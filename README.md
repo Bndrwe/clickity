@@ -113,6 +113,27 @@ no need to come back here for new versions. clickity checks github for the lates
 
 while you hold the talk key, move your mouse around the thing you mean: circle it, underline it, or just rest the cursor on it. a thin ink line follows your cursor (tiny wiggles are ignored), and it is drawn into the screenshot too, so the model sees exactly what you marked. clickity also tells the model where you circled and where your cursor ended, so "what is this?" or "make that bigger" means the thing you marked. the line fades once the screenshots are taken. typed questions include your cursor position as well.
 
+### follow-ups and choices
+
+when clickity needs you to decide something (several files match, a risky step, which format), it asks one short question and shows the likely answers as numbered pills in its bubble. answer any way you like:
+
+- press **1–5** (the number keys are only taken over while a question is waiting, and given back right after; on wayland, where apps can't grab keys, the pills show no numbers),
+- click a pill (on mac and windows the bubble takes clicks while your mouse is over it),
+- click **something else…** and type your own answer in the box that opens under the bubble,
+- or just hold the talk key and say it.
+
+**esc** dismisses the question, and after 2 minutes it turns into a normal reply. your answer goes into the same chat as the next message, with fresh screenshots, so clickity knows what it asked and carries on (in agent mode it can act on your answer). in the chats window the options are buttons under the reply; the one you picked stays marked.
+
+to follow up on any answer, click **reply** in the bubble while it's showing, or press the type key: the type box opens right under the bubble and continues the same chat.
+
+### cards and 3D models
+
+when a picture explains better than words, clickity can float a small **card** (a title and a few short lines) or a **3D model** next to its reply bubble: a cube, sphere, cylinder, cone, torus, pyramid, a water or co2 molecule, an atom, a gear, the earth, a little solar system, a dna helix, or xyz axes. drag a model to turn it, scroll to zoom, drag the card's frame to move it, and click **×** to close it. it slowly spins by itself (not with reduced motion turned on) and leaves with the bubble, unless you touched it. the same cards show under the reply in the chats window. models are drawn with three.js from simple shapes, so there is nothing to download.
+
+### greetings
+
+the chats window, the settings page and the welcome tour open with a short italic line that changes every time ("good evening, maya.", "what are we figuring out?", "ready when you are."), 500+ of them, picked by time of day and weekday (plus a mix of any-time lines) and never repeated until the whole set has been shown. add your name under **companion › your name** (or in the last welcome step) to have it used in some of them; leave it empty and none of the lines mention a name.
+
 ## make it yours
 
 - **look** — light, dark, or follow the system. pick the companion's color and size (0.5×–2.5×).
@@ -130,6 +151,24 @@ every conversation — spoken, typed next to the cursor, or written in the chats
 <p align="center">
   <img src="docs/screenshots/dark-settings.png" width="560" alt="clickity settings in dark mode">
 </p>
+
+## clickys (more than one companion)
+
+you can have several companions, each with its own name, personality, brain, voice, memory and chats — a *spreadsheet helper* that explains formulas step by step, a *study buddy* that quizzes you, a *coding sidekick* that keeps it terse. everyone starts with one, **clickity**, which keeps all your existing settings and chats.
+
+- **make one** — settings › **clickys** › **new clicky**. give it a name, a persona (how it helps and talks; it's told "you are ‹name›", then your text), a color for its mark, and optionally its own model and voice. leave those on *same as everywhere* to use your normal ones.
+- **let clickity suggest some** — **suggest clickys for me** asks three quick questions (what you use your computer for, where you get stuck, how it should talk to you) and your model proposes up to three clickys. add the ones you like.
+- **switch** — say or type **"switch to study buddy"** (handled on your machine, no model call), pick one from the name at the top of the chats window, from the menu-bar / tray menu (**clicky: ‹name› ▸**), or from the notch panel. the companion takes the new clicky's color.
+- **chats** — each clicky keeps its own chats. the chats window shows the active clicky's; **show all clickys' chats** in the same menu lists everything, with a small mark for whose chat it is.
+- **memory** — what one clicky remembers about you (\[REMEMBER\]) stays with that clicky. settings › memory shows the active clicky's.
+
+deleting a clicky keeps its chats (under *all clickys*).
+
+## notch panel
+
+a small black pill that sits at the top of the screen with your cursor, just under the menu bar (or the macbook notch). it shows the active clicky, what it's doing (listening with a waveform, thinking, the first line of what it's saying) and a little **ask ‹name›…** box. hover or click it to open the last few messages of the current chat plus **new chat · open chats · settings**. drop files on it to attach them to your next message. esc or a click elsewhere folds it back up; it never takes the keyboard until you click it.
+
+turn it on in settings › companion › **notch panel**: *off* (default), *show on hover at top* (touch the top-middle edge of the screen with your cursor and it slides in) or *always visible*. it follows your cursor to other displays and floats over full-screen apps. on linux it needs a compositor for the rounded corners (otherwise they show as a black box).
 
 ## choosing a brain
 
@@ -171,12 +210,38 @@ text to speech (tts) options:
 
 the speaking rate is adjustable in settings.
 
+- **language**: pick one (or *auto-detect*) in settings › voice. picking a non-english language while the on-device model is an english-only one (`*.en`) switches it to the multilingual `Xenova/whisper-base` and says so.
+- **microphone**: settings › voice › microphone lists your inputs. if the chosen one is unplugged (even mid-sentence), clickity carries on with the system default.
+- **listen**: every system / openai voice has a ▶ button to hear it (double-click one to pick it).
+- **captions**: with the reply bubble off, captions show the sentence being spoken next to your cursor.
+- **copy answers**: with the voice off, each spoken-style answer also lands on your clipboard (a tiny *copied* shows). the bubble's text can be selected and copied too: drag the bubble by its edge.
+
+## dictation
+
+hold **fn + shift** on mac (**ctrl + shift + space** on windows / linux), speak, let go: your words are typed wherever your cursor is, in any app. no screenshot, no model call, just a tiny *listening* / *typed* pill at the cursor. long or non-ascii text on mac is pasted instead of typed (your clipboard is saved first and put back right after). text with a line break that's about to land in a terminal asks first (enter / esc), so it can't run a command by accident.
+
+**draft instead.** hold **option / alt** too (fn + shift + option, ctrl + shift + alt + space), or say "write…", "reply…", "draft…" with the talk key: clickity looks at the screen, writes the text (the email you're answering, the chat you're in), shows it in the bubble, and types it when you press **enter** (**esc** throws it away). with agent mode on *automatic* it types right away, unless the text looks like a password or key.
+
+settings › **dictation**:
+
+- **words & names**: names and jargon you use ("clickity, bndrwe, kubernetes"). they're passed to whisper as a hint by openai, groq, gemini and local speech to text (on-device whisper can't take a hint yet).
+- **replacements**: "clicky tea" → "clickity", applied to everything you dictate.
+- **learn corrections**: dictate a word again within 20 seconds ("clickity" right after "…clicky tea…") and clickity offers *you corrected "clicky tea" to "clickity"* in settings. nothing is added unless you click **add**.
+- **long dashes**: keep —, or turn them into commas or hyphens.
+
+## hands-free
+
+**triple-tap control** (or settings › keys › hands-free) and clickity listens all the time: just talk. when you start speaking it records, and about a second after you stop it answers like a normal voice turn. a *hands-free · listening* pill at the top of the screen shows it's on. it never listens while it's thinking or talking (plus a short pause after), so it doesn't hear itself: if your output isn't headphones it says so once. with headphones you can talk over a reply to interrupt it. triple-tap again to stop.
+
 ## keys
 
 - **talk key**: default control + fn on mac (fn is the 🌐 globe key on newer keyboards), ctrl + alt on windows / linux. any chord works: in settings › keys, click **record** and press it; the keys show up as you press them. windows and linux can't use fn, because the keyboard handles it before the os sees it.
 - **is it working?** settings › keys › status says whether clickity hears your keys. press the talk chord with settings open and it shows *heard control + fn ✓*.
 - **hold or toggle**: in *hold* mode, the companion listens while you hold the chord and sends when you let go. in *toggle* mode, press once to start and again to send.
-- **type instead**: control + option + space on mac (ctrl + alt + space elsewhere) opens a small text box next to the companion, for when you would rather type.
+- **type instead**: control + option + space on mac (ctrl + alt + space elsewhere) opens a small text box next to the companion, for when you would rather type. **double-tap control** does the same (tap it twice within 300ms, nothing else pressed).
+- **dictate**: fn + shift on mac, ctrl + shift + space elsewhere (see [dictation](#dictation)). **hands-free**: triple-tap control.
+- **taps**: *type, quickly* and *hands-free* can be a chord or a double / triple tap of one key: click **record** and tap the key two or three times. **off** turns a binding off.
+- talking over the companion (pressing the talk key while it speaks) stops it and starts listening.
 - **escape** cancels the current turn.
 
 ## permissions
@@ -198,8 +263,8 @@ with agent mode on, the companion can also act on your screen: click, double-cli
 
 **approval.** settings › companion › agent mode has three settings:
 
-- **ask first** (the default): clickity says what it's about to do and shows the steps in its bubble, e.g. `click “save” · type “hello” · press cmd+s`. press **enter** to allow or **esc** to cancel. from the chats window you can also press **allow** under the reply. with no answer after 60 seconds, nothing happens.
-- **automatic**: it acts right away.
+- **ask first** (the default): clickity says what it's about to do and shows the steps in its bubble, e.g. `click “save” · type “hello” · press cmd+s`. press **enter** to allow once, **a** to *always allow* (agent mode becomes automatic; a note in the chats window offers **undo**, and settings › companion shows the mode), or **esc** for not now. the chats window has the same three buttons. with no answer after 60 seconds, nothing happens.
+- **automatic**: after a 3-second *starting… esc to cancel*, it acts. steps that send, delete, pay, buy, post or submit still ask first, even here.
 - **off**: it only points, never clicks or types.
 
 **how a task runs.** after each round of actions clickity waits a moment, takes a fresh screenshot and checks its work, then continues until it says it's done. the bubble shows "step 2 of 8". it stops after **max steps** rounds (1–20, default 8; settings › companion). each step is saved in the chat, so the chats window shows "clicked save · typed hello" under the reply.
@@ -218,8 +283,32 @@ what each system needs:
 
 - screenshots are only taken when you press the talk or type chord. nothing is captured in the background.
 - screenshots and your words go only to the provider you chose. with on-device speech to text, your voice never leaves your machine.
-- the screenshots are saved as temporary files for the turn. they are deleted after about two minutes.
+- the screenshots are saved as temporary files for the turn and deleted as soon as the turn (including any agent steps) is over; a sweep removes anything older than two minutes as a backstop.
+- links you send are read by clickity itself (public http/https addresses only, never your local network; 10 s and 2 mb limits) and handed to the model marked as untrusted page text.
+- the system prompt includes the date and time and, where it can be read without extra permissions, the focused app and open window titles (linux: `xdotool` / `wmctrl`; windows: the process list; mac: the front app only).
+- memory facts are stored in `memory.json` in clickity's data folder. secret-looking text (passwords, keys, card numbers) is never remembered.
 - api keys are encrypted with the operating system's keychain, through electron's safeStorage. if safeStorage is not available on your system, the app stores keys unencrypted and logs a warning.
+
+## memory
+
+clickity remembers lasting things you tell it ("i'm a nurse", "i use metric", "my team is called atlas") across chats: the model adds a hidden `[REMEMBER:…]` tag, the fact is saved, and later chats know it. settings › **memory** lists everything it knows: edit or forget single facts, add your own, **forget everything**, or turn memory off.
+
+## files and links
+
+attach images, text files and **pdfs** in the chats window (the pdf's text is extracted on your machine, up to ~60k characters; scanned pdfs without a text layer and word / office files aren't read yet). paste a link into any message and clickity reads the page and answers about it.
+
+## walkthroughs and highlights
+
+ask "walk me through…" or "show me how to…" and clickity flies to step 1 with the instruction in its bubble; press **enter** (or click the bubble) for the next step, **esc** to stop (up to 15 steps). it can also draw a soft outline around a whole area (`[HIGHLIGHT:…]`) instead of pointing at one spot; outlines fade with the reply.
+
+## routines
+
+settings › **routines**: *every [days] at [time]: [what to do]*, optionally looking at your screen and/or speaking the answer. each run lands in a new chat named after the routine, with a notification. you can also just ask: "every weekday at 9, summarise my screen" — clickity proposes the routine and saves it when you press enter. a routine waits while you're mid-conversation, runs once on wake if the computer slept through it (up to 6 hours late), waits while you're offline, and pauses itself after 3 failed runs (settings shows why). **run now** tries one immediately.
+
+## more settings
+
+- **about › replay welcome tour** shows the first-run tour again.
+- **about › show in dock** (mac): hide the dock icon; the menu bar icon stays.
 
 ## pointing
 

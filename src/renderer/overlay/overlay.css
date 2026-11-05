@@ -523,3 +523,173 @@ body {
 .typebox { cursor: grab; touch-action: none; }
 .typebox input { cursor: text; }
 .dragging, .dragging .bubble, .dragging .typebox { cursor: grabbing !important; }
+
+/* ───────── choices ([ASK:…]) and quick reply ───────── */
+.reply-text span.still {
+  animation: none;
+}
+.choice-wrap {
+  transition: grid-template-rows 0.5s var(--ease), opacity 0.6s var(--ease-soft);
+}
+.bubble.has-choice.has-reply .choice {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.choice-opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.opt {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  max-width: 100%;
+  margin: 0;
+  padding: 5px 11px 6px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--bg-sunken);
+  color: var(--ink);
+  font: 500 13px/1.3 var(--sans);
+  text-transform: lowercase;
+  text-align: left;
+  box-shadow: 0 0 0 1px var(--line);
+  cursor: pointer;
+  pointer-events: auto;
+  transition: box-shadow 0.25s var(--ease), background 0.25s var(--ease), color 0.25s var(--ease);
+}
+.opt-t {
+  overflow-wrap: anywhere;
+}
+.opt-n {
+  color: var(--ink-muted);
+  font: 500 11px/1 var(--sans);
+  font-variant-numeric: tabular-nums;
+}
+.opt:hover {
+  box-shadow: 0 0 0 1px var(--ink-muted);
+}
+.opt:focus-visible,
+.opt.is-picked {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--ink);
+}
+.opt.is-picked {
+  background: var(--bg-elev);
+}
+.opt.other {
+  background: transparent;
+  color: var(--ink-muted);
+  font-weight: 400;
+}
+.opt.other:hover {
+  color: var(--ink-2);
+}
+.choice-hint {
+  margin: 8px 0 0;
+  color: var(--ink-muted);
+  font-size: 12px;
+  text-transform: lowercase;
+}
+.reply-row {
+  display: none;
+  margin-top: 6px;
+}
+.bubble.has-reply-btn .reply-row {
+  display: flex;
+  justify-content: flex-end;
+}
+.reply-btn {
+  margin: 0 -6px -4px 0;
+  padding: 2px 8px 3px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-muted);
+  font: 500 12px/1.4 var(--sans);
+  text-transform: lowercase;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: color 0.25s var(--ease), box-shadow 0.25s var(--ease);
+}
+.reply-btn:hover {
+  color: var(--ink);
+  box-shadow: 0 0 0 1px var(--line);
+}
+.reply-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--ink);
+}
+
+/* choices as a vertical stack (one full-width row per option, Opal hairlines) */
+.choice-opts {
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 0;
+  margin: 0 -8px;
+}
+.opt {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 8px 9px;
+  border-radius: 10px;
+  background: transparent;
+  box-shadow: none;
+  font: 500 13.5px/1.35 var(--sans);
+}
+.opt + .opt {
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 10px 10px;
+}
+.opt-n {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 6px;
+  background: var(--bg-sunken);
+  transform: translateY(1px);
+}
+.opt:hover {
+  background: var(--bg-sunken);
+  box-shadow: none;
+}
+.opt:hover .opt-n {
+  background: var(--bg-elev);
+}
+.opt:focus-visible,
+.opt.is-picked {
+  box-shadow: inset 0 0 0 1px var(--ink);
+  border-radius: 10px;
+}
+.opt.is-picked .opt-n {
+  background: var(--ink);
+  color: var(--bg-elev);
+}
+.opt.other {
+  font-weight: 400;
+}
+
+/* ───────── cards / 3D models by the bubble (visuals.ts) ───────── */
+.visuals-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: max-content;
+}
+.visuals-pos .vcard, .visuals-pos .vcard * { pointer-events: auto; }
+.visuals-pos .vcard { cursor: grab; user-select: none; }
+html.dragging .visuals-pos .vcard { cursor: grabbing; }
+
+/* agent confirm: "enter allow once · a always allow · esc not now" */
+.confirm-hint .ca-always { display: none; }
+.bubble.confirm-always .confirm-hint .ca-always { display: inline; }
+.bubble.confirm-always .confirm-hint .ca-once { display: none; }
+/* the reply text is selectable while the bubble is hovered (drag the bubble by its edge) */
+.bubble.is-in .reply-text, .bubble.is-in .reply-text * { user-select: text; cursor: text; pointer-events: auto; }

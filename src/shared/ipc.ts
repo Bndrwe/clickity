@@ -1,6 +1,7 @@
 // IPC channel names and the APIs each preload exposes on `window`.
 import type {
   Chat,
+  ChatAnswerRequest,
   ChatEvent,
   ChatSendRequest,
   ChatSummary,
@@ -21,7 +22,18 @@ import type {
   KeyName,
   InputStatus,
   InkCommand,
+  OverlayChoice,
+  OverlayCue,
+  OverlayHighlight,
+  HandsFreeState,
+  HandsFreeUtterance,
+  ChatAttachment,
+  ChatTurn,
+  ClickyQuizAnswers,
+  ClickySuggestion,
+  CompanionPhase,
 } from './types';
+import type { ChatVisual } from './visuals';
 
 /** Streamed to the settings window while main records a keybind (IPC.recordKeys). */
 export interface KeyRecordEvent {
@@ -87,6 +99,12 @@ export const IPC = {
   overlayTextInput: 'overlay:text-input', // boolean — show/hide the type box (window is made focusable by main)
   overlayClick: 'overlay:click', // OverlayPoint — agent mode: a click happens here now (ripple)
   overlayInk: 'overlay:ink', // InkCommand — the cursor's ink trail while talking (every overlay)
+  overlayVisuals: 'overlay:visuals', // ChatVisual[] | null — cards / 3D models for the current reply (floating near the bubble)
+  overlayChoice: 'overlay:choice', // OverlayChoice | null — a choice question is waiting (pills in the bubble)
+  overlayCue: 'overlay:cue', // OverlayCue | null — tiny status pill at the cursor (dictation, hands-free)
+  overlayHighlight: 'overlay:highlight', // OverlayHighlight[] | null — soft outlines ([HIGHLIGHT:…]); null = fade out
+  overlayHandsFree: 'overlay:hands-free', // HandsFreeState — always-listening mode
+  overlayWalkthrough: 'overlay:walkthrough', // boolean — a guided walkthrough is running (bubble click = next)
 
   /* overlay → main (ipcRenderer.send) */
   pttResult: 'ptt:result', // PttResult
@@ -97,6 +115,11 @@ export const IPC = {
   overlaySetInteractive: 'overlay:set-interactive', // boolean — pointer is over the bubble: accept clicks so it can be dragged
   overlayLog: 'overlay:log', // OverlayLogEntry — diagnostic line for clickity.log
   pttProgress: 'ptt:progress', // string — status while transcribing (e.g. model download %); keeps main's timeout alive
+  overlayChoose: 'overlay:choose', // number — the user clicked option N (0-based) of the pending choice
+  overlayReply: 'overlay:reply', // void — "reply" / "something else…": open the type box under the bubble
+  handsFreeUtterance: 'hands-free:utterance', // HandsFreeUtterance — voice activity ended: transcribe / run it
+  handsFreeSpeech: 'hands-free:speech', // void — voice activity started (barge-in: stop speaking)
+  walkNext: 'overlay:walk-next', // void — walkthrough: the bubble was clicked (next step)
 
   /* settings window → main (ipcRenderer.invoke) */
   settingsGet: 'settings:get', // () => Settings
@@ -125,6 +148,23 @@ export const IPC = {
   updateCheck: 'update:check', // () => UpdateState — check github now
   updateInstall: 'update:install', // () => UpdateState — download, install, restart
   updateDismissNote: 'update:dismiss-note', // () => void — hide the "updated to …" note
+  memoryList: 'memory:list', // () => string[] — remembered facts, oldest first
+  memorySet: 'memory:set', // (facts: string[]) => string[] — replace the list (edit / delete)
+  memoryClear: 'memory:clear', // () => void — forget everything
+  voicePreview: 'speech:preview', // (provider, voice) => SpeakCommand | null — a short line in that voice (settings plays it)
+  routineRun: 'routines:run', // (id) => void — run a routine now
+
+  clickysSuggest: 'clickys:suggest', // (answers: ClickyQuizAnswers) => ClickySuggestion[] — settings › clickys › suggest
+  clickysMemory: 'clickys:memory', // (clickyId) => number — how many facts that clicky remembers
+  clickysForget: 'clickys:forget', // (clickyId) => void — clear that clicky's memory
+
+  /* notch panel (src/main/notch.ts ↔ src/preload/notch.ts) */
+  notchState: 'notch:state', // main → notch: NotchState
+  notchReady: 'notch:ready', // notch → main: void — renderer loaded, send state
+  notchExpand: 'notch:expand', // notch → main: { expanded, focus } — grow / shrink the window (focus = take keyboard)
+  notchSend: 'notch:send', // notch → main (invoke): NotchSendRequest => { chatId, switched? }
+  notchAction: 'notch:action', // notch → main: 'new-chat' | 'open-chats' | 'open-settings' | 'stop'
+  notchCollapse: 'notch:collapse', // main → notch: void — collapse (clicked outside / esc)
 
   openChats: 'app:open-chats', // () => void — from settings (and tray / app menu in main)
   openSettings: 'app:open-settings', // () => void — from the chats window
@@ -141,6 +181,7 @@ export const IPC = {
   chatsActive: 'chats:active', // () => string | null — id of the active conversation
   chatsApprove: 'chats:approve', // (turnId) => void — agent mode: allow the pending actions
   chatsDeny: 'chats:deny', // (turnId) => void — agent mode: cancel the pending actions
+  chatsAnswer: 'chats:answer', // (req: ChatAnswerRequest) => { chatId } — answer a choice question (ChatTurn.ask)
 
   /* main → chats window */
   chatsEvent: 'chats:event', // ChatEvent
@@ -152,6 +193,7 @@ export const IPC = {
   recordKeys: 'hotkey:record-keys', // KeyRecordEvent
   hotkeyHeard: 'hotkey:heard', // HotkeyHeard — a chord fired
   hotkeyStatusChanged: 'hotkey:status-changed', // HotkeyStatus
+  memoryChanged: 'memory:changed', // string[]
 
   /* main → settings + chats windows */
   updateChanged: 'update:changed', // UpdateState
@@ -185,6 +227,24 @@ export interface OverlayApi {
   onClick(cb: (p: OverlayPoint) => void): void;
   /** the talk chord's ink trail: start / end / clear */
   onInk(cb: (cmd: InkCommand) => void): void;
+  /** a choice question is waiting (null = answered / dismissed / timed out) */
+  /** cards / 3D models the reply carries (null = none; a new turn clears them) */
+  onVisuals(cb: (v: ChatVisual[] | null) => void): void;
+  onChoice(cb: (c: OverlayChoice | null) => void): void;
+  /** the user clicked option `index` (0-based) */
+  choose(index: number): void;
+  /** "reply" / "something else…": open the type box under the bubble (continues the same chat) */
+  openReply(): void;
+  onCue(cb: (c: OverlayCue | null) => void): void;
+  onHighlight(cb: (h: OverlayHighlight[] | null) => void): void;
+  onHandsFree(cb: (s: HandsFreeState) => void): void;
+  onWalkthrough(cb: (on: boolean) => void): void;
+  /** hands-free: an utterance ended (voice activity detector) */
+  handsFreeUtterance(u: HandsFreeUtterance): void;
+  /** hands-free: speech started (stop the companion talking) */
+  handsFreeSpeech(): void;
+  /** walkthrough: the bubble was clicked */
+  walkNext(): void;
   sendPttResult(r: PttResult): void;
   speechDone(): void;
   submitText(text: string): void;
@@ -239,6 +299,18 @@ export interface SettingsApi extends UpdateApi {
   openLogs(): Promise<void>;
   /** agent mode: whether clickity can click / type on this machine */
   inputStatus(): Promise<InputStatus>;
+  memoryList(): Promise<string[]>;
+  memorySet(facts: string[]): Promise<string[]>;
+  memoryClear(): Promise<void>;
+  onMemoryChanged(cb: (facts: string[]) => void): void;
+  /** a short line in this voice (null = nothing to play) */
+  voicePreview(provider: string, voice: string): Promise<SpeakCommand | null>;
+  runRoutine(id: string): Promise<void>;
+  /** settings › clickys: ask the model for up to 3 clickys that fit the quiz answers */
+  suggestClickys(answers: ClickyQuizAnswers): Promise<ClickySuggestion[]>;
+  /** how many facts a clicky remembers / forget them */
+  clickyMemoryCount(clickyId: string): Promise<number>;
+  clickyForget(clickyId: string): Promise<void>;
 }
 
 /** Exposed as `window.chats` by src/preload/chats.ts */
@@ -249,12 +321,15 @@ export interface ChatsApi extends UpdateApi {
   open(id: string): Promise<void>;
   rename(id: string, title: string): Promise<void>;
   remove(id: string): Promise<void>;
-  send(req: ChatSendRequest): Promise<{ chatId: string }>;
+  /** switched = the text was "switch to <name>": handled locally, nothing was sent (chatId '') */
+  send(req: ChatSendRequest): Promise<{ chatId: string; switched?: string }>;
   stop(chatId: string): Promise<void>;
   active(): Promise<string | null>;
   /** agent mode: allow / cancel the actions a reply is waiting on (ChatEvent 'confirm') */
   approve(turnId: string): Promise<void>;
   deny(turnId: string): Promise<void>;
+  /** answer an assistant turn's choice question (sent as the next message, like the overlay's pills) */
+  answer(req: ChatAnswerRequest): Promise<{ chatId: string }>;
   onEvent(cb: (e: ChatEvent) => void): void;
   onChanged(cb: (list: ChatSummary[]) => void): void;
   // shared with the settings window
@@ -266,10 +341,45 @@ export interface ChatsApi extends UpdateApi {
   openSettings(section?: string): Promise<void>;
 }
 
+/** main → notch panel: everything it draws. */
+export interface NotchState {
+  clicky: { id: string; name: string; color: string };
+  clickys: Array<{ id: string; name: string; color: string }>;
+  phase: CompanionPhase;
+  /** first line of the reply while speaking / the transcript while thinking */
+  line?: string;
+  expanded: boolean;
+  /** the last few turns of the active chat (expanded view) */
+  turns: Array<Pick<ChatTurn, 'id' | 'role' | 'text' | 'error'>>;
+  chatId: string | null;
+  theme: 'light' | 'dark';
+  hotkeyLabel: string;
+}
+
+export interface NotchSendRequest {
+  text: string;
+  attachments?: ChatAttachment[];
+  includeScreen: boolean;
+}
+
+/** Exposed as `window.notch` by src/preload/notch.ts */
+export interface NotchApi {
+  onState(cb: (s: NotchState) => void): void;
+  onCollapse(cb: () => void): void;
+  ready(): void;
+  /** grow / shrink the window; focus = it needs the keyboard (typing) */
+  setExpanded(expanded: boolean, focus: boolean): void;
+  send(req: NotchSendRequest): Promise<{ chatId: string; switched?: string }>;
+  action(a: 'new-chat' | 'open-chats' | 'open-settings' | 'stop'): void;
+  /** switch the active clicky */
+  switchClicky(id: string): Promise<void>;
+}
+
 declare global {
   interface Window {
     overlay: OverlayApi;
     clicky: SettingsApi;
     chats: ChatsApi;
+    notch: NotchApi;
   }
 }

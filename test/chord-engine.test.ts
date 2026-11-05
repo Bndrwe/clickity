@@ -113,3 +113,125 @@ test('ChordEngine.forgetKey retracts the synthetic control', () => {
   assert.deepEqual(log, []);
   e.dispose();
 });
+
+/* ── dictation + taps ── */
+
+function mkx(opts: { dictate?: string[]; typeTap?: string[]; alwaysOn?: string[]; talk?: string[]; type?: string[] } = {}) {
+  const log: string[] = [];
+  let now = 1000;
+  const h: HotkeyHandlers = {
+    onTalkDown: () => log.push('down'),
+    onTalkUp: () => log.push('up'),
+    onType: () => log.push('type'),
+    onEscape: () => log.push('esc'),
+    onTalkCancel: () => log.push('cancel'),
+    onDictateDown: (d) => log.push(d ? 'dict-down:draft' : 'dict-down'),
+    onDictateDraft: () => log.push('dict-draft'),
+    onDictateUp: (d) => log.push(d ? 'dict-up:draft' : 'dict-up'),
+    onDictateCancel: () => log.push('dict-cancel'),
+    onTypeTap: () => log.push('tap-type'),
+    onAlwaysOn: () => log.push('always-on'),
+  };
+  const e = new ChordEngine(
+    h,
+    {
+      talk: opts.talk ?? ['Control', 'Alt'],
+      type: opts.type ?? ['Control', 'Alt', 'Space'],
+      mode: 'hold',
+      dictate: opts.dictate ?? ['Control', 'Shift', 'Space'],
+      typeTap: opts.typeTap ?? ['DoubleTap', 'Control'],
+      alwaysOn: opts.alwaysOn ?? ['TripleTap', 'Control'],
+    },
+    5,
+    { tapGapMs: 30, now: () => now },
+  );
+  const tap = (k: string, holdMs = 50, gapMs = 100) => {
+    e.keyDown(k);
+    now += holdMs;
+    e.keyUp(k);
+    now += gapMs;
+  };
+  return { e, log, tap, advance: (ms: number) => (now += ms) };
+}
+
+test('dictation: hold ctrl + shift + space, release types; alt makes it a draft', async () => {
+  const { e, log } = mkx();
+  e.keyDown('Control'); e.keyDown('Shift'); e.keyDown('Space');
+  e.keyDown('Alt');
+  e.keyUp('Space');
+  e.keyUp('Alt'); e.keyUp('Shift'); e.keyUp('Control');
+  await wait(50);
+  assert.deepEqual(log, ['dict-down', 'dict-draft', 'dict-up:draft']);
+  e.dispose();
+});
+
+test('dictation started with alt already held is a draft; another key cancels', async () => {
+  const { e, log } = mkx({ dictate: ['Shift', 'Fn'], talk: ['Control', 'Fn'] });
+  e.keyDown('Alt'); e.keyDown('Fn'); e.keyDown('Shift');
+  e.keyDown('KeyA');
+  e.keyUp('KeyA'); e.keyUp('Shift'); e.keyUp('Fn'); e.keyUp('Alt');
+  await wait(50);
+  assert.deepEqual(log, ['dict-down:draft', 'dict-cancel']);
+  e.dispose();
+});
+
+test('dictation on linux defaults does not trigger talk or type', async () => {
+  const { e, log } = mkx();
+  e.keyDown('Control'); e.keyDown('Shift');
+  await wait(20);
+  e.keyDown('Space');
+  e.keyUp('Space'); e.keyUp('Shift'); e.keyUp('Control');
+  await wait(50);
+  assert.deepEqual(log, ['dict-down', 'dict-up']);
+  e.dispose();
+});
+
+test('double-tap control opens the type box after the triple-tap window', async () => {
+  const { e, log, tap } = mkx();
+  tap('Control', 50, 10); tap('Control', 50, 10);
+  assert.deepEqual(log, []); // waiting: a third tap could follow
+  await wait(60);
+  assert.deepEqual(log, ['tap-type']);
+  e.dispose();
+});
+
+test('triple-tap control toggles hands-free (and not the type box)', async () => {
+  const { e, log, tap } = mkx();
+  tap('Control', 50, 10); tap('Control', 50, 10); tap('Control', 50, 10);
+  await wait(60);
+  assert.deepEqual(log, ['always-on']);
+  e.dispose();
+});
+
+test('taps: too slow, held too long, or part of a chord do not count', async () => {
+  const { e, log, tap, advance } = mkx();
+  tap('Control', 50, 10); advance(400); tap('Control', 50, 10); // gap > 300ms (fake clock)
+  await wait(60);
+  tap('Control', 400, 10); tap('Control', 50, 10); // first press held too long
+  await wait(60);
+  e.keyDown('Control'); e.keyDown('KeyC'); e.keyUp('KeyC'); e.keyUp('Control'); // ctrl+c
+  tap('Control', 50, 10);
+  await wait(60);
+  assert.deepEqual(log, []);
+  // ctrl + alt (talk) then a single control tap: talk works, no tap fires
+  e.keyDown('Control'); e.keyDown('Alt');
+  await wait(15);
+  e.keyUp('Alt'); e.keyUp('Control');
+  assert.deepEqual(log, ['down', 'up']);
+  e.dispose();
+});
+
+test('a single control tap never starts talk', async () => {
+  const { e, log, tap } = mkx();
+  tap('Control', 50, 10);
+  await wait(60);
+  assert.deepEqual(log, []);
+  e.dispose();
+});
+
+test('typeTap as a chord works too', () => {
+  const { e, log } = mkx({ typeTap: ['Meta', 'KeyJ'], alwaysOn: [] });
+  e.keyDown('Meta'); e.keyDown('KeyJ');
+  assert.deepEqual(log, ['tap-type']);
+  e.dispose();
+});

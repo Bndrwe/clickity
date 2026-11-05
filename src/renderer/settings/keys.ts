@@ -56,5 +56,17 @@ export function keyWord(k: KeyName, platform: string): string {
 }
 
 export function chordLabel(keys: KeyName[], platform: string): string {
+  if (!keys.length) return 'off';
+  if (keys.length === 2 && (keys[0] === 'DoubleTap' || keys[0] === 'TripleTap')) {
+    return `${keys[0] === 'TripleTap' ? 'triple' : 'double'}-tap ${keyWord(keys[1], platform)}`;
+  }
   return orderChord(keys).map((k) => keyWord(k, platform)).join(' + ');
+}
+
+/** Same binding? (taps compare as-is, chords ignore key order) */
+export function sameBinding(a: KeyName[], b: KeyName[]): boolean {
+  if (!a.length || !b.length) return false;
+  const tap = (k: KeyName[]) => k[0] === 'DoubleTap' || k[0] === 'TripleTap';
+  if (tap(a) || tap(b)) return a.join('+') === b.join('+');
+  return orderChord(a).join('+') === orderChord(b).join('+');
 }

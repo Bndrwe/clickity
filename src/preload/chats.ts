@@ -17,6 +17,7 @@ const api: ChatsApi = {
   active: () => ipcRenderer.invoke(IPC.chatsActive),
   approve: (turnId) => ipcRenderer.invoke(IPC.chatsApprove, turnId),
   deny: (turnId) => ipcRenderer.invoke(IPC.chatsDeny, turnId),
+  answer: (req) => ipcRenderer.invoke(IPC.chatsAnswer, req),
   onEvent: (cb) => {
     ipcRenderer.on(IPC.chatsEvent, (_e: IpcRendererEvent, ev: ChatEvent) => cb(ev));
   },

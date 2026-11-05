@@ -1,0 +1,106 @@
+/* Cards and 3D models (src/renderer/shared/visuals.ts). Uses the host window's Opal tokens
+   (--bg-elev, --ink…) and falls back to the chats window's always-dark ones. */
+.vcard {
+  --v-bg: var(--bg-elev, var(--surface, #141414));
+  --v-sunken: var(--bg-sunken, var(--surface-2, #101010));
+  --v-ink: var(--ink, var(--text, #f2f2f0));
+  --v-ink-2: var(--ink-2, var(--text-2, #cfcfcd));
+  --v-muted: var(--ink-muted, var(--muted, #8e8e8e));
+  --v-faint: var(--faint, rgba(255, 255, 255, 0.3));
+  --v-line: var(--line, rgba(255, 255, 255, 0.09));
+  --v-shadow: var(--shadow, rgba(0, 0, 0, 0.7));
+  position: relative;
+  box-sizing: border-box;
+  background: var(--v-bg);
+  color: var(--v-ink-2);
+  border-radius: 16px;
+  box-shadow: 0 24px 48px -16px var(--v-shadow), 0 0 0 1px var(--v-line);
+  font: 400 13px/1.45 var(--sans, 'Inter', system-ui, sans-serif);
+  animation: vcard-in 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes vcard-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vcard { animation: none; }
+}
+.vcard-2d {
+  width: 220px;
+  padding: 16px 18px 15px;
+}
+.vcard-title {
+  margin: 0 22px 8px 0;
+  font: italic 400 22px/1.08 var(--serif, 'Instrument Serif', Georgia, serif);
+  letter-spacing: -0.01em;
+  color: var(--v-ink);
+}
+.vcard-lines {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 5px;
+}
+.vcard-lines li {
+  position: relative;
+  padding-left: 14px;
+}
+.vcard-lines li::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 0.62em;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--v-faint);
+}
+.vcard-3d {
+  width: var(--vsize, 220px);
+  padding: 0 0 11px;
+  overflow: hidden;
+}
+.vcard-stage {
+  width: var(--vsize, 220px);
+  height: var(--vsize, 220px);
+  display: grid;
+  place-items: center;
+}
+.vcard-canvas {
+  display: block;
+  cursor: grab;
+  touch-action: none;
+}
+.vcard-canvas.is-grabbing { cursor: grabbing; }
+.vcard-fallback {
+  font: italic 400 22px var(--serif, Georgia, serif);
+  color: var(--v-muted);
+}
+.vcard-label {
+  margin: -4px 14px 0;
+  text-align: center;
+  text-transform: lowercase;
+  font: 400 12px/1.3 var(--sans, 'Inter', system-ui, sans-serif);
+  color: var(--v-muted);
+  letter-spacing: 0.01em;
+}
+.vcard-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--v-muted);
+  cursor: pointer;
+  transition: background-color 0.2s, color 0.2s;
+  z-index: 2;
+}
+.vcard-close:hover { background: var(--v-sunken); color: var(--v-ink); }
+.vcard-close:focus-visible { outline: 1px solid var(--v-muted); outline-offset: 1px; }

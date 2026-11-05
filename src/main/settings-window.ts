@@ -22,7 +22,7 @@ export function getSettingsWindow(): BrowserWindow | null {
   return win && !win.isDestroyed() ? win : null;
 }
 
-const SECTIONS = new Set(['model', 'voice', 'keys', 'companion', 'permissions', 'about']);
+const SECTIONS = new Set(['clickys', 'model', 'voice', 'keys', 'companion', 'permissions', 'about']);
 
 /** Open (or focus) settings; with a section, scroll it into view. */
 export function openSettingsWindow(section?: string): BrowserWindow {

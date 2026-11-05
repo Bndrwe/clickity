@@ -41,13 +41,15 @@ async function postFetch(name: string, url: string, init: RequestInit): Promise<
 
 async function openaiStyle(
   name: string, url: string, key: string | undefined, model: string, lang: string | undefined,
-  wav: Buffer, signal?: AbortSignal,
+  wav: Buffer, signal?: AbortSignal, prompt?: string,
 ): Promise<string> {
   const form = new FormData();
   form.append('file', new Blob([new Uint8Array(wav)], { type: 'audio/wav' }), 'speech.wav');
   form.append('model', model);
   form.append('response_format', 'json');
   if (lang) form.append('language', lang);
+  // custom words (dictation dictionary): whisper's initial prompt biases spelling of names / jargon
+  if (prompt) form.append('prompt', prompt.slice(0, 800));
   const headers: Record<string, string> = {};
   if (key) headers.Authorization = `Bearer ${key}`;
   const res = await postFetch(name, url, { method: 'POST', headers, body: form, signal });
@@ -56,7 +58,8 @@ async function openaiStyle(
   return (j.text ?? '').trim();
 }
 
-export async function transcribe(wav: Buffer, settings: Settings, signal?: AbortSignal): Promise<string> {
+export async function transcribe(wav: Buffer, settings: Settings, signal?: AbortSignal, opts: { prompt?: string } = {}): Promise<string> {
+  const prompt = opts.prompt?.trim() || undefined;
   const stt = settings.speech.stt;
   const lang = stt.language?.trim() || undefined;
   switch (stt.provider) {
@@ -64,28 +67,28 @@ export async function transcribe(wav: Buffer, settings: Settings, signal?: Abort
       const key = stt.apiKey || settings.providers['openai-api']?.apiKey;
       if (!key) throw MISSING('openai');
       return openaiStyle('openai', 'https://api.openai.com/v1/audio/transcriptions', key,
-        stt.model || 'gpt-transcribe', lang, wav, signal);
+        stt.model || 'gpt-transcribe', lang, wav, signal, prompt);
     }
     case 'groq': {
       if (!stt.apiKey) throw MISSING('groq');
       return openaiStyle('groq', 'https://api.groq.com/openai/v1/audio/transcriptions', stt.apiKey,
-        stt.model || 'whisper-large-v3-turbo', lang, wav, signal);
+        stt.model || 'whisper-large-v3-turbo', lang, wav, signal, prompt);
     }
     case 'local': {
       const base = (stt.baseUrl || 'http://localhost:8080/v1').replace(/\/+$/, '');
       return openaiStyle('local', `${base}/audio/transcriptions`, stt.apiKey,
-        stt.model || 'whisper-1', lang, wav, signal);
+        stt.model || 'whisper-1', lang, wav, signal, prompt);
     }
     case 'gemini': {
       const key = stt.apiKey || settings.providers['gemini-api']?.apiKey;
       if (!key) throw MISSING('gemini');
       const model = 'gemini-3.8-flash';
-      const prompt = 'transcribe verbatim, output only the words' + (lang ? ` (language: ${lang})` : '');
+      const instruction = 'transcribe verbatim, output only the words' + (lang ? ` (language: ${lang})` : '') + (prompt ? `. names and words that may appear: ${prompt}` : '');
       const res = await postFetch('gemini', `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
         body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: 'audio/wav', data: wav.toString('base64') } }] }],
+          contents: [{ parts: [{ text: instruction }, { inline_data: { mime_type: 'audio/wav', data: wav.toString('base64') } }] }],
         }),
         signal,
       });

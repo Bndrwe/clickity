@@ -96,6 +96,24 @@ export class MicRecorder {
   private starting: Promise<void> | null = null;
   private startError: Error | null = null;
   private info: MicInfo | null = null;
+  /** settings › voice › microphone (deviceId); '' = system default */
+  private deviceId = '';
+
+  /** Use this input device from the next start (falls back to the default when it's gone). */
+  setDevice(id: string | undefined): void {
+    this.deviceId = id || '';
+  }
+
+  /** Take the samples captured so far (hands-free mode reads the stream continuously). */
+  drain(): Float32Array {
+    const out = concat(this.chunks);
+    this.chunks = [];
+    return out;
+  }
+
+  get rate(): number {
+    return this.sampleRate;
+  }
 
   get active(): boolean {
     return this.starting !== null;
@@ -122,10 +140,32 @@ export class MicRecorder {
     return this.starting;
   }
 
-  private async open(my: number): Promise<void> {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
-    });
+  private async open(my: number, useDefault = false): Promise<void> {
+    const base = { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 };
+    let stream: MediaStream;
+    if (this.deviceId && !useDefault) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: { ...base, deviceId: { exact: this.deviceId } } });
+      } catch (e) {
+        // the chosen mic is unplugged / renamed: record with the default one instead
+        console.warn('[audio] chosen microphone unavailable, using the default:', e);
+        stream = await navigator.mediaDevices.getUserMedia({ audio: base });
+      }
+    } else stream = await navigator.mediaDevices.getUserMedia({ audio: base });
+    // the device disappears mid-recording (headset unplugged): carry on with the default mic
+    const track = stream.getAudioTracks()[0];
+    if (track) {
+      track.addEventListener('ended', () => {
+        if (my !== this.gen || this.stream !== stream) return;
+        console.warn('[audio] microphone went away mid-recording, switching to the default');
+        this.releaseGraph();
+        this.starting = this.open(my, true).catch((e: unknown) => {
+          if (my === this.gen) this.startError = new Error(micErrorMessage(e));
+          throw this.startError ?? e;
+        });
+        this.starting.catch(() => undefined);
+      });
+    }
     if (my !== this.gen) {
       stream.getTracks().forEach((t) => t.stop());
       return;
@@ -252,6 +292,13 @@ export class MicRecorder {
   }
 
   private release(): void {
+    this.releaseGraph();
+    this.starting = null;
+    this.chunks = [];
+  }
+
+  /** Tear down the stream and audio graph but keep what was recorded. */
+  private releaseGraph(): void {
     for (const n of this.nodes) {
       try {
         n.disconnect();
@@ -268,8 +315,6 @@ export class MicRecorder {
     this.stream = null;
     void this.ctx?.close().catch(() => undefined);
     this.ctx = null;
-    this.starting = null;
-    this.chunks = [];
   }
 }
 

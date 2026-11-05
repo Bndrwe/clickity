@@ -4,7 +4,7 @@
 // down/up events are fed into the same chord engine as the 'Fn' key.
 import type { HotkeySettings, KeyName } from '../shared/types';
 import { fnStatus, onFn, restartFnWatch, startFnWatch, stopFnWatch } from './fn-key';
-import { AltGrFilter, ChordEngine, type HotkeyHandlers } from './chord-engine';
+import { AltGrFilter, ChordEngine, tapOf, type HotkeyHandlers } from './chord-engine';
 
 export { ChordEngine, type HotkeyHandlers };
 
@@ -17,7 +17,8 @@ export function orderKeys(keys: Iterable<KeyName>): KeyName[] {
   return [...MODIFIERS.filter((m) => set.includes(m)), ...set.filter((k) => !MODIFIERS.includes(k))];
 }
 
-export const chordUsesFn = (h: Pick<HotkeySettings, 'talk' | 'type'>): boolean => h.talk.includes('Fn') || h.type.includes('Fn');
+export const chordUsesFn = (h: Pick<HotkeySettings, 'talk' | 'type'> & Partial<Pick<HotkeySettings, 'dictate'>>): boolean =>
+  h.talk.includes('Fn') || h.type.includes('Fn') || !!h.dictate?.includes('Fn');
 
 /* ───────────────────────── keycode mapping ───────────────────────── */
 
@@ -105,6 +106,9 @@ const LABEL_KEYS: Record<string, string> = {
 };
 
 export function hotkeyLabel(keys: KeyName[], platform: NodeJS.Platform = process.platform): string {
+  const tap = tapOf(keys);
+  if (tap) return `${tap.count === 3 ? 'triple' : 'double'}-tap ${hotkeyLabel([tap.key], platform)}`;
+  if (!keys.length) return 'off';
   const mac = platform === 'darwin';
   const modName: Record<string, string> = {
     Control: mac ? 'control' : 'ctrl',
@@ -152,6 +156,11 @@ function emitRaw(key: KeyName, down: boolean): void {
 export function onRawKey(cb: RawKeyListener): () => void {
   rawListeners.add(cb);
   return () => rawListeners.delete(cb);
+}
+
+/** How many keys the chord engine thinks are held (dictation waits for 0 before typing). */
+export function heldKeyCount(): number {
+  return engine?.heldCount() ?? 0;
 }
 
 /** Which backend is live: 'uiohook' hears real key up/down (and fn on mac). */
@@ -320,9 +329,91 @@ export function setRecordingSuspended(recording: boolean): void {
   if (backend === 'uiohook') engine?.setSuspended(extSuspended || recSuspended || agentSuspended);
 }
 
-/* ───────────────────────── agent-mode confirmation keys ───────────────────────── */
+/* ───────────────────────── grabbed plain keys (owner stack) ───────────────────────── */
+//
+// Plain keys (Enter, Escape, digits…) are grabbed as global shortcuts only while clickity is
+// waiting for an answer: agent-mode approval ('confirm'), a choice question ('choice'). Several
+// owners may want the same key (both grab Escape): each accelerator is registered once, and a
+// press goes to the owner that grabbed it most recently. Releasing an owner hands the key back to
+// the one below it, and unregisters it when nobody wants it any more.
 
-let confirmRegistered: string[] = [];
+type GrabOwner = 'confirm' | 'choice' | (string & {});
+interface Grab {
+  owner: GrabOwner;
+  fn(): void;
+}
+/** accelerator → owners, newest last */
+const grabs = new Map<string, Grab[]>();
+/** accelerators the OS actually gave us */
+const grabbedAccels = new Set<string>();
+
+function globalShortcutApi(): Electron.GlobalShortcut | null {
+  try {
+    return lazyRequire('electron').globalShortcut as Electron.GlobalShortcut;
+  } catch {
+    return null;
+  }
+}
+
+function dispatchGrab(accel: string): void {
+  const stack = grabs.get(accel);
+  const top = stack?.[stack.length - 1];
+  if (!top) return;
+  try { top.fn(); } catch (e) { console.warn(`[hotkey] ${top.owner} handler for ${accel} threw:`, e); }
+}
+
+/**
+ * Grab `keys` (accelerator → handler) for `owner`, replacing whatever that owner held before.
+ * Returns the accelerators that are actually grabbed (a key another app holds, or any key on
+ * Wayland, may fail). Handlers must be idempotent: the chord engine may echo Enter / Escape.
+ */
+export function grabKeys(owner: GrabOwner, keys: Record<string, () => void>): string[] {
+  releaseKeys(owner);
+  const gs = globalShortcutApi();
+  if (!gs) return [];
+  const ok: string[] = [];
+  for (const [accel, fn] of Object.entries(keys)) {
+    const stack = grabs.get(accel) ?? [];
+    stack.push({ owner, fn });
+    grabs.set(accel, stack);
+    if (!grabbedAccels.has(accel)) {
+      try {
+        if (!gs.isRegistered(accel) && gs.register(accel, () => dispatchGrab(accel))) grabbedAccels.add(accel);
+      } catch (e) {
+        console.warn(`[hotkey] could not grab ${accel}:`, e);
+      }
+    }
+    if (grabbedAccels.has(accel)) ok.push(accel);
+  }
+  return ok;
+}
+
+/** Give back every key `owner` grabbed (the next owner down keeps a shared key). */
+export function releaseKeys(owner: GrabOwner): void {
+  const gs = globalShortcutApi();
+  for (const [accel, stack] of [...grabs]) {
+    const rest = stack.filter((g) => g.owner !== owner);
+    if (rest.length === stack.length) continue;
+    if (rest.length) {
+      grabs.set(accel, rest);
+      continue;
+    }
+    grabs.delete(accel);
+    if (grabbedAccels.delete(accel)) {
+      try { gs?.unregister(accel); } catch { /* ignore */ }
+    }
+  }
+}
+
+/** Release every grabbed plain key (stopHotkeys / quit). */
+export function releaseAllKeys(): void {
+  const gs = globalShortcutApi();
+  for (const accel of grabbedAccels) {
+    try { gs?.unregister(accel); } catch { /* ignore */ }
+  }
+  grabbedAccels.clear();
+  grabs.clear();
+}
 
 /**
  * While an agent-mode confirmation is pending, grab plain Enter / Escape as global shortcuts so the
@@ -332,27 +423,29 @@ let confirmRegistered: string[] = [];
  * Pass null to release the keys.
  */
 export function setConfirmKeys(handlers: { onEnter?(): void; onEscape?(): void } | null): void {
-  let globalShortcut: Electron.GlobalShortcut;
-  try {
-    ({ globalShortcut } = lazyRequire('electron'));
-  } catch {
-    return;
+  if (!handlers) return releaseKeys('confirm');
+  const keys: Record<string, () => void> = {};
+  if (handlers.onEnter) keys.Return = handlers.onEnter;
+  if (handlers.onEscape) keys.Escape = handlers.onEscape;
+  grabKeys('confirm', keys);
+}
+
+/**
+ * While a choice question is pending, grab plain digit keys 1..count (and Escape). Pass null to
+ * release them right away. Returns whether the digits are grabbed (false e.g. on Wayland, where
+ * the pills then show no numbers).
+ */
+export function setChoiceKeys(handlers: { count: number; onDigit(n: number): void; onEscape?(): void } | null): boolean {
+  if (!handlers) {
+    releaseKeys('choice');
+    return false;
   }
-  for (const a of confirmRegistered) {
-    try { globalShortcut.unregister(a); } catch { /* ignore */ }
-  }
-  confirmRegistered = [];
-  if (!handlers) return;
-  const reg = (accel: string, fn: () => void): void => {
-    try {
-      if (globalShortcut.isRegistered(accel)) return;
-      if (globalShortcut.register(accel, () => { try { fn(); } catch (e) { console.warn('[hotkey] confirm handler threw:', e); } })) confirmRegistered.push(accel);
-    } catch (e) {
-      console.warn(`[hotkey] could not grab ${accel}:`, e);
-    }
-  };
-  if (handlers.onEnter) reg('Return', handlers.onEnter);
-  if (handlers.onEscape) reg('Escape', handlers.onEscape);
+  const keys: Record<string, () => void> = {};
+  const n = Math.max(0, Math.min(9, Math.floor(handlers.count)));
+  for (let i = 1; i <= n; i++) keys[String(i)] = () => handlers.onDigit(i);
+  if (handlers.onEscape) keys.Escape = handlers.onEscape;
+  const ok = grabKeys('choice', keys);
+  return n > 0 && ok.some((a) => /^\d$/.test(a));
 }
 
 let agentSuspended = false;
@@ -365,7 +458,7 @@ export function setAgentKeysSuspended(suspended: boolean): void {
 }
 
 export function stopHotkeys(): void {
-  setConfirmKeys(null);
+  releaseAllKeys();
   try { engine?.dispose(); } catch { /* ignore */ }
   try { offFn?.(); } catch { /* ignore */ }
   offFn = null;

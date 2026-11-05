@@ -1,4 +1,5 @@
 // Chats window: history sidebar, transcript and the glass composer. Talks to main only via window.chats.
+import { disposeAllVisuals, disposeVisuals, renderTurnVisuals } from './visuals';
 import {
   PROVIDER_KINDS,
   PROVIDER_META,
@@ -15,8 +16,10 @@ import {
 import type { UpdateState } from '../../shared/ipc';
 import { $, h, icon, logo, markSvg, type IconName } from './dom';
 import { renderMarkdown } from './markdown';
+import { initClickySwitch } from './clicky-switch';
 import { GROUPS, clock, groupOf, relTime } from './time';
-import { clickTicks, enterEmptyState, enterList, enterMessage, openPopover, pressSend } from './motion';
+import { clickTicks, enterEmptyState, enterGreeting, enterList, enterMessage, openPopover, pressSend } from './motion';
+import { nextGreeting } from '../shared/greeting';
 
 const api = window.chats;
 const isMac = /Mac/i.test(navigator.platform || navigator.userAgent);
@@ -64,7 +67,8 @@ const el = {
 /* ───────────── static chrome ───────────── */
 
 document.documentElement.classList.toggle('mac', isMac);
-$('side-brand').append(logo());
+// the active clicky + its switcher (named companions) instead of the plain wordmark
+const clickySwitch = initClickySwitch({ host: $('side-brand'), api, onFilter: () => renderList(), place: (p, a, al) => placePopover(p, a, al), onError: (m) => toast(m) });
 $('toggle-side').append(icon('sidebar'));
 $('new-chat-mini').append(icon('edit'));
 $('new-chat').querySelector('.new-chat-label')!.append(icon('edit'), h('span', { text: 'new chat' }));
@@ -196,6 +200,8 @@ async function submit(): Promise<void> {
   try {
     const res = await api.send({ chatId, text, includeScreen, attachments: sentAttachments.length ? sentAttachments : undefined });
     awaitingNewChat = false;
+    // "switch to <name>": handled locally, nothing was sent (the header shows the new clicky)
+    if (res.switched) return void announce(`switched to ${res.switched}`);
     // a new chat that nothing is showing yet: open it. If the user has moved on meanwhile, leave their view alone.
     if (!chatId && !chat) {
       const fresh = await api.get(res.chatId);
@@ -261,13 +267,13 @@ function readBase64(f: File): Promise<string> {
 function mimeOf(f: File): string {
   if (f.type) return f.type;
   const ext = f.name.split('.').pop()?.toLowerCase();
-  return ext === 'json' ? 'application/json' : ext === 'csv' ? 'text/csv' : ext === 'md' ? 'text/markdown' : 'text/plain';
+  return ext === 'json' ? 'application/json' : ext === 'csv' ? 'text/csv' : ext === 'md' ? 'text/markdown' : ext === 'pdf' ? 'application/pdf' : 'text/plain';
 }
 
 async function addFiles(files: File[]): Promise<void> {
   for (const f of files) {
     const mime = mimeOf(f);
-    const ok = mime.startsWith('image/') || mime.startsWith('text/') || mime === 'application/json' || /\.(txt|md|json|csv|log)$/i.test(f.name);
+    const ok = mime.startsWith('image/') || mime.startsWith('text/') || mime === 'application/json' || mime === 'application/pdf' || /\.(txt|md|json|csv|log|pdf)$/i.test(f.name);
     if (!ok) {
       toast(`can't attach ${f.name.toLowerCase()}`);
       continue;
@@ -414,6 +420,7 @@ function placePopover(pop: HTMLElement, anchor: HTMLElement, align: 'left' | 'ri
 
 function closePopovers(): boolean {
   let closed = false;
+  if (clickySwitch.close()) closed = true;
   for (const p of [el.modelPop, el.rowMenu]) {
     if (!p.hidden) {
       closed = true;
@@ -438,7 +445,7 @@ el.modelBtn.addEventListener('click', async (e) => {
 document.addEventListener('mousedown', (e) => {
   const t = e.target as Node;
   const onMore = t instanceof Element && !!t.closest('.row-more');
-  if (!el.modelPop.contains(t) && !el.rowMenu.contains(t) && !el.modelBtn.contains(t) && !onMore) closePopovers();
+  if (!el.modelPop.contains(t) && !el.rowMenu.contains(t) && !el.modelBtn.contains(t) && !onMore && !clickySwitch.contains(t)) closePopovers();
 });
 window.addEventListener('resize', () => closePopovers());
 
@@ -452,7 +459,7 @@ let confirmFocus = false;
 
 function renderList(): void {
   const q = query.trim().toLowerCase();
-  const items = list.filter((c) => !q || c.title.toLowerCase().includes(q) || c.preview.toLowerCase().includes(q));
+  const items = list.filter((c) => clickySwitch.matches(c)).filter((c) => !q || c.title.toLowerCase().includes(q) || c.preview.toLowerCase().includes(q));
   const nodes: Node[] = [];
   const now = Date.now();
   for (const g of GROUPS) {
@@ -530,6 +537,7 @@ function renderRow(c: ChatSummary, now: number): HTMLElement {
   const open = h(
     'button',
     { class: 'row-main', type: 'button', 'aria-current': active ? 'true' : undefined, title: c.title || 'new chat' },
+    clickySwitch.rowMark(c),
     h('span', { class: 'row-title', text: c.title || 'new chat' }),
     streaming.has(c.id)
       ? h('span', { class: 'row-live', 'aria-label': 'replying', title: 'replying' })
@@ -736,13 +744,28 @@ function syncTitle(): void {
   document.title = t ? `${t} · clickity` : 'clickity';
 }
 
+/** A new line in the empty state each time the window opens or a new chat starts. */
+let greeted = 0;
+function setGreeting(): void {
+  $('greeting').textContent = nextGreeting('chats', settings?.userName);
+  greeted = Date.now();
+}
+// coming back to an untouched empty window: say something new
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden || el.main.dataset.mode !== 'empty' || Date.now() - greeted < 20_000) return;
+  setGreeting();
+  enterGreeting($('greeting'));
+});
+
 function showChat(c: Chat | null): void {
   chat = c;
   const empty = !c || c.turns.length === 0;
   const wasEmpty = el.main.dataset.mode === 'empty';
   el.main.dataset.mode = empty ? 'empty' : 'thread';
+  if (empty && (!wasEmpty || !greeted)) setGreeting();
   if (empty && !wasEmpty) enterEmptyState([$('greeting'), $('composer'), $('hint')]);
   const liveId = c ? streaming.get(c.id) : undefined;
+  disposeAllVisuals();
   el.turns.replaceChildren(...(c ? c.turns.map((t) => renderTurn(t, false, t.id === liveId)) : []));
   turnEls.clear();
   el.turns.querySelectorAll<HTMLElement>('.msg').forEach((n) => turnEls.set(n.dataset.id!, n));
@@ -802,7 +825,23 @@ function renderTurn(t: ChatTurn, animate: boolean, streamingNow = false): HTMLEl
 function appendMeta(node: HTMLElement, bits: string[]): void {
   const target = node.querySelector('.col') ?? node;
   target.querySelector('.meta')?.remove();
-  target.append(h('div', { class: 'meta', text: bits.join(' · ') }));
+  const meta = h('div', { class: 'meta', text: bits.join(' · ') });
+  if (node.classList.contains('assistant')) {
+    // copy the reply (as shown, without markdown symbols)
+    const copy = h('button', { class: 'meta-copy', type: 'button', text: 'copy', 'aria-label': 'copy this reply' }) as HTMLButtonElement;
+    copy.addEventListener('click', async () => {
+      const text = (node.querySelector('.body') as HTMLElement | null)?.innerText.trim() ?? '';
+      try {
+        await navigator.clipboard.writeText(text);
+        copy.textContent = 'copied';
+      } catch {
+        copy.textContent = "couldn't copy";
+      }
+      setTimeout(() => (copy.textContent = 'copy'), 1400);
+    });
+    meta.append(' · ', copy);
+  }
+  target.append(meta);
 }
 
 function fillAssistant(node: HTMLElement, t: ChatTurn, streamingNow: boolean): void {
@@ -818,6 +857,76 @@ function fillAssistant(node: HTMLElement, t: ChatTurn, streamingNow: boolean): v
   }
   node.querySelector('.err')?.remove();
   if (t.error) body.after(h('div', { class: 'err', text: t.error.toLowerCase() }));
+  node.querySelector('.ask')?.remove();
+  if (t.ask && !streamingNow) (node.querySelector('.err') ?? body).after(renderAsk(t));
+  // 2D cards / 3D models the reply carried
+  node.querySelector('.msg-visuals')?.remove();
+  disposeVisuals(t.id);
+  if (t.visuals?.length && !streamingNow) (node.querySelector('.ask') ?? node.querySelector('.err') ?? body).after(renderTurnVisuals(t.id, t.visuals));
+}
+
+/* ───────────── choices ([ASK:…]) ───────────── */
+
+/** Only the newest turn's open question can be answered; answered ones show the pick. */
+function askOpen(t: ChatTurn): boolean {
+  if (!t.ask || t.ask.answered !== undefined || t.ask.dismissed) return false;
+  const last = chat?.turns[chat.turns.length - 1];
+  return !!last && last.id === t.id;
+}
+
+function renderAsk(t: ChatTurn): HTMLElement {
+  const ask = t.ask!;
+  const open = askOpen(t);
+  const picked = ask.answered?.trim().toLowerCase();
+  const wrap = h('div', { class: 'ask' + (open ? '' : ' closed'), role: 'group', 'aria-label': ask.question });
+  const opts = h('div', { class: 'ask-opts' });
+  let matched = false;
+  ask.options.forEach((o, i) => {
+    const chosen = picked !== undefined && o.trim().toLowerCase() === picked;
+    if (chosen) matched = true;
+    const b = h('button', { class: 'ask-opt' + (chosen ? ' chosen' : ''), type: 'button', 'aria-pressed': String(chosen) },
+      h('span', { class: 'ask-n', text: String(i + 1) }),
+      h('span', { text: o.toLowerCase() }),
+    ) as HTMLButtonElement;
+    b.disabled = !open;
+    b.addEventListener('click', () => void answerAsk(t, o, b));
+    opts.append(b);
+  });
+  const other = h('button', { class: 'ask-opt other', type: 'button', text: 'something else…' }) as HTMLButtonElement;
+  other.disabled = !open;
+  other.addEventListener('click', () => {
+    el.input.focus();
+    el.input.placeholder = 'type your answer…';
+  });
+  opts.append(other);
+  wrap.append(opts);
+  if (ask.answered !== undefined && !matched) wrap.append(h('div', { class: 'ask-note', text: `answered: ${ask.answered.toLowerCase()}` }));
+  return wrap;
+}
+
+async function answerAsk(t: ChatTurn, text: string, btn: HTMLButtonElement): Promise<void> {
+  if (!chat) return;
+  for (const b of btn.parentElement?.querySelectorAll('button') ?? []) (b as HTMLButtonElement).disabled = true;
+  btn.classList.add('chosen');
+  stick = true;
+  try {
+    await api.answer({ chatId: chat.id, turnId: t.id, text, includeScreen });
+  } catch (err) {
+    toast(errMsg(err));
+    for (const b of btn.parentElement?.querySelectorAll('button') ?? []) (b as HTMLButtonElement).disabled = false;
+    btn.classList.remove('chosen');
+  }
+}
+
+/** a newer message arrived: older questions can't be answered from their buttons any more */
+function closeOldAsks(exceptId: string): void {
+  for (const n of el.turns.querySelectorAll<HTMLElement>('.msg')) {
+    if (n.dataset.id === exceptId) continue;
+    const a = n.querySelector('.ask:not(.closed)');
+    if (!a) continue;
+    a.classList.add('closed');
+    for (const b of a.querySelectorAll('button')) (b as HTMLButtonElement).disabled = true;
+  }
 }
 
 let stick = true;
@@ -862,6 +971,7 @@ function upsertTurn(t: ChatTurn, streamingNow: boolean): void {
       turnEls.set(t.id, n);
     }
   } else {
+    closeOldAsks(t.id);
     const n = renderTurn(t, true, streamingNow);
     el.turns.append(n);
     turnEls.set(t.id, n);
@@ -893,22 +1003,32 @@ function agentSlot(turnId: string): HTMLElement | null {
   return slot;
 }
 
+/** the turn whose "always allow" was clicked here, so its settled row shows the undo note */
+let alwaysNote: string | null = null;
+
 function renderConfirm(e: Extract<ChatEvent, { type: 'confirm' }>): void {
   const slot = agentSlot(e.turnId);
   if (!slot) return;
   if (e.pending) {
-    const allow = h('button', { class: 'agent-btn primary', type: 'button', text: 'allow' }) as HTMLButtonElement;
-    const deny = h('button', { class: 'agent-btn', type: 'button', text: 'cancel' }) as HTMLButtonElement;
+    const allow = h('button', { class: 'agent-btn primary', type: 'button', text: e.always ? 'allow once' : 'allow' }) as HTMLButtonElement;
+    const always = h('button', { class: 'agent-btn', type: 'button', text: 'always allow' }) as HTMLButtonElement;
+    const deny = h('button', { class: 'agent-btn', type: 'button', text: e.always ? 'not now' : 'cancel' }) as HTMLButtonElement;
     const answer = (yes: boolean) => {
-      allow.disabled = deny.disabled = true;
+      allow.disabled = deny.disabled = always.disabled = true;
       void (yes ? api.approve(e.turnId) : api.deny(e.turnId)).catch(() => {});
     };
     allow.addEventListener('click', () => answer(true));
     deny.addEventListener('click', () => answer(false));
+    always.addEventListener('click', async () => {
+      // agent mode becomes automatic (send / delete / pay still ask); the note below offers undo
+      await api.setSettings({ companion: { actions: 'auto' } }).catch(() => {});
+      alwaysNote = e.turnId;
+      answer(true);
+    });
     slot.replaceChildren(
       h('div', { class: 'agent-confirm', role: 'group', 'aria-label': 'clickity wants to act' },
         h('div', { class: 'agent-summary', text: e.summary }),
-        h('div', { class: 'agent-actions' }, allow, deny, h('span', { class: 'agent-hint', text: 'or enter · esc' })),
+        h('div', { class: 'agent-actions' }, allow, ...(e.always ? [always] : []), deny, h('span', { class: 'agent-hint', text: e.always ? 'or enter · a · esc' : 'or enter · esc' })),
       ),
     );
     afterGrow(false);
@@ -917,6 +1037,15 @@ function renderConfirm(e: Extract<ChatEvent, { type: 'confirm' }>): void {
   } else {
     // not allowed: the turn's error line says so ("not done: cancelled")
     slot.replaceChildren(...(e.outcome === 'allowed' ? [h('div', { class: 'agent-note', text: 'allowed' })] : []));
+    if (e.outcome === 'allowed' && alwaysNote === e.turnId) {
+      alwaysNote = null;
+      const undo = h('button', { class: 'meta-copy', type: 'button', text: 'undo' }) as HTMLButtonElement;
+      undo.addEventListener('click', () => {
+        void api.setSettings({ companion: { actions: 'ask' } }).catch(() => {});
+        undo.replaceWith('back to asking first');
+      });
+      slot.append(h('div', { class: 'agent-note' }, 'agent mode is automatic now (it still asks before sending, deleting or paying) · ', undo));
+    }
   }
 }
 
@@ -976,6 +1105,10 @@ function onEvent(e: ChatEvent): void {
       break;
     case 'acting':
       renderActing(e);
+      break;
+    case 'turn':
+      // a stored turn changed (its question was answered / dismissed)
+      if (chat.turns.some((t) => t.id === e.turn.id)) upsertTurn(e.turn, false);
       break;
     case 'error': {
       const prev = chat.turns.find((t) => t.id === e.turnId);
@@ -1057,10 +1190,34 @@ api.onChanged((l) => {
 });
 api.onSettingsChanged((s) => {
   const providerChanged = settings?.provider !== s.provider;
+  const clickyChanged = settings?.activeClicky !== s.activeClicky;
   settings = s;
+  clickySwitch.sync(s);
+  if (clickyChanged) void followClicky();
+  else renderList();
   if (providerChanged) modelCache.delete(s.provider);
   void syncModelButton();
 });
+
+/** another clicky became active: show its current chat (unless the list shows every clicky's) */
+async function followClicky(): Promise<void> {
+  renderList();
+  if (!settings || clickySwitch.showingAll()) return;
+  const mine = (c: { clickyId?: string }) => (c.clickyId || 'clickity') === settings!.activeClicky;
+  if (chat && (chat.turns.length === 0 || !mine(list.find((x) => x.id === chat!.id) ?? { clickyId: (chat as Chat).clickyId }))) {
+    const id = await api.active().catch(() => null);
+    const c = id ? await api.get(id).catch(() => null) : null;
+    showChat(c && mine(c) ? mergeChat(c) : null);
+  } else if (!chat) showChat(null);
+  syncGreeting();
+}
+
+/** the empty state greets you as the active clicky */
+function syncGreeting(): void {
+  const s = settings;
+  const c = s?.clickys.find((x) => x.id === s.activeClicky);
+  $('greeting').textContent = c && s!.clickys.length > 1 ? `What can ${c.name} help you see?` : 'What can I help you see?';
+}
 
 async function boot(): Promise<void> {
   syncComposer();
@@ -1070,6 +1227,8 @@ async function boot(): Promise<void> {
     api.active().catch(() => null),
   ]);
   settings = s;
+  clickySwitch.sync(s);
+  syncGreeting();
   list = l;
   void syncModelButton();
   let c: Chat | null = null;

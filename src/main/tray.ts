@@ -4,13 +4,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Menu, Tray, nativeImage, nativeTheme, type NativeImage } from 'electron';
 import { PROVIDER_META } from '../shared/types';
+import { activeClicky, settingsForClicky } from '../shared/clickys';
 import { getSettings, updateSettings } from './settings-store';
 import { hotkeyLabel } from './hotkey';
 import { getUpdateState, installUpdate } from './updater';
 import { isNewer } from './update-core';
 
 export interface TrayActions {
-  openSettings(): void;
+  /** section: scroll settings there (e.g. 'clickys') */
+  openSettings(section?: string): void;
   openChats(): void;
   isPaused(): boolean;
   setPaused(paused: boolean): void;
@@ -86,8 +88,9 @@ function loadIcon(): NativeImage {
 
 function buildMenu(a: TrayActions): Menu {
   const s = getSettings();
-  const meta = PROVIDER_META[s.provider];
-  const model = s.models[s.provider] || meta.defaultModel;
+  const brain = settingsForClicky(s); // the active clicky may use its own provider / model
+  const meta = PROVIDER_META[brain.provider];
+  const model = brain.models[brain.provider] || meta.defaultModel;
   const paused = a.isPaused();
   const u = getUpdateState();
   const update: Electron.MenuItemConstructorOptions[] =
@@ -106,6 +109,20 @@ function buildMenu(a: TrayActions): Menu {
     { label: `hold ${hotkeyLabel(s.hotkeys.talk, process.platform)} to talk`, enabled: false },
     { label: `${meta.label} · ${model}`, enabled: false },
     { type: 'separator' },
+    {
+      // named companions: who you're talking to, and a quick switch
+      label: `clicky: ${activeClicky(s).name}`,
+      submenu: [
+        ...s.clickys.map((c) => ({
+          label: c.name,
+          type: 'radio' as const,
+          checked: c.id === s.activeClicky,
+          click: () => updateSettings({ activeClicky: c.id }),
+        })),
+        { type: 'separator' as const },
+        { label: 'manage clickys…', click: () => a.openSettings('clickys') },
+      ],
+    },
     { label: 'chats…', click: () => a.openChats() },
     { label: 'settings…', accelerator: isMac ? 'Command+,' : undefined, click: () => a.openSettings() },
     {
@@ -140,6 +157,11 @@ export function createTray(a: TrayActions): Tray {
   // taskbar / panel switched light ↔ dark: recolor the glyph (mac uses a template image)
   if (!isMac) nativeTheme.on('updated', onThemeUpdated);
   return tray;
+}
+
+/** The menu as it would open now (test hook: click the clicky submenu under xvfb). */
+export function trayMenu(): Menu | null {
+  return actions ? buildMenu(actions) : null;
 }
 
 /** Rebuild the menu (settings or pause state changed). */

@@ -44,6 +44,17 @@ const api: SettingsApi = {
   openChats: () => ipcRenderer.invoke(IPC.openChats),
   openLogs: () => ipcRenderer.invoke(IPC.openLogs),
   inputStatus: () => ipcRenderer.invoke(IPC.inputStatus),
+  memoryList: () => ipcRenderer.invoke(IPC.memoryList),
+  suggestClickys: (answers) => ipcRenderer.invoke(IPC.clickysSuggest, answers),
+  clickyMemoryCount: (id) => ipcRenderer.invoke(IPC.clickysMemory, id),
+  clickyForget: (id) => ipcRenderer.invoke(IPC.clickysForget, id),
+  memorySet: (facts) => ipcRenderer.invoke(IPC.memorySet, facts),
+  memoryClear: () => ipcRenderer.invoke(IPC.memoryClear),
+  onMemoryChanged: (cb) => {
+    ipcRenderer.on(IPC.memoryChanged, (_e: IpcRendererEvent, facts: string[]) => cb(facts));
+  },
+  voicePreview: (provider, voice) => ipcRenderer.invoke(IPC.voicePreview, provider, voice),
+  runRoutine: (id) => ipcRenderer.invoke(IPC.routineRun, id),
 };
 
 contextBridge.exposeInMainWorld('clicky', api);

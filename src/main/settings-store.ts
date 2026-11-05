@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_SETTINGS, PROVIDER_KINDS, type DeepPartial, type Settings } from '../shared/types';
 import { fixEnums } from './settings-validate';
+import { fixClickys } from '../shared/clickys';
 
 type Obj = Record<string, unknown>;
 type Listener = (s: Settings, prev: Settings) => void;
@@ -112,7 +113,7 @@ const isKeyList = (v: unknown): v is string[] =>
  * the fn-key helper), control + option + space to type. ctrl + alt (+ space) elsewhere: there the
  * fn key is handled by the keyboard's firmware and never reaches the OS.
  */
-export const MAC_HOTKEYS = { talk: ['Control', 'Fn'], type: ['Control', 'Alt', 'Space'] };
+export const MAC_HOTKEYS = { talk: ['Control', 'Fn'], type: ['Control', 'Alt', 'Space'], dictate: ['Shift', 'Fn'] };
 /** Previous mac defaults (talk + type). Installs still on one of these move to MAC_HOTKEYS once. */
 const OLD_MAC_DEFAULTS: Array<[string, string]> = [
   ['Control+Alt', 'Control+Alt+Space'],
@@ -128,6 +129,7 @@ export function platformDefaults(): Settings {
   if (process.platform === 'darwin') {
     d.hotkeys.talk = [...MAC_HOTKEYS.talk];
     d.hotkeys.type = [...MAC_HOTKEYS.type];
+    d.hotkeys.dictate = [...MAC_HOTKEYS.dictate];
   }
   asObj(d)[HOTKEY_DEFAULTS_KEY] = HOTKEY_DEFAULTS_VERSION;
   return d;
@@ -157,11 +159,16 @@ function validate(s: Settings): Settings {
   if (!PROVIDER_KINDS.includes(s.provider)) s.provider = d.provider;
   if (!isKeyList(s.hotkeys.talk)) s.hotkeys.talk = [...d.hotkeys.talk];
   if (!isKeyList(s.hotkeys.type)) s.hotkeys.type = [...d.hotkeys.type];
+  // extra bindings may be [] (= off)
+  for (const k of ['dictate', 'typeTap', 'alwaysOn'] as const) {
+    if (!Array.isArray(s.hotkeys[k]) || !s.hotkeys[k].every((x) => typeof x === 'string' && x)) s.hotkeys[k] = [...d.hotkeys[k]];
+  }
   s.companion.scale = clamp(s.companion.scale, 0.5, 2.5, d.companion.scale);
   if (typeof s.companion.color !== 'string' || (s.companion.color !== '' && !/^#[0-9a-f]{6}$/i.test(s.companion.color))) s.companion.color = '';
   s.speech.tts.rate = clamp(s.speech.tts.rate, 0.5, 2, d.speech.tts.rate);
   s.historyTurns = Math.round(clamp(s.historyTurns, 0, 20, d.historyTurns));
   fixEnums(s, d, process.platform);
+  fixClickys(s); // named companions: migrate to one default "clickity", drop broken entries
   return s;
 }
 

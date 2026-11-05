@@ -3,7 +3,7 @@
 import path from 'node:path';
 import { BrowserWindow, ipcMain, screen, type Display, type Point } from 'electron';
 import { IPC } from '../shared/ipc';
-import type { OverlayConfig } from '../shared/types';
+import type { OverlayConfig, OverlayState } from '../shared/types';
 import { getSettings } from './settings-store';
 import { hotkeyLabel } from './hotkey';
 import { log } from './log';
@@ -225,7 +225,15 @@ export function overlayForWebContentsId(id: number): BrowserWindow | null {
   return getOverlays().find((w) => w.webContents.id === id) ?? null;
 }
 
+/** main-process listeners for the companion's state (the notch panel mirrors it) */
+const stateTaps = new Set<(state: OverlayState) => void>();
+export function onOverlayState(cb: (state: OverlayState) => void): () => void {
+  stateTaps.add(cb);
+  return () => stateTaps.delete(cb);
+}
+
 export function sendToOverlay(win: BrowserWindow | null | undefined, channel: string, payload?: unknown): void {
+  if (channel === IPC.overlayState && payload) for (const cb of stateTaps) cb(payload as OverlayState);
   if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return;
   win.webContents.send(channel, payload);
 }

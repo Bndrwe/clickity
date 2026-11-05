@@ -61,6 +61,22 @@ export function enterEmptyState(parts: Array<Element | null>): void {
   });
 }
 
+/** A new greeting settles in: a soft rise out of a light blur. */
+export function enterGreeting(node: Element | null): void {
+  if (!node) return;
+  if (reduced()) return;
+  animate(node, {
+    opacity: [0, 1],
+    translateY: [12, 0],
+    filter: ['blur(6px)', 'blur(0px)'],
+    duration: 1100,
+    ease: EASE,
+    onComplete: () => {
+      (node as HTMLElement).style.removeProperty('filter');
+    },
+  });
+}
+
 /** Sidebar rows settle in, one after another. */
 export function enterList(rows: ArrayLike<Element>): void {
   if (reduced() || !rows.length) return;

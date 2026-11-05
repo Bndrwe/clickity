@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { app, ipcMain, shell } from 'electron';
 import { IPC } from '../shared/ipc';
-import { PROVIDER_KINDS, type ChatSendRequest, type DeepPartial, type PermissionKind, type ProviderKind, type Settings } from '../shared/types';
+import { PROVIDER_KINDS, type ChatAnswerRequest, type ChatSendRequest, type DeepPartial, type PermissionKind, type ProviderKind, type Settings } from '../shared/types';
 import { flushSettings, getSettings, loadSettings, onSettingsChanged, resetSettings, updateSettings } from './settings-store';
 import { getProvider, openLogin, testProvider } from './providers/index';
 import { startHotkeys, stopHotkeys, suspendHotkeys, updateHotkeys } from './hotkey';
@@ -12,6 +12,7 @@ import { cleanupCaptures } from './capture';
 import { destroyOverlays, initOverlays, refreshOverlayConfigs, setOverlaysVisible } from './overlay';
 import {
   answerConfirm,
+  answerFromWindow,
   cancelTalk,
   clearHistory,
   getActiveChatId,
@@ -38,6 +39,9 @@ import { installAppMenu, launchedAtLogin } from './app-menu';
 import { applySettingsTheme, openSettingsWindow, sendToSettings } from './settings-window';
 import { log, logPath, logStartup } from './log';
 import { installTestHook } from './test-hook';
+import { featureHotkeyHandlers, initFeatures, registerFeatureIpc, stopFeatures } from './features';
+import { initClickys } from './clickys';
+import { initNotch } from './notch';
 import { agentInputStatus } from './agent-input';
 import { checkForUpdate, dismissUpdateNote, getUpdateState, initUpdater, installUpdate, onUpdateState, stopUpdater } from './updater';
 
@@ -239,6 +243,7 @@ function registerIpc(): void {
   ipcMain.handle(IPC.chatsActive, () => getActiveChatId());
   ipcMain.handle(IPC.chatsApprove, (_e, turnId: unknown) => answerConfirm(assertId(turnId), true));
   ipcMain.handle(IPC.chatsDeny, (_e, turnId: unknown) => answerConfirm(assertId(turnId), false));
+  ipcMain.handle(IPC.chatsAnswer, (_e, req: ChatAnswerRequest) => answerFromWindow(req));
   ipcMain.handle(IPC.inputStatus, () => agentInputStatus());
 
   ipcMain.handle(IPC.updateGet, () => getUpdateState());
@@ -264,6 +269,7 @@ async function bootstrap(): Promise<void> {
   });
   app.on('before-quit', () => {
     stopUpdater();
+    stopFeatures();
     try {
       stopHotkeys();
     } catch {
@@ -291,7 +297,9 @@ async function bootstrap(): Promise<void> {
   installPermissionHandlers();
 
   registerIpc();
+  registerFeatureIpc();
   initConversation();
+  initFeatures(); // dictation, hands-free, routines, dock
   initOverlays();
 
   try {
@@ -305,9 +313,9 @@ async function bootstrap(): Promise<void> {
         notifyHotkeyHeard('type', getSettings().hotkeys.type);
         onType();
       },
-      onEscape,
-      // agent mode: approves pending actions (ignored unless a confirmation is waiting)
-      onEnter,
+      // dictation / draft, double-tap type box, hands-free toggle; enter / esc reach a waiting
+      // draft, walkthrough or routine offer first, then agent mode (ignored unless something waits)
+      ...featureHotkeyHandlers({ onEnter, onEscape }),
       // AltGr / ctrl+alt+<key>: the chord was another shortcut, drop the recording quietly
       onTalkCancel: cancelTalk,
       isTalking: isListening,
@@ -324,7 +332,7 @@ async function bootstrap(): Promise<void> {
   }
 
   createTray({
-    openSettings: () => openSettingsWindow(),
+    openSettings: (section?: string) => openSettingsWindow(section),
     openChats: () => openChatsWindow(),
     isPaused: () => paused,
     setPaused,
@@ -335,6 +343,8 @@ async function bootstrap(): Promise<void> {
   installAppMenu(appMenuActions);
 
   onSettingsChanged(handleSettingsChanged);
+  initClickys(); // named companions: color sync, suggest, switch
+  initNotch(); // the notch panel (settings › companion › notch panel)
   onChatsChanged((list) => sendToChats(IPC.chatsChanged, list));
 
   // in-app updates: broadcast to both windows, keep the tray's "update to …" item current

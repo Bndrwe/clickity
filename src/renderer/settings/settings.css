@@ -122,7 +122,7 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
 }
 
 /* inputs */
-input[type=text], input[type=password], input[type=number], input[type=url], select, textarea {
+input[type=text], input[type=password], input[type=number], input[type=url], input[type=time], select, textarea {
   background: var(--bg-sunken); border: 0; border-radius: 10px; padding: 10px 12px; width: 100%; color: var(--ink);
   outline: 0; box-shadow: 0 0 0 0 var(--ink); transition: box-shadow .3s var(--ease); font-size: 14px; min-width: 0;
 }
@@ -334,3 +334,80 @@ dialog#onboard .ob-actions { margin-top: 32px; }
 /* the update pill doubles as a quiet version chip when there's nothing to install */
 .update-pill.quiet { background: transparent; color: var(--ink-muted, rgba(255,255,255,.5)); box-shadow: none; }
 .update-pill.quiet:hover { color: var(--ink, #fff); }
+
+/* ───────── dictation / memory / routines ───────── */
+.pairs, .facts { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.pairs:empty, .facts:empty { display: none; }
+.pair { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 6px 12px; border-radius: 10px; background: var(--bg-sunken); font-size: 14px; }
+.pair .grow { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.pair .muted { flex: none; }
+.pair input { flex: 1 1 auto; min-width: 0; background: transparent; border: 0; padding: 0; font: inherit; color: var(--ink); }
+.pair-add { display: flex; gap: 10px; align-items: center; width: 100%; }
+.pair-add input { flex: 1 1 0; min-width: 0; }
+.routine { display: grid; gap: 10px; padding: 18px 0; border-bottom: 1px solid var(--line); }
+.routine-line { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.routine-line .muted { font-size: 14px; }
+.routine textarea { width: 100%; }
+.days { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.days button { width: 34px; height: 30px; border-radius: 999px; background: var(--bg-sunken); color: var(--ink-muted); font-size: 13px; }
+.days button[aria-pressed=true] { background: var(--ink); color: var(--bg); }
+.routine input[type=time] { width: auto; }
+.routine .status { font-size: 13px; color: var(--ink-muted); }
+.routine .status.warn { color: var(--danger); }
+.voice-previews { display: flex; flex-wrap: wrap; gap: 6px; }
+.voice-previews button { padding: 6px 12px; border-radius: 999px; background: var(--bg-sunken); color: var(--ink-2); font-size: 13px; }
+.voice-previews button:hover { color: var(--ink); }
+.voice-previews button[aria-current=true] { background: var(--ink); color: var(--bg); }
+
+/* onboarding: welcome line + optional name */
+.ob-hello { margin: 0 0 18px; font-family: var(--serif); font-style: italic; font-size: clamp(1.5rem, 4vw, 2rem); line-height: 1.1; color: var(--ink-2); animation: rise 1s var(--ease) both; }
+.ob-name { width: 100%; text-align: center; }
+
+/* clickys (named companions): rows reuse the provider row pattern */
+.clicky-list { border-top: 1px solid var(--line); }
+.clicky-mark { display: inline-grid; place-items: center; flex: none; color: var(--ink); }
+.clicky-mark svg { width: 100%; height: 100%; display: block; }
+.clicky-label { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
+.clicky-name { font-family: var(--serif); font-style: italic; font-size: 22px; line-height: 1; color: var(--ink); letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.clicky-row .toggle .row-label { padding-top: 0; }
+.clicky-row .field-inline select { flex: 1 1 50%; }
+.clicky-row .field-inline input { flex: 1 1 50%; }
+.clicky-row input:disabled { opacity: .5; }
+.clicky-row.flash { animation: clicky-in 1.1s var(--ease) both; }
+@keyframes clicky-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+.clicky-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 24px; }
+.clicky-confirm .result { color: var(--ink-2); }
+
+/* suggest clickys dialog */
+#suggest-dlg { width: min(560px, calc(100vw - 32px)); }
+.sg-body { display: flex; flex-direction: column; gap: 18px; margin: 10px 0 2px; }
+.sg-qtext { margin: 0 0 8px; color: var(--ink); font-size: 15px; }
+.sg-picks { display: flex; flex-wrap: wrap; gap: 8px; }
+.sg-pick { padding: 7px 14px; border-radius: 999px; background: var(--bg-sunken); color: var(--ink-muted); font-size: 14px; transition: color .3s var(--ease), background-color .3s var(--ease), transform .3s var(--ease); }
+.sg-pick:hover { color: var(--ink); }
+.sg-pick:active { transform: scale(.97); }
+.sg-pick[aria-checked=true] { background: var(--ink); color: var(--bg); }
+.sg-loading { padding: 28px 0; text-align: center; animation: dot-breathe 2.4s var(--ease-soft) infinite; }
+.sg-card { padding: 16px 18px; border-radius: 16px; background: var(--bg-sunken); display: flex; flex-direction: column; gap: 6px; animation: rise .9s var(--ease) both; }
+.sg-card:nth-child(2) { animation-delay: 90ms; } .sg-card:nth-child(3) { animation-delay: 180ms; }
+.sg-card-head { display: flex; align-items: center; gap: 10px; }
+.sg-name { flex: 1; font-family: var(--serif); font-style: italic; font-size: 24px; line-height: 1.05; color: var(--ink); }
+.sg-card .btn { background: var(--bg-elev); }
+.sg-why { margin: 0; color: var(--ink-muted); font-size: 13px; }
+.sg-persona { margin: 0; color: var(--ink-2); font-size: 14px; line-height: 1.55; }
+
+/* top bar: the less-used sections fold into "more" so the bar never overflows */
+.nav { flex-wrap: nowrap; min-width: 0; }
+.nav-more { position: relative; }
+.nav-more > summary { list-style: none; cursor: pointer; color: var(--ink-muted); font-size: 15px; transition: color .3s var(--ease); }
+.nav-more > summary::-webkit-details-marker { display: none; }
+.nav-more > summary::after { content: " ▾"; font-size: 11px; }
+.nav-more > summary:hover, .nav-more[open] > summary { color: var(--ink); }
+.nav-menu {
+  position: absolute; right: -8px; top: calc(100% + 10px); z-index: 30; min-width: 170px; padding: 6px;
+  display: flex; flex-direction: column; background: var(--bg-elev); border-radius: 14px;
+  box-shadow: 0 24px 48px -16px var(--shadow), 0 0 0 1px var(--line);
+  animation: dialog-in .3s var(--ease) both;
+}
+.nav-menu a { padding: 8px 12px; border-radius: 9px; font-size: 14px; }
+.nav-menu a:hover, .nav-menu a:focus-visible { background: var(--bg-sunken); }

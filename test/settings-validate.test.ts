@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fixEnums } from '../src/main/settings-validate.ts';
+import { fixEnums, fixFeatures } from '../src/main/settings-validate.ts';
 
 const defaults = () => ({
   theme: 'system',
@@ -52,4 +52,17 @@ test('show companion: missing / unknown → always, valid values kept', () => {
   const t = defaults(); t.companion.show = 'never';
   fixEnums(t, defaults(), 'linux');
   assert.equal(t.companion.show, 'never');
+});
+
+test('userName: trimmed, single line, at most 40 characters, junk becomes empty', () => {
+  const run = (v: unknown) => {
+    const s = defaults();
+    s.userName = v;
+    fixFeatures(s, defaults());
+    return s.userName;
+  };
+  assert.equal(run('  Maya \n'), 'Maya');
+  assert.equal(run('x'.repeat(80)).length, 40);
+  assert.equal(run(42), '');
+  assert.equal(run(undefined), '');
 });

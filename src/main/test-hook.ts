@@ -4,9 +4,11 @@
 import { session } from 'electron';
 import { getSettings, updateSettings } from './settings-store';
 import { getChat, listChats } from './chat-store';
-import { answerConfirm, cancelTalk, confirmPending, isListening, onEnter, onEscape, onTalkDown, onTalkUp, sendFromWindow, submitTypedText } from './conversation';
+import { answerConfirm, answerFromWindow, cancelTalk, choicePending, confirmPending, isListening, onEnter, onEscape, onTalkDown, onTalkUp, sendFromWindow, submitTypedText } from './conversation';
 import { fakeInputLog } from './agent-input';
 import { logPath } from './log';
+import { trayMenu } from './tray';
+import { testFeatures } from './features';
 
 export function installTestHook(): void {
   if (process.env.CLICKITY_TEST !== '1') return;
@@ -21,6 +23,9 @@ export function installTestHook(): void {
     confirmPending,
     fakeInputLog,
     submitTypedText,
+    /** choices ([ASK:…]): what's pending, the chats window's option buttons */
+    choicePending,
+    answerFromWindow,
     sendFromWindow,
     isListening,
     getSettings,
@@ -28,6 +33,10 @@ export function installTestHook(): void {
     listChats,
     getChat,
     logPath,
+    /** the tray menu (named companions: click "clicky: <name> ▸" items) */
+    trayMenu,
+    /** dictation, hands-free, memory, routines, walkthrough (features.ts) */
+    features: testFeatures(),
     /** simulate the user blocking the microphone at the Chromium level */
     denyMedia(): void {
       session.defaultSession.setPermissionRequestHandler((_wc, _p, cb) => cb(false));

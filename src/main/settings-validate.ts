@@ -33,6 +33,45 @@ export function fixEnums(s: Settings, d: Settings, platform: string): Settings {
   if (platform !== 'darwin') {
     if (s.hotkeys.talk.includes('Fn')) s.hotkeys.talk = [...d.hotkeys.talk];
     if (s.hotkeys.type.includes('Fn')) s.hotkeys.type = [...d.hotkeys.type];
+    for (const k of ['dictate', 'typeTap', 'alwaysOn'] as const) {
+      if (s.hotkeys[k]?.includes('Fn')) s.hotkeys[k] = [...d.hotkeys[k]];
+    }
   }
+  fixFeatures(s, d);
+  return s;
+}
+
+const DASHES = ['keep', 'comma', 'hyphen'];
+const str = (v: unknown, max: number): string => (typeof v === 'string' ? v.slice(0, max) : '');
+
+/** Dictation dictionary, routines and the other feature settings: shapes a hand-edited file can break. */
+export function fixFeatures(s: Settings, d: Settings): Settings {
+  const dd = d.dictation ?? { words: [], replacements: [], suggestions: [], autoLearn: true, dashes: 'keep' };
+  if (!s.dictation || typeof s.dictation !== 'object') s.dictation = structuredClone(dd);
+  const dict = s.dictation;
+  dict.words = (Array.isArray(dict.words) ? dict.words : []).map((w) => str(w, 80).trim()).filter(Boolean).slice(0, 300);
+  const pairs = (v: unknown) =>
+    (Array.isArray(v) ? v : [])
+      .filter((r): r is { from: string; to: string } => !!r && typeof r === 'object')
+      .map((r) => ({ from: str(r.from, 120).trim(), to: str(r.to, 200) }))
+      .filter((r) => r.from)
+      .slice(0, 300);
+  dict.replacements = pairs(dict.replacements);
+  dict.suggestions = pairs(dict.suggestions).slice(-20);
+  if (typeof dict.autoLearn !== 'boolean') dict.autoLearn = dd.autoLearn;
+  if (!DASHES.includes(dict.dashes)) dict.dashes = dd.dashes;
+  s.userName = str(s.userName, 40).replace(/[\r\n\t]+/g, ' ').trim();
+  s.routines = (Array.isArray(s.routines) ? s.routines : [])
+    .filter((r) => !!r && typeof r === 'object' && typeof r.id === 'string' && r.id)
+    .map((r) => ({
+      ...r,
+      days: (Array.isArray(r.days) ? r.days : []).filter((x) => Number.isInteger(x) && x >= 0 && x < 7),
+      time: /^\d{2}:\d{2}$/.test(String(r.time)) ? r.time : '09:00',
+      prompt: str(r.prompt, 1000),
+      screen: !!r.screen,
+      speak: !!r.speak,
+      enabled: !!r.enabled,
+    }))
+    .slice(0, 50);
   return s;
 }

@@ -1,4 +1,5 @@
 // Settings + onboarding window. Talks to main only through window.clicky.
+import { nextGreeting } from '../shared/greeting';
 import {
   DEFAULT_SETTINGS,
   PROVIDER_KINDS,
@@ -16,7 +17,9 @@ import {
   type TtsProvider,
 } from '../../shared/types';
 import type { HotkeyStatus, KeyRecordEvent, UpdateState } from '../../shared/ipc';
-import { canonicalCode, chordLabel, orderChord, validateChord } from './keys';
+import { canonicalCode, chordLabel, orderChord, sameBinding, validateChord } from './keys';
+import { initClickys, initNotchSetting } from './clickys';
+import { initExtras } from './extras';
 
 const api = window.clicky;
 let settings: Settings = structuredClone(DEFAULT_SETTINGS);
@@ -233,12 +236,24 @@ function initChrome(): void {
   const onScroll = () => bar.classList.toggle('scrolled', window.scrollY > 8);
   window.addEventListener('scroll', onScroll, { passive: true });
   onScroll();
+  const more = document.getElementById('nav-more') as HTMLDetailsElement | null;
   document.querySelectorAll<HTMLAnchorElement>('[data-scroll]').forEach((a) =>
     a.addEventListener('click', (e) => {
       e.preventDefault();
+      if (more) more.open = false;
       scrollToId(a.dataset.scroll!);
     }),
   );
+  // the "more" menu closes on outside click and esc
+  document.addEventListener('click', (e) => {
+    if (more?.open && !more.contains(e.target as Node)) more.open = false;
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && more?.open) {
+      more.open = false;
+      (more.querySelector('summary') as HTMLElement | null)?.focus();
+    }
+  });
   $('open-chats').addEventListener('click', (e) => {
     e.preventDefault();
     void api.openChats?.();
@@ -639,17 +654,30 @@ const RECORD_PLACEHOLDER = 'press whatever keys…';
 const NATIVE_GRACE_MS = 300;
 
 function initKeys(): void {
-  const defs = [
-    { which: 'talk' as const, well: $('chord-talk'), btn: $('rec-talk') },
-    { which: 'type' as const, well: $('chord-type'), btn: $('rec-type') },
+  type Which = 'talk' | 'type' | 'dictate' | 'typeTap' | 'alwaysOn';
+  const defs: Array<{ which: Which; well: HTMLElement; btn: HTMLElement; taps?: boolean }> = [
+    { which: 'talk', well: $('chord-talk'), btn: $('rec-talk') },
+    { which: 'type', well: $('chord-type'), btn: $('rec-type') },
+    { which: 'dictate', well: $('chord-dictate'), btn: $('rec-dictate') },
+    // these two may also be a double / triple tap of one key
+    { which: 'typeTap', well: $('chord-typeTap'), btn: $('rec-typeTap'), taps: true },
+    { which: 'alwaysOn', well: $('chord-alwaysOn'), btn: $('rec-alwaysOn'), taps: true },
   ];
+  document.querySelectorAll<HTMLButtonElement>('[data-off]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const which = b.dataset.off as Which;
+      recording?.cancel();
+      void save({ hotkeys: { [which]: [] } });
+      flash(b, 'off');
+    }),
+  );
   const label = (k: KeyName[]) => chordLabel(k, platform);
   const btnLabel = (d: (typeof defs)[number]) => d.btn.querySelector('span')!;
 
   for (const d of defs) {
     syncers.push(() => {
       if (recording && (d as any)._active) return;
-      d.well.textContent = label(settings.hotkeys[d.which]);
+      d.well.textContent = label(settings.hotkeys[d.which] ?? []);
     });
     d.btn.addEventListener('click', () => {
       if (recording) {
@@ -693,19 +721,46 @@ function initKeys(): void {
       d.well.classList.add('bad');
       d.well.textContent = msg;
     }
+    /** taps of one key in a row (tap-capable rows): decided once no further tap follows */
+    let taps: { key: KeyName; count: number; timer?: number } | null = null;
     /** all keys released with this chord: cancel, complain, or save */
     function complete(chord: KeyName[]): void {
-      if (chord.length === 1 && chord[0] === 'Escape') return finish(null);
-      const err = validateChord(chord, platform);
-      if (err) return showError(err); // keep recording: try again
-      const other = settings.hotkeys[d.which === 'talk' ? 'type' : 'talk'];
-      if (orderChord(chord).join('+') === orderChord(other).join('+')) return showError('already used by the other shortcut');
-      finish(orderChord(chord));
+      if (chord.length === 1 && chord[0] === 'Escape' && !taps) return finish(null);
+      if (d.taps && chord.length === 1) {
+        // a single key: maybe the first tap of a double / triple tap
+        const key = chord[0];
+        window.clearTimeout(taps?.timer);
+        taps = taps && taps.key === key ? { key, count: taps.count + 1 } : { key, count: 1 };
+        if (taps.count >= 2) d.well.textContent = label([taps.count >= 3 ? 'TripleTap' : 'DoubleTap', key]);
+        const decide = () => {
+          const t = taps!;
+          taps = null;
+          if (t.count === 1) return commitChord([t.key]);
+          commitChord([t.count >= 3 ? 'TripleTap' : 'DoubleTap', t.key]);
+        };
+        if (taps.count >= 3) return decide();
+        taps.timer = window.setTimeout(decide, 400);
+        return;
+      }
+      if (taps) window.clearTimeout(taps.timer);
+      taps = null;
+      commitChord(chord);
+    }
+    function commitChord(chord: KeyName[]): void {
+      const isTap = chord[0] === 'DoubleTap' || chord[0] === 'TripleTap';
+      if (!isTap) {
+        const err = validateChord(chord, platform);
+        if (err) return showError(err); // keep recording: try again
+      }
+      const others = defs.filter((x) => x.which !== d.which).map((x) => settings.hotkeys[x.which] ?? []);
+      if (others.some((o) => sameBinding(chord, o))) return showError('already used by another shortcut');
+      finish(isTap ? chord : orderChord(chord));
     }
 
     const finish = (commit: KeyName[] | null) => {
       if (finished) return;
       finished = true;
+      if (taps) window.clearTimeout(taps.timer);
       window.clearTimeout(graceTimer);
       window.removeEventListener('keydown', down, true);
       window.removeEventListener('keyup', up, true);
@@ -746,7 +801,7 @@ function initKeys(): void {
       e.stopPropagation();
       if (e.repeat) return;
       const k = canonicalCode(e.code);
-      if (k === 'Escape' && domHeld.size === 0 && domPeak.length === 0 && !sawNative) return finish(null);
+      if (k === 'Escape' && domHeld.size === 0 && domPeak.length === 0 && !sawNative && !taps) return finish(null);
       domHeld.add(k);
       if (domHeld.size >= domPeak.length) domPeak = orderChord(domHeld);
       if (source === 'dom') return showKeys(domPeak);
@@ -807,7 +862,8 @@ function initKeys(): void {
     // keep in sync with platformDefaults() in src/main/settings-store.ts
     const talk: KeyName[] = mac ? ['Control', 'Fn'] : [...d.talk];
     const type: KeyName[] = mac ? ['Control', 'Alt', 'Space'] : [...d.type];
-    void save({ hotkeys: { talk, type, mode: d.mode } });
+    const dictate: KeyName[] = mac ? ['Shift', 'Fn'] : [...d.dictate];
+    void save({ hotkeys: { talk, type, mode: d.mode, dictate, typeTap: [...d.typeTap], alwaysOn: [...d.alwaysOn] } });
     flash($('reset-keys'), 'defaults restored');
   });
 
@@ -1413,6 +1469,7 @@ function initOnboarding(): void {
   const render = () => {
     $('ob-step').textContent = `step ${step + 1} of 3`;
     body.replaceChildren();
+    document.querySelector('.ob-hello')?.remove();
     if (removePerm) {
       permListeners.splice(permListeners.indexOf(removePerm), 1);
       removePerm = null;
@@ -1421,6 +1478,7 @@ function initOnboarding(): void {
     skip.hidden = step === 2;
     label('ob-next').textContent = step === 2 ? 'start' : 'next';
     if (step === 0) {
+      $('ob-title').before(h('p', { class: 'ob-hello', text: nextGreeting('onboard', settings.userName) }));
       $('ob-title').textContent = 'Pick your brain.';
       $('ob-sub').textContent = 'you can change this any time.';
       const opt = (name: string, note: string, kind: ProviderKind) => {
@@ -1444,6 +1502,15 @@ function initOnboarding(): void {
       $('ob-title').textContent = 'Say hi.';
       $('ob-sub').textContent = 'hold the chord, talk, let go.';
       body.append(h('div', { class: 'ob-chord tnum', text: chordLabel(settings.hotkeys.talk, platform) }));
+      const name = h('input', { class: 'ob-name', type: 'text', maxlength: NAME_MAX, placeholder: 'what should i call you? (optional)', 'aria-label': 'your name', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
+      name.value = settings.userName ?? '';
+      const commitName = () => {
+        const v = name.value.replace(/\s+/g, ' ').trim().slice(0, NAME_MAX);
+        if (v !== (settings.userName ?? '')) void save({ userName: v });
+      };
+      name.addEventListener('change', commitName);
+      name.addEventListener('blur', commitName);
+      body.append(name);
     }
   };
   const go = (n: number) => {
@@ -1472,6 +1539,31 @@ function initOnboarding(): void {
   };
 }
 
+/* ───────────── greeting + name ───────────── */
+
+const NAME_MAX = 40;
+
+/** A fresh line in the hero title each time the window opens. */
+function initGreeting(): void {
+  const title = $('hero-title');
+  let at = 0;
+  const say = (replay: boolean) => {
+    title.textContent = nextGreeting('settings', settings.userName);
+    at = Date.now();
+    if (replay && !reduceMotion) {
+      title.classList.remove('rise');
+      void title.offsetWidth; // restart the entrance
+      title.classList.add('rise');
+    }
+  };
+  say(false);
+  // the window is reused: reopening it says something new
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && Date.now() - at > 20_000) say(true);
+  });
+  bindText($<HTMLInputElement>('user-name'), () => settings.userName ?? '', (v) => ({ userName: v.replace(/\s+/g, ' ').trim().slice(0, NAME_MAX) }));
+}
+
 /* ───────────── boot ───────────── */
 
 async function boot(): Promise<void> {
@@ -1482,12 +1574,28 @@ async function boot(): Promise<void> {
   initVoice();
   initKeys();
   initCompanion();
+  // named companions + the notch panel (settings › clickys, settings › companion)
+  const clickyCtx = { api, get: () => settings, save, onSync: (f: () => void) => void syncers.push(f) };
+  initClickys(clickyCtx);
+  initNotchSetting(clickyCtx);
   permRows($('perm-sheet'));
   initOnboarding();
+  initExtras({
+    get: () => settings,
+    set: (s) => (settings = s),
+    save,
+    sync: (f) => syncers.push(f),
+    syncAll,
+    flash,
+    h,
+    platform: () => platform,
+    openTour: () => (window as any).__openOnboarding?.(),
+  });
 
   try {
     settings = (await api.getSettings()) as Settings;
   } catch {}
+  initGreeting();
   await initAbout();
   void initUpdates();
   syncers.push(() => {

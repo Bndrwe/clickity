@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; script-src 'self'">
+<title>clickity notch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@1&family=Inter:wght@400;450;500;600&display=swap">
+<link rel="stylesheet" href="./notch.css">
+</head>
+<body>
+<div class="pill" id="pill" data-phase="idle">
+  <div class="bar">
+    <button class="who" id="who" type="button" aria-haspopup="true" aria-expanded="false">
+      <span class="who-mark" id="who-mark"></span>
+      <span class="who-name" id="who-name">clickity</span>
+    </button>
+    <div class="mid">
+      <input id="ask" type="text" autocomplete="off" spellcheck="false" aria-label="message" placeholder="ask clickity…">
+      <div class="line" id="line" aria-live="polite"></div>
+    </div>
+    <div class="state" id="state" aria-hidden="true">
+      <span class="dot"></span>
+      <span class="wave"><i></i><i></i><i></i><i></i><i></i></span>
+      <span class="dots"><i></i><i></i><i></i></span>
+    </div>
+  </div>
+  <div class="body" id="body">
+    <div class="msgs" id="msgs"></div>
+    <div class="switch-list" id="switch-list" hidden></div>
+    <div class="atts" id="atts" hidden></div>
+    <div class="foot">
+      <div class="acts">
+        <button class="act" type="button" data-a="new-chat">new chat</button>
+        <span class="sep">·</span>
+        <button class="act" type="button" data-a="open-chats">open chats</button>
+        <span class="sep">·</span>
+        <button class="act" type="button" data-a="open-settings">settings</button>
+      </div>
+      <button class="chip" id="screen" type="button" aria-pressed="true" title="send screenshots with your message">screen</button>
+    </div>
+  </div>
+  <div class="drop" id="drop" aria-hidden="true">drop to attach</div>
+</div>
+<script src="./notch.js"></script>
+</body>
+</html>

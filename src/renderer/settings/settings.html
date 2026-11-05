@@ -28,12 +28,21 @@
     <a class="wordmark" href="#top" data-scroll="top"><svg class="wm-mark" viewBox="0 0 100 100" width="28" height="28" aria-hidden="true"><polygon points="40.60,38.01 82.41,68.89 50.02,89.13" fill="currentColor" stroke="currentColor" stroke-width="7.75" stroke-linejoin="round"/><g stroke="currentColor" stroke-width="4.26" stroke-linecap="round"><line x1="25.43" y1="25.98" x2="15.85" y2="22.88"/><line x1="29.68" y1="20.53" x2="23.52" y2="10.68"/><line x1="36.43" y1="19.10" x2="37.86" y2="9.13"/></g></svg><span>clickity</span></a>
     <nav class="nav" aria-label="sections">
       <a href="#chats" id="open-chats">chats</a>
+      <a href="#clickys" data-scroll="clickys">clickys</a>
       <a href="#model" data-scroll="model">model</a>
       <a href="#voice" data-scroll="voice">voice</a>
       <a href="#keys" data-scroll="keys">keys</a>
-      <a href="#companion" data-scroll="companion">companion</a>
-      <a href="#permissions" data-scroll="permissions">permissions</a>
-      <a href="#about" data-scroll="about">about</a>
+      <details class="nav-more" id="nav-more">
+        <summary>more</summary>
+        <div class="nav-menu" role="menu">
+          <a href="#companion" data-scroll="companion" role="menuitem">companion</a>
+          <a href="#dictation" data-scroll="dictation" role="menuitem">dictation</a>
+          <a href="#memory" data-scroll="memory" role="menuitem">memory</a>
+          <a href="#routines" data-scroll="routines" role="menuitem">routines</a>
+          <a href="#permissions" data-scroll="permissions" role="menuitem">permissions</a>
+          <a href="#about" data-scroll="about" role="menuitem">about</a>
+        </div>
+      </details>
       <button class="update-pill" id="update-pill" type="button" hidden><i class="update-dot" aria-hidden="true"></i><span>update</span></button>
       <button class="icon-btn" id="theme-toggle" type="button" aria-label="theme: system" title="theme"></button>
     </nav>
@@ -49,11 +58,24 @@
       </svg>
     </div>
     <p class="eyebrow rise" style="--d:0ms">clicky, but free &amp; open source</p>
-    <h1 class="h2 rise" style="--d:90ms">A friend that lives by your cursor.</h1>
+    <h1 class="h2 rise" id="hero-title" style="--d:90ms">A friend that lives by your cursor.</h1>
     <p class="muted rise" style="--d:180ms">hold <span class="tnum" id="hero-hotkey">cmd + option</span> and talk.</p>
   </section>
 
   <div class="update-note" id="update-note" role="status" hidden></div>
+
+  <section class="section reveal" id="clickys" aria-labelledby="clickys-h">
+    <header class="section-head">
+      <p class="eyebrow">clickys</p>
+      <h2 class="h3" id="clickys-h">Your companions.</h2>
+      <p class="muted">each clicky has its own name, personality, brain, voice, memory and chats. say “switch to …” to change who you're talking to.</p>
+    </header>
+    <div class="clicky-list" id="clicky-list"></div>
+    <div class="clicky-actions">
+      <button class="btn" type="button" id="clicky-new"><span>new clicky</span></button>
+      <button class="btn" type="button" id="clicky-suggest"><span>suggest clickys for me</span></button>
+    </div>
+  </section>
 
   <section class="section reveal" id="model" aria-labelledby="model-h">
     <header class="section-head">
@@ -101,8 +123,19 @@
         <div class="row-value"><input id="stt-url" type="text" spellcheck="false" autocomplete="off" placeholder="http://localhost:8000/v1"></div>
       </div>
       <div class="row">
-        <label class="row-label" for="stt-lang">language</label>
-        <div class="row-value"><input id="stt-lang" type="text" spellcheck="false" autocomplete="off" placeholder="auto" maxlength="8"></div>
+        <label class="row-label" for="stt-lang-select">language</label>
+        <div class="row-value">
+          <select id="stt-lang-select"></select>
+          <input id="stt-lang" type="text" spellcheck="false" autocomplete="off" placeholder="iso code, e.g. nl" maxlength="8" hidden>
+          <p class="hint" id="stt-lang-note" hidden></p>
+        </div>
+      </div>
+      <div class="row">
+        <label class="row-label" for="mic-select">microphone</label>
+        <div class="row-value">
+          <select id="mic-select"><option value="">system default</option></select>
+          <p class="hint">if it's unplugged, clickity uses the default one.</p>
+        </div>
       </div>
 
       <p class="eyebrow group-eyebrow">speaking</p>
@@ -136,6 +169,24 @@
         <div class="row-value">
           <div class="input-wrap"><input id="tts-key" type="password" spellcheck="false" autocomplete="off"><button class="text-btn" type="button" data-reveal="tts-key">show</button></div>
           <button class="text-btn" type="button" id="tts-key-remove" hidden>remove</button>
+        </div>
+      </div>
+      <div class="row" data-tts="voices" id="voice-previews-row">
+        <span class="row-label">listen</span>
+        <div class="row-value"><div class="voice-previews" id="voice-previews"></div></div>
+      </div>
+      <div class="row">
+        <span class="row-label" id="l-captions">captions</span>
+        <div class="row-value">
+          <button class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="l-captions" id="sw-captions"></button>
+          <p class="hint">shows the sentence being spoken near your cursor when the reply bubble is off.</p>
+        </div>
+      </div>
+      <div class="row">
+        <span class="row-label" id="l-autocopy">copy answers</span>
+        <div class="row-value">
+          <button class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="l-autocopy" id="sw-autocopy"></button>
+          <p class="hint">when the voice is off, each answer also lands on your clipboard.</p>
         </div>
       </div>
       <div class="row" data-tts="test">
@@ -180,6 +231,40 @@
         </div>
       </div>
       <div class="row">
+        <span class="row-label">type, quickly</span>
+        <div class="row-value">
+          <div class="chord-line">
+            <div class="chord-well tnum" id="chord-typeTap" aria-live="polite"></div>
+            <button class="btn" type="button" id="rec-typeTap"><span>record</span></button>
+            <button class="text-btn" type="button" data-off="typeTap"><span>off</span></button>
+          </div>
+          <p class="hint">a second way to open the type box. tap a key twice to record a double-tap.</p>
+        </div>
+      </div>
+      <div class="row">
+        <span class="row-label">dictate</span>
+        <div class="row-value">
+          <div class="chord-line">
+            <div class="chord-well tnum" id="chord-dictate" aria-live="polite"></div>
+            <button class="btn" type="button" id="rec-dictate"><span>record</span></button>
+            <button class="text-btn" type="button" data-off="dictate"><span>off</span></button>
+          </div>
+          <p class="hint" id="dictate-hint">hold, speak, let go: your words are typed where your cursor is. add <span id="draft-mod">option</span> to have clickity draft it instead.</p>
+        </div>
+      </div>
+      <div class="row">
+        <span class="row-label">hands-free</span>
+        <div class="row-value">
+          <div class="chord-line">
+            <div class="chord-well tnum" id="chord-alwaysOn" aria-live="polite"></div>
+            <button class="btn" type="button" id="rec-alwaysOn"><span>record</span></button>
+            <button class="text-btn" type="button" data-off="alwaysOn"><span>off</span></button>
+          </div>
+          <div class="chord-line"><button class="switch" type="button" role="switch" aria-checked="false" aria-label="hands-free" id="sw-handsfree"></button><span class="muted" id="handsfree-state">always listening is off</span></div>
+          <p class="hint">always listening: just talk. it pauses while clickity speaks — use headphones so it doesn't hear itself.</p>
+        </div>
+      </div>
+      <div class="row">
         <span class="row-label">status</span>
         <div class="row-value">
           <div class="hk-status" id="hotkey-status" aria-live="polite"></div>
@@ -200,6 +285,10 @@
     </header>
     <div class="sheet">
       <div class="row">
+        <label class="row-label" for="user-name">your name</label>
+        <div class="row-value"><input id="user-name" type="text" maxlength="40" spellcheck="false" autocomplete="off" placeholder="optional, for greetings"></div>
+      </div>
+      <div class="row">
         <span class="row-label" id="theme-label">appearance</span>
         <div class="row-value">
           <div class="seg" role="radiogroup" aria-labelledby="theme-label" id="theme-seg">
@@ -219,6 +308,19 @@
               <button type="button" role="radio" data-show="never" aria-checked="false">never</button>
             </div>
             <p class="hint agent-hint" id="show-hint"></p>
+          </div>
+        </div>
+      </div>
+      <div class="row">
+        <span class="row-label" id="notch-label">notch panel</span>
+        <div class="row-value">
+          <div>
+            <div class="seg" role="radiogroup" aria-labelledby="notch-label" id="notch-seg">
+              <button type="button" role="radio" data-notch="off" aria-checked="false">off</button>
+              <button type="button" role="radio" data-notch="hover" aria-checked="false">show on hover at top</button>
+              <button type="button" role="radio" data-notch="always" aria-checked="false">always visible</button>
+            </div>
+            <p class="hint agent-hint" id="notch-hint"></p>
           </div>
         </div>
       </div>
@@ -286,6 +388,96 @@
     </div>
   </section>
 
+  <section class="section reveal" id="dictation" aria-labelledby="dictation-h">
+    <header class="section-head">
+      <p class="eyebrow">dictation</p>
+      <h2 class="h3" id="dictation-h">Your words, spelled your way.</h2>
+      <p class="muted">names and jargon help the speech-to-text; replacements fix what it still gets wrong.</p>
+    </header>
+    <div class="sheet">
+      <div class="row">
+        <label class="row-label" for="dict-words">words &amp; names</label>
+        <div class="row-value">
+          <textarea id="dict-words" rows="3" placeholder="clickity, bndrwe, kubernetes"></textarea>
+          <p class="hint" id="dict-words-hint">comma or one per line. used by openai, groq, gemini and local speech-to-text; on-device whisper ignores them.</p>
+        </div>
+      </div>
+      <div class="row">
+        <span class="row-label">replacements</span>
+        <div class="row-value">
+          <div class="pairs" id="dict-pairs"></div>
+          <div class="pair-add">
+            <input id="dict-from" type="text" placeholder="clicky tea" spellcheck="false" autocomplete="off" aria-label="replace">
+            <span class="muted" aria-hidden="true">→</span>
+            <input id="dict-to" type="text" placeholder="clickity" spellcheck="false" autocomplete="off" aria-label="with">
+            <button class="btn" type="button" id="dict-add"><span>add</span></button>
+          </div>
+        </div>
+      </div>
+      <div class="row" id="dict-suggest-row" hidden>
+        <span class="row-label">noticed</span>
+        <div class="row-value"><div class="pairs" id="dict-suggest"></div></div>
+      </div>
+      <div class="row">
+        <span class="row-label" id="l-learn">learn corrections</span>
+        <div class="row-value">
+          <button class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="l-learn" id="sw-learn"></button>
+          <p class="hint">re-dictate a word within 20 seconds and clickity offers it here. nothing is added without you.</p>
+        </div>
+      </div>
+      <div class="row">
+        <span class="row-label" id="dash-label">long dashes</span>
+        <div class="row-value">
+          <div class="seg" role="radiogroup" aria-labelledby="dash-label" id="dash-seg">
+            <button type="button" role="radio" data-dash="keep" aria-checked="false">keep —</button>
+            <button type="button" role="radio" data-dash="comma" aria-checked="false">commas</button>
+            <button type="button" role="radio" data-dash="hyphen" aria-checked="false">hyphens</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section reveal" id="memory" aria-labelledby="memory-h">
+    <header class="section-head">
+      <p class="eyebrow">memory</p>
+      <h2 class="h3" id="memory-h">What it remembers about you.</h2>
+      <p class="muted">facts carry over between chats. secrets are never kept.</p>
+    </header>
+    <div class="sheet">
+      <div class="row">
+        <span class="row-label" id="l-memory">remember things</span>
+        <div class="row-value"><button class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="l-memory" id="sw-memory"></button></div>
+      </div>
+      <div class="row">
+        <span class="row-label">facts</span>
+        <div class="row-value">
+          <div class="facts" id="memory-list"></div>
+          <div class="pair-add">
+            <input id="memory-new" type="text" placeholder="add a fact, e.g. prefers metric units" spellcheck="false" autocomplete="off" aria-label="add a fact">
+            <button class="btn" type="button" id="memory-add"><span>add</span></button>
+          </div>
+          <button class="text-btn" type="button" id="memory-clear"><span>forget everything</span></button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section reveal" id="routines" aria-labelledby="routines-h">
+    <header class="section-head">
+      <p class="eyebrow">routines</p>
+      <h2 class="h3" id="routines-h">Things it does on a schedule.</h2>
+      <p class="muted">each run lands in a new chat. you can also just ask: "every weekday at 9, summarise my inbox".</p>
+    </header>
+    <div class="sheet">
+      <div id="routine-list"></div>
+      <div class="row">
+        <span class="row-label"></span>
+        <div class="row-value"><button class="btn" type="button" id="routine-add"><span>add a routine</span></button></div>
+      </div>
+    </div>
+  </section>
+
   <section class="section reveal" id="permissions" aria-labelledby="perm-h">
     <header class="section-head">
       <p class="eyebrow">permissions</p>
@@ -324,6 +516,17 @@
         </div>
       </div>
       <div class="row">
+        <span class="row-label">welcome tour</span>
+        <div class="row-value"><button class="text-btn" type="button" id="replay-tour"><span>replay welcome tour</span></button></div>
+      </div>
+      <div class="row" id="dock-row" hidden>
+        <span class="row-label" id="l-dock">show in dock</span>
+        <div class="row-value">
+          <button class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="l-dock" id="sw-dock"></button>
+          <p class="hint">the menu bar icon always stays.</p>
+        </div>
+      </div>
+      <div class="row">
         <span class="row-label">diagnostics</span>
         <div class="row-value"><div><button class="text-btn" type="button" id="open-logs"><span>open logs</span></button> <span class="muted">· attach clickity.log when something doesn't work</span></div></div>
       </div>
@@ -335,6 +538,18 @@
   </section>
   <footer class="foot"></footer>
 </main>
+
+<dialog id="suggest-dlg" aria-labelledby="sg-title">
+  <div class="dlg">
+    <p class="eyebrow" id="sg-step">three quick questions</p>
+    <h2 class="h3" id="sg-title">Suggest clickys for me.</h2>
+    <div class="sg-body" id="sg-body"></div>
+    <div class="ob-actions">
+      <button class="text-btn" type="button" id="sg-close"><span>close</span></button>
+      <button class="btn primary" type="button" id="sg-go" disabled><span>suggest</span></button>
+    </div>
+  </div>
+</dialog>
 
 <dialog id="onboard" aria-labelledby="ob-title">
   <div class="dlg">

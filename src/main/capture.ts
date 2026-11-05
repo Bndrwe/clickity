@@ -127,6 +127,7 @@ export async function captureScreens(cursor: Point, annotate?: CaptureAnnotator)
     const data = img.toJPEG(JPEG_QUALITY);
     const file = path.join(TEMP_DIR, `screen-${index}-${Date.now()}.jpg`);
     await fs.promises.writeFile(file, data);
+    written.set(file, Date.now());
 
     screens.push({
       index,
@@ -184,5 +185,28 @@ export async function writeTempImage(data: Buffer, ext: 'png' | 'jpg', tag = 'at
   await fs.promises.mkdir(TEMP_DIR, { recursive: true });
   const file = path.join(TEMP_DIR, `${tag}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`);
   await fs.promises.writeFile(file, data);
+  written.set(file, Date.now());
   return file;
+}
+
+/**
+ * Delete the temp files of finished screenshots right away (the turn — and any agent loop or
+ * nudge that re-sent them — is over). cleanupCaptures' two-minute sweep stays as a backstop.
+ */
+export function deleteCaptureFiles(paths: Iterable<string | undefined>): void {
+  for (const file of [...paths]) {
+    if (!file || path.dirname(file) !== TEMP_DIR) continue;
+    written.delete(file);
+    fs.promises.unlink(file).catch(() => undefined);
+  }
+}
+
+/** temp files we wrote (screenshots, attachment images) → when */
+const written = new Map<string, number>();
+
+/** Temp files written at or after `since` (a turn's screenshots, incl. agent-step re-captures). */
+export function capturedSince(since: number): string[] {
+  const out: string[] = [];
+  for (const [file, at] of written) if (at >= since) out.push(file);
+  return out;
 }

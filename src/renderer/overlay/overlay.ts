@@ -1,11 +1,14 @@
 // Overlay renderer: the cursor companion, reply bubble, pointing flight, mic capture and speech playback.
 // Talks to main only through window.overlay (see src/shared/ipc.ts).
 import type { OverlayApi } from '../../shared/ipc';
-import type { CompanionPhase, InkCommand, OverlayConfig, OverlayPoint, OverlayState, PttStopRequest, SpeakCommand } from '../../shared/types';
+import type { CompanionPhase, InkCommand, OverlayChoice, OverlayConfig, OverlayPoint, OverlayState, PttStopRequest, SpeakCommand } from '../../shared/types';
 import { MicRecorder, encodeWav, peakLevel, resampleTo16k } from './audio';
 import { Spring2D, clamp, ease, spring } from './motion';
 import { Speaker } from './speech';
+import { createOverlayVisuals } from './visuals';
 import { ModelLoadError, localSttStatus, onLocalSttStatus, preloadLocalModel, transcribeLocal, type LocalSttStatus } from './stt-local';
+// cue pill, highlights, captions, walkthrough clicks, hands-free mic (self-contained)
+import './extras';
 
 const api: OverlayApi = window.overlay;
 
@@ -32,10 +35,16 @@ const noteEl = $('note');
 const stepEl = $('step');
 const confirmEl = $('confirm');
 const confirmTextEl = $('confirm-text');
+const choiceWrap = $('choice-wrap');
+const choiceOptsEl = $('choice-opts');
+const choiceHintEl = $('choice-hint');
+const replyBtn = $<HTMLButtonElement>('reply-btn');
 const typePos = $('typebox-pos');
 const typeForm = $<HTMLFormElement>('typebox');
 const typeInput = $<HTMLInputElement>('typebox-input');
 const inkCanvas = $<HTMLCanvasElement>('ink');
+/** cards / 3D models next to the bubble ([CARD:…] / [MODEL3D:…]) */
+const visuals = createOverlayVisuals({ stage: $('stage'), setInteractive: (on) => setHoverInteractive(on), kick: () => kick() });
 
 /* ───────── config / theme ───────── */
 let config: OverlayConfig = {
@@ -116,6 +125,10 @@ let localNote = '';
 let confirmText = '';
 /** agent mode: "step 2 of 8" */
 let stepText = '';
+/** a choice question waiting for an answer (pills); null = none */
+let choice: OverlayChoice | null = null;
+/** the type box was opened from the bubble (reply / something else / type chord over a reply): keep the bubble up */
+let replyBox = false;
 let lingerTimer = 0;
 let lingering = false;
 let transcriptTimer = 0;
@@ -277,7 +290,7 @@ function frame(now: number): void {
   syncPresence();
 
   const settled = mode === 'follow' && follow.settled(target.x, target.y);
-  const needLoop = visible ? true : !settled || bubbleIn || speaker.active;
+  const needLoop = visible ? true : !settled || bubbleIn || speaker.active || visuals.active;
   if (needLoop) rafId = requestAnimationFrame(frame);
 }
 
@@ -328,6 +341,7 @@ function placeBubble(dt: number): void {
     } else bubbleSpring.step(t.x, t.y, dt);
     bubblePos.style.transform = `translate3d(${bubbleSpring.x.toFixed(2)}px, ${bubbleSpring.y.toFixed(2)}px, 0)`;
   }
+  if (visuals.active) visuals.place({ x: bubbleSpring.x, y: bubbleSpring.y, w: bubbleW || 200, h: bubbleH || 44, shown: bubbleIn });
   if (typeOpen) {
     if (!typeAnchor) {
       const s = slotFor(typeW, typeH);
@@ -490,10 +504,13 @@ function setReplyText(text: string): void {
     span.textContent = text.slice(shownReply.length);
     replyTextEl.appendChild(span);
   } else {
+    // shrinking (a partial tag got hidden) only trims: no fade-in replay, so it doesn't flicker
+    const trimOnly = !!text && shownReply.startsWith(text);
     replyTextEl.textContent = '';
     if (text) {
       const span = document.createElement('span');
       span.textContent = text;
+      if (trimOnly) span.className = 'still';
       replyTextEl.appendChild(span);
     }
   }
@@ -507,7 +524,10 @@ function renderBubble(): void {
   const showBubble = config.companion.showBubble;
   const isError = phase === 'error' && !!errorText;
   const wantTranscript = showBubble && !!transcript && (phase === 'transcribing' || phase === 'thinking');
-  const wantReply = showBubble && !!reply && (phase === 'thinking' || phase === 'speaking' || phase === 'acting' || lingering);
+  const wantChoice = !!choice;
+  const keepForReply = typeOpen && replyBox;
+  // a pending choice shows its reply even with the bubble off: the pills are how you answer
+  const wantReply = !!reply && ((showBubble && (phase === 'thinking' || phase === 'speaking' || phase === 'acting' || lingering || keepForReply)) || wantChoice);
   // agent mode lines show even with the reply bubble off: they're how the user stays in control
   const wantConfirm = !!confirmText && phase !== 'idle' && phase !== 'error' && phase !== 'listening';
   const wantStep = !!stepText && (phase === 'thinking' || phase === 'speaking' || phase === 'acting');
@@ -542,7 +562,12 @@ function renderBubble(): void {
   bubbleEl.classList.toggle('is-error', isError);
   errorEl.textContent = isError ? errorText : '';
 
-  const want = isError || wantTranscript || wantReply || wantNote || wantConfirm || wantStep;
+  renderChoice(wantChoice);
+  // quick follow-up: "reply" under a finished (or speaking) answer, while nothing else is asked
+  const wantReplyBtn = wantReply && !wantChoice && !wantConfirm && !typeOpen && (phase === 'speaking' || lingering) && !isError;
+  bubbleEl.classList.toggle('has-reply-btn', wantReplyBtn);
+
+  const want = isError || wantTranscript || wantReply || wantNote || wantConfirm || wantStep || wantChoice;
   if (want !== bubbleIn) {
     bubbleIn = want;
     if (want) bubbleSnap = true;
@@ -551,6 +576,7 @@ function renderBubble(): void {
       transcriptOpen = false;
       transcriptWrap.classList.remove('is-open');
       bubbleAnchor = null; // next turn pins afresh
+      visuals.bubbleGone();
       if (drag?.which === 'bubble') drag = null;
       setHoverInteractive(false);
     }
@@ -565,6 +591,7 @@ function onState(s: OverlayState): void {
   transcript = (s.transcript ?? '').trim();
   serverNote = (s.note ?? '').trim();
   confirmText = (s.confirm ?? '').trim();
+  bubbleEl.classList.toggle('confirm-always', !!s.confirmAlways); // agent mode: "a = always allow" 
   stepText = (s.step ?? '').trim();
   if (phase !== 'listening' && phase !== 'transcribing') micNote = '';
   localNote = modelNote || micNote;
@@ -589,11 +616,7 @@ function onState(s: OverlayState): void {
 
   clearTimeout(lingerTimer);
   if (phase === 'idle' && prev !== 'idle' && reply) {
-    lingering = true;
-    lingerTimer = window.setTimeout(() => {
-      lingering = false;
-      renderBubble();
-    }, 2600);
+    startLinger();
   } else if (phase !== 'idle') lingering = false;
 
   stage.classList.toggle(
@@ -607,6 +630,82 @@ function onState(s: OverlayState): void {
   if (phase !== 'idle' && phase !== 'error') clearTimeout(autoReturnTimer);
   else scheduleAutoReturn();
   syncPresence();
+  renderBubble();
+}
+
+/** a finished reply stays a moment (longer while the pointer is on it, so "reply" can be reached) */
+function startLinger(ms = 2600): void {
+  clearTimeout(lingerTimer);
+  lingering = true;
+  const tick = (): void => {
+    if (hoverInteractive || drag) {
+      lingerTimer = window.setTimeout(tick, 800);
+      return;
+    }
+    lingering = false;
+    renderBubble();
+  };
+  lingerTimer = window.setTimeout(tick, ms);
+}
+
+/* ───────── choices ([ASK:…]) ───────── */
+let choiceKey = '';
+function renderChoice(open: boolean): void {
+  choiceWrap.classList.toggle('is-open', open);
+  bubbleEl.classList.toggle('has-choice', open);
+  if (!open || !choice) return; // closing: keep the old pills while they fold away
+  const c = choice;
+  const key = JSON.stringify([c.options, c.keys]);
+  if (key !== choiceKey) {
+    choiceKey = key;
+    const btns = c.options.map((o, i) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'opt';
+      b.tabIndex = -1;
+      if (c.keys) {
+        const n = document.createElement('span');
+        n.className = 'opt-n';
+        n.textContent = String(i + 1);
+        b.append(n);
+      }
+      const t = document.createElement('span');
+      t.className = 'opt-t';
+      t.textContent = o.toLowerCase();
+      b.append(t);
+      b.addEventListener('click', () => {
+        b.classList.add('is-picked');
+        api.choose(i);
+      });
+      return b;
+    });
+    const other = document.createElement('button');
+    other.type = 'button';
+    other.className = 'opt other';
+    other.tabIndex = -1;
+    other.textContent = 'something else…';
+    other.addEventListener('click', () => {
+      replyBox = true;
+      api.openReply();
+    });
+    choiceOptsEl.replaceChildren(...btns, other);
+  }
+  const n = c.options.length;
+  choiceHintEl.textContent = c.keys ? `press 1–${n} · or just say it · esc to dismiss` : 'or just say it · esc to dismiss';
+}
+
+function onChoice(c: OverlayChoice | null): void {
+  const had = !!choice;
+  choice = c;
+  if (c) {
+    reply = c.reply;
+    lingering = false;
+    clearTimeout(lingerTimer);
+    setVisible(true);
+  } else if (had && phase === 'idle' && reply) {
+    // answered elsewhere / timed out / dismissed: the pills fold away, the reply fades like any other
+    startLinger();
+  }
   renderBubble();
 }
 
@@ -624,9 +723,20 @@ new ResizeObserver((entries) => {
 
 function setTypeBox(open: boolean): void {
   if (!open && typeOpen && typeAnchor) lastTypeSpot = { ...keepOnScreen(typeAnchor, typeW, typeH), at: performance.now() };
+  // opened while a reply is showing (reply button, "something else…", the type chord): sit right under it
+  if (open && !typeOpen && bubbleIn && bubbleAnchor) {
+    replyBox = true;
+    const bx = bubbleSpring.x;
+    const below = bubbleSpring.y + (bubbleH || 44) + 8;
+    typeAnchor = below + typeH > window.innerHeight - 12 ? { x: bx, y: bubbleSpring.y - typeH - 8 } : { x: bx, y: below };
+  }
   typeOpen = open;
   typeForm.classList.toggle('is-in', open);
-  if (!open) typeAnchor = null;
+  if (!open) {
+    typeAnchor = null;
+    replyBox = false;
+  }
+  typeInput.placeholder = open && replyBox ? (choice ? 'your answer…' : 'reply…') : 'ask clickity…';
   if (open) {
     typeOpenedAt = performance.now();
     typeInput.value = '';
@@ -638,8 +748,9 @@ function setTypeBox(open: boolean): void {
     setTimeout(focus, 150);
   } else {
     typeInput.blur();
-    if (!cursorOnDisplay && mode === 'follow') setVisible(false);
+    if (!cursorOnDisplay && mode === 'follow' && !choice) setVisible(false);
   }
+  renderBubble();
 }
 
 typeForm.addEventListener('submit', (e) => {
@@ -979,6 +1090,7 @@ api.onConfig((c) => {
   const prevFollow = config.companion.followCursor;
   const prevShow = config.companion.show;
   config = c;
+  mic.setDevice(c.stt?.micId); // settings › voice › microphone (falls back to the default)
   root.dataset.show = c.companion.show || 'always';
   scale = clamp(c.companion.scale || 1, 0.5, 2.5);
   root.style.setProperty('--s', String(scale));
@@ -1013,7 +1125,7 @@ api.onCursor((p) => {
     }
   }
   cursorOnDisplay = inside;
-  setVisible(inside || mode !== 'follow' || typeOpen || !!currentPoint);
+  setVisible(inside || mode !== 'follow' || typeOpen || !!currentPoint || !!choice);
   if (inside || mode !== 'follow') kick();
 });
 
@@ -1026,6 +1138,15 @@ api.onPoint((p) => {
 });
 api.onClick(clickAt);
 api.onInk(onInk);
+api.onVisuals((v) => {
+  visuals.set(v);
+  kick();
+});
+api.onChoice(onChoice);
+replyBtn.addEventListener('click', () => {
+  replyBox = true;
+  api.openReply();
+});
 
 api.onPttStart(onPttStart);
 api.onPttStop((req) => void onPttStop(req));
@@ -1088,7 +1209,11 @@ bubbleEl.addEventListener('pointerenter', () => setHoverInteractive(true));
 bubbleEl.addEventListener('pointerleave', () => {
   if (!drag && !typeOpen) setHoverInteractive(false);
 });
-bubbleEl.addEventListener('pointerdown', (e) => startDrag('bubble', e));
+bubbleEl.addEventListener('pointerdown', (e) => {
+  if ((e.target as Element | null)?.closest('button')) return; // pills / reply are clicks, not drags
+  if ((e.target as Element | null)?.closest('.reply-text')) return; // the reply text can be selected (and copied)
+  startDrag('bubble', e);
+});
 bubbleEl.addEventListener('pointermove', moveDrag);
 bubbleEl.addEventListener('pointerup', endDrag);
 bubbleEl.addEventListener('pointercancel', endDrag);

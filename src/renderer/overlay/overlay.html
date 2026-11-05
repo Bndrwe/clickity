@@ -11,6 +11,7 @@
       href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap"
     />
     <link rel="stylesheet" href="./overlay.css" />
+    <link rel="stylesheet" href="./visuals.css" />
     <script>
       // theme before first paint; config refines it once it arrives
       if (matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.classList.add('dark');
@@ -47,8 +48,17 @@
           <p id="note" class="note"></p>
           <div id="confirm" class="confirm">
             <p id="confirm-text" class="confirm-text"></p>
-            <p class="confirm-hint"><kbd>enter</kbd> to allow <span aria-hidden="true">·</span> <kbd>esc</kbd> to cancel</p>
+            <p class="confirm-hint"><kbd>enter</kbd> <span class="ca-once">to allow</span><span class="ca-always">allow once</span> <span aria-hidden="true">·</span> <span class="ca-always"><kbd>a</kbd> always allow <span aria-hidden="true">·</span> </span><kbd>esc</kbd> <span class="ca-once">to cancel</span><span class="ca-always">not now</span></p>
           </div>
+          <!-- a choice question ([ASK:…]): numbered option pills + "something else…" -->
+          <div id="choice-wrap" class="collapse choice-wrap"><div>
+            <div id="choice" class="choice" role="group" aria-label="choose an answer">
+              <div id="choice-opts" class="choice-opts"></div>
+              <p id="choice-hint" class="choice-hint"></p>
+            </div>
+          </div></div>
+          <!-- quick follow-up: continue the same chat in the type box under the bubble -->
+          <div id="reply-row" class="reply-row"><button id="reply-btn" class="reply-btn" type="button" tabindex="-1">reply</button></div>
         </div>
       </div>
 

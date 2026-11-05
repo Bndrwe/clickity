@@ -1,5 +1,6 @@
 // Shared contract between main, preload and renderer code.
 // Every module in this app depends on these shapes. Change them only deliberately.
+import type { ChatVisual } from './visuals';
 
 /* ───────────────────────── providers ───────────────────────── */
 
@@ -198,6 +199,8 @@ export interface SpeechSettings {
     apiKey?: string; // optional override (else reuse matching provider key)
     baseUrl?: string; // for 'local'
     language?: string; // ISO code or '' for auto
+    /** microphone deviceId ('' / undefined = system default); falls back to the default when missing */
+    micId?: string;
   };
   tts: {
     provider: TtsProvider;
@@ -227,6 +230,20 @@ export interface HotkeySettings {
   mode: 'hold' | 'toggle';
   /** open a small text box next to the companion instead of speaking. default: Control + Alt + Space (control + option + space on mac) */
   type: KeyName[];
+  /**
+   * dictation: hold, speak, release → the words are typed into the focused app (no model call).
+   * Hold alt / option with it to draft a reply instead. default: Fn + Shift on mac,
+   * Control + Shift + Space elsewhere. [] = off.
+   */
+  dictate: KeyName[];
+  /**
+   * a second way to open the type box. A chord, or a tap binding: ['DoubleTap', key] /
+   * ['TripleTap', key] (press and release that key alone, 2 / 3 times within 300ms).
+   * default: double-tap control. [] = off.
+   */
+  typeTap: KeyName[];
+  /** toggle hands-free (always listening) mode. default: triple-tap control. [] = off. */
+  alwaysOn: KeyName[];
 }
 
 /* ───────────────────────── settings ───────────────────────── */
@@ -261,6 +278,52 @@ export interface CompanionSettings {
   actions: 'off' | 'ask' | 'auto';
   /** max act → look → act steps in one agent run */
   maxSteps: number;
+  /** show the sentence being spoken near the cursor, even when the reply bubble is off */
+  captions?: boolean;
+  /** when the voice is off, put each spoken-style answer on the clipboard ("copied") */
+  autoCopy?: boolean;
+  /**
+   * the notch panel: a small black pill pinned top-centre of the cursor's display (under the
+   * menu bar / notch). 'off' (default) · 'hover' = appears when the cursor touches the top
+   * centre · 'always' = always visible.
+   */
+  notch?: 'off' | 'hover' | 'always';
+}
+
+/** Dictation: custom words (fed to whisper as a prompt), replacements, learned corrections. */
+export interface DictationSettings {
+  /** names / jargon whisper should expect ("Clickity, Bndrwe") */
+  words: string[];
+  /** applied after transcription, case-insensitive whole words: "clicky tea" → "clickity" */
+  replacements: Array<{ from: string; to: string }>;
+  /** corrections noticed while dictating, waiting for the user to accept in settings */
+  suggestions: Array<{ from: string; to: string }>;
+  /** notice "you re-dictated one word" corrections and offer them in settings */
+  autoLearn: boolean;
+  /** em / en dashes in dictated text */
+  dashes: 'keep' | 'comma' | 'hyphen';
+}
+
+/** "every [days] at [time]: [prompt]" — runs as a normal turn into a new chat. */
+export interface Routine {
+  id: string;
+  /** 0 = sunday … 6 = saturday */
+  days: number[];
+  /** "HH:MM", local 24h */
+  time: string;
+  prompt: string;
+  /** take screenshots like a voice turn */
+  screen: boolean;
+  /** read the result aloud */
+  speak: boolean;
+  enabled: boolean;
+  createdAt?: number;
+  /** epoch ms of the last run (successful or not) */
+  lastRun?: number;
+  /** consecutive failures; 3 pauses the routine (enabled = false, paused = true) */
+  failures?: number;
+  paused?: boolean;
+  lastError?: string;
 }
 
 export interface Settings {
@@ -280,6 +343,20 @@ export interface Settings {
   launchAtLogin: boolean;
   /** first-run onboarding finished */
   onboarded: boolean;
+  dictation: DictationSettings;
+  /** facts the companion remembers across chats ([REMEMBER:…]; stored in userData/memory.json) */
+  memory: { enabled: boolean };
+  /** hands-free: the mic is always on; speech (voice activity) starts a turn */
+  handsFree: { enabled: boolean };
+  routines: Routine[];
+  /** mac: show the dock icon (the menu bar icon is always there) */
+  showInDock: boolean;
+  /** what to call the user in greetings (optional, at most 40 characters) */
+  userName: string;
+  /** named companions ("clickys"); always at least one (migrated users get "clickity") */
+  clickys: Clicky[];
+  /** id of the clicky voice / type / chats turns talk to */
+  activeClicky: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -302,14 +379,68 @@ export const DEFAULT_SETTINGS: Settings = {
     stt: { provider: 'on-device', model: 'Xenova/whisper-base.en', language: '' },
     tts: { provider: 'system', voice: '', rate: 1.05 },
   },
-  hotkeys: { talk: ['Control', 'Alt'], mode: 'hold', type: ['Control', 'Alt', 'Space'] },
-  companion: { followCursor: true, show: 'always', offsetX: 18, offsetY: 20, scale: 1, color: '', showBubble: true, pointing: true, actions: 'ask', maxSteps: 8 },
+  hotkeys: {
+    talk: ['Control', 'Alt'],
+    mode: 'hold',
+    type: ['Control', 'Alt', 'Space'],
+    dictate: ['Control', 'Shift', 'Space'],
+    typeTap: ['DoubleTap', 'Control'],
+    alwaysOn: ['TripleTap', 'Control'],
+  },
+  companion: { followCursor: true, show: 'always', offsetX: 18, offsetY: 20, scale: 1, color: '', showBubble: true, pointing: true, actions: 'ask', maxSteps: 8, captions: false, autoCopy: true, notch: 'off' },
   theme: 'system',
   customInstructions: '',
   historyTurns: 6,
   launchAtLogin: false,
   onboarded: false,
+  dictation: { words: [], replacements: [], suggestions: [], autoLearn: true, dashes: 'keep' },
+  memory: { enabled: true },
+  handsFree: { enabled: false },
+  routines: [],
+  showInDock: true,
+  userName: '',
+  clickys: [],
+  activeClicky: 'clickity',
 };
+
+/* ───────────────────────── clickys (named companions) ───────────────────────── */
+
+/**
+ * A named companion. Each has its own name, persona, optional brain / voice override, memory
+ * (userData/memory.json for the default one, memory-<id>.json otherwise) and chats (Chat.clickyId).
+ */
+export interface Clicky {
+  /** stable id ([a-z0-9-], ≤ 32); the default / migrated one is 'clickity' */
+  id: string;
+  /** shown lowercase in the ui; the model is told "You are <name>" */
+  name: string;
+  /** mark + companion color #rrggbb ('' = ink); the active clicky's color is companion.color */
+  color: string;
+  /** personality / instructions, added to the system prompt */
+  persona: string;
+  /** brain override (unset = the global provider / model) */
+  provider?: ProviderKind;
+  model?: string;
+  /** voice override (unset = settings.speech.tts) */
+  voice?: { provider: TtsProvider; voice: string };
+  createdAt?: number;
+}
+
+/** "suggest clickys for me": the three quick multiple-choice answers sent to the model. */
+export interface ClickyQuizAnswers {
+  use: string;
+  stuck: string;
+  tone: string;
+}
+
+/** One proposed clicky (settings › clickys › suggest). */
+export interface ClickySuggestion {
+  name: string;
+  persona: string;
+  color: string;
+  /** one short line: why this one fits the answers */
+  why: string;
+}
 
 /** Recursive partial used for settings patches. */
 export type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? (T[K] extends any[] ? T[K] : DeepPartial<T[K]>) : T[K] };
@@ -337,6 +468,21 @@ export interface OverlayState {
   confirm?: string;
   /** agent mode: "step 2 of 8" while acting */
   step?: string;
+  /** agent mode confirm: also offer "a = always allow" */
+  confirmAlways?: boolean;
+}
+
+/**
+ * A choice question waiting for the user (main → overlay, IPC.overlayChoice; null = none).
+ * The bubble shows the reply with numbered option pills and "something else…".
+ */
+export interface OverlayChoice {
+  /** the reply text (it ends with the question) */
+  reply: string;
+  question: string;
+  options: string[];
+  /** digit keys are grabbed (press 1–N) */
+  keys: boolean;
 }
 
 /** A point in overlay-window-local DIP coordinates. */
@@ -350,6 +496,46 @@ export interface OverlayPoint {
 export interface PttStopRequest {
   /** if 'on-device', the renderer transcribes locally and returns text; otherwise it returns wav */
   stt: SpeechSettings['stt'];
+  /** dictionary words as a whisper prompt (on-device: best effort) */
+  prompt?: string;
+}
+
+/** A tiny status pill at the cursor (dictation "listening" / "typed", hands-free…). null = hide. */
+export interface OverlayCue {
+  text: string;
+  kind: 'listening' | 'working' | 'done' | 'error' | 'info';
+  /** ms before it fades on its own (0 = stays until replaced) */
+  ttl: number;
+}
+
+/** A soft rounded outline drawn around something on screen ([HIGHLIGHT:…]); overlay-local DIP. */
+export interface OverlayHighlight {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  label: string;
+}
+
+/** main → overlay: hands-free (always listening) state. */
+export interface HandsFreeState {
+  /** hands-free is on (every overlay shows the cue) */
+  on: boolean;
+  /** this overlay owns the always-on mic */
+  mic: boolean;
+  /** listening right now (false while the companion speaks / thinks, plus a short tail) */
+  listening: boolean;
+  /** the companion is replying: with headphones the renderer keeps listening so speech interrupts it */
+  bargeIn?: boolean;
+}
+
+/** overlay → main: one utterance heard in hands-free mode (text = on-device, else wav). */
+export interface HandsFreeUtterance {
+  text?: string;
+  wav?: ArrayBuffer;
+  durationMs: number;
+  peak?: number;
+  error?: string;
 }
 
 export interface PttResult {
@@ -418,6 +604,23 @@ export interface ChatTurn {
   model?: string;
   /** assistant turn failed; text holds whatever streamed before the error */
   error?: string;
+  /**
+   * assistant turns: the reply ended with a choice question ([ASK:question|option|…]). The
+   * options show as buttons; `answered` is what the user picked or said next.
+   */
+  ask?: ChatAsk;
+  /** assistant turns: a 2D card / 3D models the reply carried ([CARD:…] / [MODEL3D:…]) */
+  visuals?: ChatVisual[];
+}
+
+/** A choice question an assistant turn asked (2–5 short options). */
+export interface ChatAsk {
+  question: string;
+  options: string[];
+  /** the user's answer (an option, or whatever they typed / said instead) */
+  answered?: string;
+  /** not answered: dismissed with esc, timed out, or the user moved on to something else */
+  dismissed?: boolean;
 }
 
 export interface ChatSummary {
@@ -427,6 +630,8 @@ export interface ChatSummary {
   updatedAt: number;
   turnCount: number;
   preview: string; // last assistant reply, trimmed to ~120 chars
+  /** the clicky this chat belongs to (older chats: none = the default clicky) */
+  clickyId?: string;
 }
 
 export interface Chat {
@@ -435,6 +640,8 @@ export interface Chat {
   createdAt: number;
   updatedAt: number;
   turns: ChatTurn[];
+  /** the clicky this chat belongs to (older chats: none = the default clicky) */
+  clickyId?: string;
 }
 
 /** An image or text file attached in the chats window composer. */
@@ -453,6 +660,18 @@ export interface ChatSendRequest {
   /** override the provider/model for this message (defaults to settings) */
   provider?: ProviderKind;
   model?: string;
+  /** no reply bubble at the cursor (the notch panel shows the reply itself) */
+  noBubble?: boolean;
+}
+
+/** Chats window: answer an assistant turn's choice question (ChatTurn.ask) with an option or free text. */
+export interface ChatAnswerRequest {
+  chatId: string;
+  /** the assistant turn that asked */
+  turnId: string;
+  text: string;
+  /** used when the question is no longer pending (falls back to a normal message): share the screen */
+  includeScreen?: boolean;
 }
 
 /** Streamed back to the chats window while a reply is generated. */
@@ -466,9 +685,11 @@ export type ChatEvent =
    * agent mode: the assistant turn `turnId` wants to act. pending=true → show "allow / cancel"
    * (chats.approve / chats.deny); pending=false → settled (outcome says how).
    */
-  | { type: 'confirm'; chatId: string; turnId: string; summary: string; pending: boolean; outcome?: 'allowed' | 'cancelled' | 'timeout' }
+  | { type: 'confirm'; chatId: string; turnId: string; summary: string; pending: boolean; outcome?: 'allowed' | 'cancelled' | 'timeout'; always?: boolean }
   /** agent mode: acting on screen ("step 2 of 8"); step null = the agent run is over */
-  | { type: 'acting'; chatId: string; turnId: string; step: string | null };
+  | { type: 'acting'; chatId: string; turnId: string; step: string | null }
+  /** a stored turn changed after the fact (e.g. its choice question was answered: turn.ask.answered) */
+  | { type: 'turn'; chatId: string; turn: ChatTurn };
 
 /* ───────────────────────── agent mode (input control) ───────────────────────── */
 

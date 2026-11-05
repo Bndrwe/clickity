@@ -68,6 +68,7 @@ function summarize(chat: Chat): ChatSummary {
     updatedAt: chat.updatedAt,
     turnCount: chat.turns.length,
     preview,
+    ...(chat.clickyId ? { clickyId: chat.clickyId } : {}),
   };
 }
 
@@ -82,6 +83,7 @@ function parseChat(raw: unknown, id: string): Chat | null {
     createdAt,
     updatedAt: typeof c.updatedAt === 'number' ? c.updatedAt : createdAt,
     turns: c.turns.filter((t): t is ChatTurn => !!t && typeof t === 'object' && typeof t.id === 'string' && typeof t.text === 'string'),
+    ...(typeof c.clickyId === 'string' && c.clickyId ? { clickyId: c.clickyId } : {}),
   };
 }
 
@@ -209,9 +211,11 @@ export function hasChat(id: string): boolean {
   return isValidId(id) && loadIndex().has(id);
 }
 
-export function createChat(): Chat {
+/** A new empty chat, belonging to `clickyId` (named companions; omitted = the default one). */
+export function createChat(clickyId?: string): Chat {
   const now = Date.now();
   const chat: Chat = { id: newId(), title: '', createdAt: now, updatedAt: now, turns: [] };
+  if (clickyId) chat.clickyId = clickyId;
   save(chat);
   return clone(chat);
 }
