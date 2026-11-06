@@ -1100,8 +1100,29 @@ function initShowCompanion(): void {
   sync();
 }
 
+/* hide replies after: a moment · 10 s · 30 s · 1 min · keep until dismissed */
+function initHideReplies(): void {
+  type Hide = NonNullable<Settings['companion']['hideReplies']>;
+  const seg = [...document.querySelectorAll<HTMLButtonElement>('#hide-seg button')];
+  const sync = () => {
+    const m = settings.companion.hideReplies ?? 'auto';
+    for (const b of seg) b.setAttribute('aria-checked', String(b.dataset.hide === m));
+  };
+  for (const b of seg) {
+    b.addEventListener('click', () => {
+      const v = b.dataset.hide as Hide;
+      settings = { ...settings, companion: { ...settings.companion, hideReplies: v } };
+      sync();
+      void save({ companion: { hideReplies: v } });
+    });
+  }
+  syncers.push(sync);
+  sync();
+}
+
 function initCompanion(): void {
   initShowCompanion();
+  initHideReplies();
   bindSwitch($('sw-follow'), () => settings.companion.followCursor, (v) => ({ companion: { followCursor: v } }));
   bindSwitch($('sw-bubble'), () => settings.companion.showBubble, (v) => ({ companion: { showBubble: v } }));
   bindSwitch($('sw-point'), () => settings.companion.pointing, (v) => ({ companion: { pointing: v } }));

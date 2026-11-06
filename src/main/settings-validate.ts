@@ -9,6 +9,7 @@ const STT = ['on-device', 'openai', 'groq', 'gemini', 'local'];
 const TTS = ['system', 'openai', 'elevenlabs', 'off'];
 const ACTIONS = ['off', 'ask', 'auto'];
 const SHOW = ['always', 'active', 'never'];
+const HIDE_REPLIES = ['auto', 'keep', '10s', '30s', '1m'];
 
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
@@ -28,6 +29,7 @@ export function fixEnums(s: Settings, d: Settings, platform: string): Settings {
   // older settings.json files have no `show`: the defaults merge fills it; anything else → 'always'
   if (!SHOW.includes(s.companion.show)) s.companion.show = d.companion.show;
   if (!ACTIONS.includes(s.companion.actions)) s.companion.actions = d.companion.actions;
+  if (!HIDE_REPLIES.includes(s.companion.hideReplies ?? 'auto')) s.companion.hideReplies = 'auto';
   s.companion.maxSteps = finite(s.companion.maxSteps) ? Math.min(20, Math.max(1, Math.round(s.companion.maxSteps))) : d.companion.maxSteps;
   // 'Fn' only exists on mac (fn-key helper). A settings.json synced / copied from a mac would
   // leave Windows / Linux with a chord that can never fire: fall back to the platform default.

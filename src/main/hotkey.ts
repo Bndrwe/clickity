@@ -348,7 +348,7 @@ type GrabOwner = 'confirm' | 'choice' | 'busy' | (string & {});
  * key the whole time clickity works, so a confirm / choice / walkthrough grabbing esc later (or
  * earlier) still gets the press while it waits.
  */
-const LOW_OWNERS = new Set<string>(['busy']);
+const LOW_OWNERS = new Set<string>(['busy', 'bubble']);
 interface Grab {
   owner: GrabOwner;
   fn(): void;

@@ -78,7 +78,7 @@ export function stopStep(s: BusySnapshot, how: 'key' | 'stop'): StopStep {
 
 /** The quiet line under the bubble: "esc to stop" / "esc to pause" / "paused · enter to continue · esc to stop". */
 export function stopHint(mode: BusyMode, key: string): string {
-  if (mode === 'paused') return `paused · enter to continue · ${key} to stop`;
+  if (mode === 'paused') return `paused · enter / ${key}`;
   return `${key} to ${mode === 'pause' ? 'pause' : 'stop'}`;
 }
 

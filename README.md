@@ -242,7 +242,22 @@ settings › **dictation**:
 - **dictate**: fn + shift on mac, ctrl + shift + space elsewhere (see [dictation](#dictation)). **hands-free**: triple-tap control.
 - **taps**: *type, quickly* and *hands-free* can be a chord or a double / triple tap of one key: click **record** and tap the key two or three times. **off** turns a binding off.
 - talking over the companion (pressing the talk key while it speaks) stops it and starts listening.
-- **escape** cancels the current turn.
+- **stop / pause**: **esc** by default; see [stop and pause](#stop-and-pause).
+
+## stop and pause
+
+press **esc** whenever clickity is doing something you don't want:
+
+- **talking**: the voice stops at once. the reply stays in the bubble and the chat, marked *stopped*.
+- **thinking / writing a reply**: the model call is cancelled; what it wrote so far stays, marked *stopped*.
+- **listening**: the recording is thrown away. **dictating**: nothing gets typed. a **draft** preview is discarded, a **walkthrough** ends.
+- **agent mode**: the first press **pauses**. clickity finishes the action it's in the middle of (it never stops halfway through typing a word) or drops the model call it's waiting on, then shows *paused · enter to continue · esc to stop*. **enter** continues: it takes a fresh screenshot and picks up where it was. press **esc** again (or leave it paused for 2 minutes) to stop; the chat says *stopped by you*.
+
+while clickity is busy, the bubble shows a quiet *esc to stop* (*esc to pause* during agent runs) and a small **stop** button. the notch panel shows stop (and pause / continue for agent runs), the chats window's stop button works for voice and agent turns too (plus **pause** / **continue** for agent runs), and the tray menu has **stop**.
+
+**getting rid of the bubble.** hover a reply and click the **×** in its corner (a reply that is still running stops too, and any cards close with it), or press **esc** while a finished reply is still showing. settings › companion › **hide replies after** picks how long finished replies stay: *a moment* (the default), 10 s, 30 s, 1 min, or *keep until dismissed*.
+
+clickity only takes the key while it is busy (or while a finished reply is on screen), so esc keeps working in your other apps the rest of the time. it works without accessibility on mac too. pick another key in settings › keys › **stop / pause** (esc, an f-key, or a chord with control / option / cmd); with a different key, esc still answers prompts (approvals, choices).
 
 ## permissions
 
@@ -257,7 +272,7 @@ settings › **dictation**:
 
 ## agent mode
 
-with agent mode on, the companion can also act on your screen: click, double-click, right-click, type text, press key chords (like cmd + s) and scroll. every action is written to the log (typed text only by its length), and escape stops a running sequence between actions.
+with agent mode on, the companion can also act on your screen: click, double-click, right-click, type text, press key chords (like cmd + s) and scroll. every action is written to the log (typed text only by its length), and esc pauses a running sequence after the current action.
 
 **how to ask.** there is no separate mode to switch on. just ask for something to be done, by voice, in the type box or in the chats window with "share screen" on: "click next", "type my email in that field", "save this file", "clickity, do the export for me", "agent: turn on dark mode". questions ("where is…", "what does this do?") still get an answer and a point, not clicks.
 
@@ -269,7 +284,7 @@ with agent mode on, the companion can also act on your screen: click, double-cli
 
 **how a task runs.** after each round of actions clickity waits a moment, takes a fresh screenshot and checks its work, then continues until it says it's done. the bubble shows "step 2 of 8". it stops after **max steps** rounds (1–20, default 8; settings › companion). each step is saved in the chat, so the chats window shows "clicked save · typed hello" under the reply.
 
-**stopping.** press **esc** at any time. in the chats window, the stop button works too.
+**stopping.** press **esc** to pause after the current action, **enter** to continue, **esc** again to stop (see [stop and pause](#stop-and-pause)). the bubble, the notch panel and the chats window have pause / continue / stop buttons too.
 
 **safety rules.** clickity is told to act only when you asked it to do something, to use few, precise steps, to click only what it can see, and never to do anything destructive or irreversible (delete, send, post, publish, buy, pay, submit, change account settings) or type passwords unless you asked for exactly that in this conversation. models make mistakes, so keep **ask first** on for anything that matters, and watch what it does.
 

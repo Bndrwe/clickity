@@ -60,7 +60,7 @@ test('dictation / drafts: busy, global, the key cancels them', () => {
 test('hints use the configured key label', () => {
   assert.equal(stopHint('stop', 'esc'), 'esc to stop');
   assert.equal(stopHint('pause', 'esc'), 'esc to pause');
-  assert.equal(stopHint('paused', 'f8'), 'paused · enter to continue · f8 to stop');
+  assert.equal(stopHint('paused', 'f8'), 'paused · enter / f8');
 });
 
 test('PauseControl: pause, reach a safe point, resume; second request stops', () => {

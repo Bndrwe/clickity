@@ -295,6 +295,11 @@ export interface CompanionSettings {
    * centre · 'always' = always visible.
    */
   notch?: 'off' | 'hover' | 'always';
+  /**
+   * how long a finished reply stays in the bubble: 'auto' (default) = a moment (~2.6 s, longer
+   * while the pointer is on it) · 'keep' = until dismissed (× / the stop key) · '10s' · '30s' · '1m'.
+   */
+  hideReplies?: 'auto' | 'keep' | '10s' | '30s' | '1m';
 }
 
 /** Dictation: custom words (fed to whisper as a prompt), replacements, learned corrections. */
@@ -395,7 +400,7 @@ export const DEFAULT_SETTINGS: Settings = {
     alwaysOn: ['TripleTap', 'Control'],
     stop: ['Escape'],
   },
-  companion: { followCursor: true, show: 'always', offsetX: 18, offsetY: 20, scale: 1, color: '', showBubble: true, pointing: true, actions: 'ask', maxSteps: 8, captions: false, autoCopy: true, notch: 'off' },
+  companion: { followCursor: true, show: 'always', offsetX: 18, offsetY: 20, scale: 1, color: '', showBubble: true, pointing: true, actions: 'ask', maxSteps: 8, captions: false, autoCopy: true, notch: 'off', hideReplies: 'auto' },
   theme: 'system',
   customInstructions: '',
   historyTurns: 6,

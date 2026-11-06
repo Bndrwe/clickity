@@ -39,6 +39,7 @@ const stopHintEl = $('stop-hint');
 const stopBtn = $<HTMLButtonElement>('stop-btn');
 const stopBtnText = $('stop-btn-t');
 const continueBtn = $<HTMLButtonElement>('continue-btn');
+const closeBtn = $<HTMLButtonElement>('close-btn');
 const choiceWrap = $('choice-wrap');
 const choiceOptsEl = $('choice-opts');
 const choiceHintEl = $('choice-hint');
@@ -133,6 +134,8 @@ let stepText = '';
 let busy: OverlayBusy | null = null;
 /** the user stopped the last reply: it lingers marked "stopped" */
 let stoppedReply = false;
+/** the user closed the bubble (× / the stop key): stays hidden until the next turn starts */
+let dismissed = false;
 /** a choice question waiting for an answer (pills); null = none */
 let choice: OverlayChoice | null = null;
 /** the type box was opened from the bubble (reply / something else / type chord over a reply): keep the bubble up */
@@ -591,6 +594,7 @@ function renderBubble(): void {
     bubbleIn = want;
     if (want) bubbleSnap = true;
     bubbleEl.classList.toggle('is-in', want);
+    api.bubbleVisible(want); // while a finished reply lingers, the stop key (esc) dismisses it
     if (!want) {
       transcriptOpen = false;
       transcriptWrap.classList.remove('is-open');
@@ -613,6 +617,12 @@ function onState(s: OverlayState): void {
   bubbleEl.classList.toggle('confirm-always', !!s.confirmAlways); // agent mode: "a = always allow" 
   stepText = (s.step ?? '').trim();
   stoppedReply = phase === 'idle' && !!s.stopped;
+  // closed by the user: a new turn (listening / thinking) brings the bubble back; stale states don't
+  if (phase === 'listening' || phase === 'transcribing' || phase === 'thinking') dismissed = false;
+  if (dismissed) {
+    transcript = serverNote = confirmText = stepText = '';
+    stoppedReply = false;
+  }
   if (phase !== 'listening' && phase !== 'transcribing') micNote = '';
   localNote = modelNote || micNote;
 
@@ -624,6 +634,7 @@ function onState(s: OverlayState): void {
   } else if (s.reply !== undefined || phase !== 'idle') {
     reply = s.reply ?? (phase === 'idle' ? reply : '');
   }
+  if (dismissed) reply = '';
 
   clearTimeout(errorTimer);
   if (phase === 'error') {
@@ -654,9 +665,21 @@ function onState(s: OverlayState): void {
 }
 
 /** a finished reply stays a moment (longer while the pointer is on it, so "reply" can be reached) */
-function startLinger(ms = 2600): void {
+/** settings › companion › hide replies after: a moment (default) · keep until dismissed · 10 s · 30 s · 1 min */
+function lingerMs(): number {
+  switch (config.companion.hideReplies) {
+    case 'keep': return Infinity;
+    case '10s': return 10_000;
+    case '30s': return 30_000;
+    case '1m': return 60_000;
+    default: return 2600;
+  }
+}
+
+function startLinger(ms = lingerMs()): void {
   clearTimeout(lingerTimer);
   lingering = true;
+  if (ms === Infinity) return; // until the × / the stop key / the next turn
   const tick = (): void => {
     if (hoverInteractive || drag) {
       lingerTimer = window.setTimeout(tick, 800);
@@ -718,6 +741,7 @@ function onChoice(c: OverlayChoice | null): void {
   const had = !!choice;
   choice = c;
   if (c) {
+    dismissed = false;
     reply = c.reply;
     lingering = false;
     clearTimeout(lingerTimer);
@@ -1168,6 +1192,30 @@ api.onBusy((b) => {
   renderBubble();
 });
 stopBtn.addEventListener('click', () => api.stop());
+closeBtn.addEventListener('click', () => dismissBubble(true));
+api.onDismiss(() => dismissBubble(false));
+
+/**
+ * Get rid of the bubble now (× or the stop key over a lingering reply). A turn still running
+ * (speaking, streaming, walkthrough, agent run) or a waiting choice is stopped too; its cards /
+ * 3D models close with it, and the next bubble opens fresh at the cursor.
+ */
+function dismissBubble(byClick: boolean): void {
+  const running = (phase !== 'idle' && phase !== 'error') || !!choice || !!busy;
+  if (byClick && running) api.stop(true);
+  dismissed = true;
+  reply = transcript = errorText = serverNote = stepText = confirmText = '';
+  stoppedReply = false;
+  lingering = false;
+  clearTimeout(lingerTimer);
+  clearTimeout(errorTimer);
+  setReplyText('');
+  visuals.set(null);
+  if (drag?.which === 'bubble') drag = null;
+  bubbleAnchor = null;
+  renderBubble();
+  if (!typeOpen) setHoverInteractive(false);
+}
 continueBtn.addEventListener('click', () => api.resume());
 replyBtn.addEventListener('click', () => {
   replyBox = true;

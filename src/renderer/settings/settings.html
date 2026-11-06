@@ -343,6 +343,19 @@
         <div class="row-value"><button class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="l-bubble" id="sw-bubble"></button></div>
       </div>
       <div class="row">
+        <span class="row-label" id="hide-label">hide replies after</span>
+        <div class="row-value">
+          <div class="seg" role="radiogroup" aria-labelledby="hide-label" id="hide-seg">
+            <button type="button" role="radio" data-hide="auto" aria-checked="false">a moment</button>
+            <button type="button" role="radio" data-hide="10s" aria-checked="false">10 s</button>
+            <button type="button" role="radio" data-hide="30s" aria-checked="false">30 s</button>
+            <button type="button" role="radio" data-hide="1m" aria-checked="false">1 min</button>
+            <button type="button" role="radio" data-hide="keep" aria-checked="false">keep until dismissed</button>
+          </div>
+          <p class="hint">close a reply any time with the × in its corner, or the stop key.</p>
+        </div>
+      </div>
+      <div class="row">
         <span class="row-label" id="l-point">point at things</span>
         <div class="row-value"><button class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="l-point" id="sw-point"></button></div>
       </div>

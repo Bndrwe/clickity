@@ -108,6 +108,7 @@ export const IPC = {
   overlayHandsFree: 'overlay:hands-free', // HandsFreeState — always-listening mode
   overlayWalkthrough: 'overlay:walkthrough', // boolean — a guided walkthrough is running (bubble click = next)
   overlayBusy: 'overlay:busy', // OverlayBusy | null — busy: "esc to stop" line + stop button (paused: continue / stop)
+  overlayDismiss: 'overlay:dismiss', // void — hide the bubble now (the stop key over a lingering reply)
 
   /* overlay → main (ipcRenderer.send) */
   pttResult: 'ptt:result', // PttResult
@@ -125,6 +126,7 @@ export const IPC = {
   walkNext: 'overlay:walk-next', // void — walkthrough: the bubble was clicked (next step)
   overlayStop: 'overlay:stop', // void — the bubble's stop button (same as the stop key: pauses an agent run)
   overlayContinue: 'overlay:continue', // void — paused agent run: "continue"
+  overlayBubble: 'overlay:bubble', // boolean — the reply bubble is showing / gone (idle: the stop key dismisses it)
 
   /* settings window → main (ipcRenderer.invoke) */
   settingsGet: 'settings:get', // () => Settings
@@ -249,8 +251,15 @@ export interface OverlayApi {
   onWalkthrough(cb: (on: boolean) => void): void;
   /** busy: show the stop hint + button (null = idle) */
   onBusy(cb: (b: OverlayBusy | null) => void): void;
-  /** the bubble's stop button (pauses an agent run, like the stop key) */
-  stop(): void;
+  /**
+   * the bubble's stop button (pauses an agent run, like the stop key); hard = the × close button:
+   * always stops (speech, stream, walkthrough, agent run) and dismisses a waiting choice
+   */
+  stop(hard?: boolean): void;
+  /** the bubble is showing / gone (main grabs the stop key while a finished reply lingers) */
+  bubbleVisible(on: boolean): void;
+  /** main: hide the bubble now (the stop key over a lingering reply) */
+  onDismiss(cb: () => void): void;
   /** paused agent run: continue */
   resume(): void;
   /** hands-free: an utterance ended (voice activity detector) */

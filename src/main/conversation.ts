@@ -829,6 +829,8 @@ async function askModel(
     if (error || !stored) emitChat({ type: 'error', chatId, turnId: assistantId, error: error ?? 'chat was deleted' });
     else emitChat({ type: 'done', chatId, turn: stored });
     if (!error && stored) turn.replyId = assistantId;
+    // an agent run paused mid-thought: "stopped by you" / the paused row go on this partial turn
+    if (error === 'paused' && stored && turn.agent) turn.agent.lastTurnId = assistantId;
     if (text) turn.lastReply = text;
   };
 
@@ -2234,6 +2236,10 @@ function stopOrPause(how: 'key' | 'stop', from: string): void {
   const turn = current;
   if (step !== 'none') log('turn', `${turn ? `${turn.id} ` : ''}stop request (${from}): ${step}`);
   switch (step) {
+    case 'none':
+      // nothing running: the stop key hides a reply that is still lingering in the bubble
+      if (how === 'key') dismissBubbles();
+      break;
     case 'dictation':
       draftEscape();
       break;
@@ -2301,6 +2307,20 @@ function busySnapshot(): BusySnapshot {
   };
 }
 
+/** overlays (webContents ids) whose reply bubble is showing (they say so: IPC.overlayBubble) */
+const bubbleShown = new Set<number>();
+/** what the lingering-bubble grab holds ('' = nothing) */
+let grabbedBubble = '';
+
+/** The stop key while idle: hide every lingering reply bubble. */
+function dismissBubbles(): void {
+  for (const id of [...bubbleShown]) {
+    const win = overlayForWebContentsId(id);
+    if (!win) bubbleShown.delete(id);
+    else sendToOverlay(win, IPC.overlayDismiss);
+  }
+}
+
 let busyQueued = false;
 /** what the stop-key grab holds now ('' = nothing) */
 let grabbedStop = '';
@@ -2331,6 +2351,15 @@ function applyBusy(): void {
     const accel = want ? setBusyStopKey(keys, () => onStopKey('grab')) : setBusyStopKey(null);
     grabbedStop = want;
     log('hotkey', want ? `stop key ${accel ? `grabbed (${accel})` : `not grabbable (${want})`}` : 'stop key released');
+  }
+  // idle with a reply still in the bubble: the stop key dismisses it (grabbed only while it shows)
+  for (const id of [...bubbleShown]) if (!overlayForWebContentsId(id)) bubbleShown.delete(id);
+  const wantBubble = !st && bubbleShown.size ? keys.join('+') : '';
+  if (wantBubble !== grabbedBubble) {
+    const accel = chordToAccelerator(keys);
+    if (wantBubble && accel) grabKeys('bubble', { [accel]: () => onStopKey('grab') });
+    else releaseKeys('bubble');
+    grabbedBubble = wantBubble;
   }
   const label = hotkeyLabel(keys, process.platform);
   const t = current && !current.controller.signal.aborted ? current : null;
@@ -2368,8 +2397,8 @@ export function busyNow(): BusyInfo | null {
 }
 
 /** Tests: what the stop key would do and whether it is grabbed. */
-export function stopKeyState(): { busy: BusyInfo | null; grabbed: string } {
-  return { busy: busyNow(), grabbed: grabbedStop };
+export function stopKeyState(): { busy: BusyInfo | null; grabbed: string; bubble: string; bubbles: number } {
+  return { busy: busyNow(), grabbed: grabbedStop, bubble: grabbedBubble, bubbles: bubbleShown.size };
 }
 
 /** True while a voice turn is recording (the hotkey engine's toggle mode resyncs on this). */
@@ -2494,7 +2523,16 @@ export function initConversation(): void {
   });
   ipcMain.on(IPC.overlayReply, (e) => openReplyBox(e.sender.id));
   // stop / pause: the bubble's buttons, and anything that changes busy-ness
-  ipcMain.on(IPC.overlayStop, () => onStopKey('ui'));
+  // stop button = the stop key (an agent run pauses); the × (hard) always stops and dismisses a choice
+  ipcMain.on(IPC.overlayStop, (_e, hard: unknown) => {
+    if (hard !== true) return onStopKey('ui');
+    if (!escapePrompts()) stopEverything('close');
+  });
+  ipcMain.on(IPC.overlayBubble, (e, on: unknown) => {
+    if (on === true) bubbleShown.add(e.sender.id);
+    else bubbleShown.delete(e.sender.id);
+    syncBusy();
+  });
   ipcMain.on(IPC.overlayContinue, () => void resumeAgent());
   setBusyPoke(syncBusy);
   setBusyResend(() => {
@@ -2506,6 +2544,8 @@ export function initConversation(): void {
     if ((s.hotkeys.stop ?? []).join('+') !== (prev.hotkeys.stop ?? []).join('+')) {
       grabbedStop = ''; // re-grab the new key if busy
       setBusyStopKey(null);
+      grabbedBubble = '';
+      releaseKeys('bubble');
       syncBusy();
     }
   });
