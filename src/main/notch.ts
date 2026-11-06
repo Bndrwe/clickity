@@ -9,7 +9,9 @@ import type { OverlayState, Settings } from '../shared/types';
 import { activeClicky } from '../shared/clickys';
 import { getSettings, onSettingsChanged } from './settings-store';
 import { getChat, onChatsChanged } from './chat-store';
-import { getActiveChatId, newChat, sendFromWindow, stopChat } from './conversation';
+import { getActiveChatId, newChat, pauseCurrent, resumeAgent, sendFromWindow, stopEverything } from './conversation';
+import { currentBusy, onBusyChanged } from './busy';
+import { stopHint } from './stop-logic';
 import { onCursorMove, onOverlayState } from './overlay';
 import { openChatsWindow } from './chats-window';
 import { openSettingsWindow } from './settings-window';
@@ -201,12 +203,14 @@ function buildState(): NotchState {
     clicky: { id: c.id, name: c.name, color: c.color },
     clickys: s.clickys.map((x) => ({ id: x.id, name: x.name, color: x.color })),
     phase,
-    line: confirm ? `${confirm} · enter to allow` : busy ? (phase === 'speaking' ? firstLine : phase === 'thinking' ? transcript : phase === 'error' ? reply : undefined) : undefined,
+    line: currentBusy()?.mode === 'paused' ? stopHint('paused', hotkeyLabel(s.hotkeys.stop ?? ['Escape'], process.platform)) : confirm ? `${confirm} · enter to allow` : busy ? (phase === 'speaking' ? firstLine : phase === 'thinking' ? transcript : phase === 'error' ? reply : undefined) : undefined,
     expanded,
     turns: busy && reply && phase === 'speaking' && turns[turns.length - 1]?.role !== 'assistant' ? [...turns, { id: 'live', role: 'assistant', text: reply }] : turns,
     chatId,
     theme: 'dark',
     hotkeyLabel: hotkeyLabel(s.hotkeys.talk, process.platform),
+    busy: currentBusy()?.mode ?? null,
+    stopLabel: hotkeyLabel(s.hotkeys.stop ?? ['Escape'], process.platform),
   };
 }
 
@@ -307,12 +311,16 @@ export function initNotch(): void {
       sendCollapse();
       openSettingsWindow('clickys');
     } else if (a === 'stop') {
-      const id = getActiveChatId();
-      if (id) stopChat(id);
+      stopEverything('notch');
+    } else if (a === 'pause') {
+      pauseCurrent();
+    } else if (a === 'continue') {
+      resumeAgent();
     }
   });
 
   onOverlayState(onState);
+  onBusyChanged(() => pushState());
   onChatsChanged(() => pushState());
   onCursorMove(onCursor);
   onSettingsChanged((s, prev) => {

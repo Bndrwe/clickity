@@ -59,6 +59,12 @@
           </div></div>
           <!-- quick follow-up: continue the same chat in the type box under the bubble -->
           <div id="reply-row" class="reply-row"><button id="reply-btn" class="reply-btn" type="button" tabindex="-1">reply</button></div>
+          <!-- busy: "esc to stop" / "esc to pause" + stop; a paused agent run: continue / stop -->
+          <div id="stop-row" class="stop-row">
+            <p id="stop-hint" class="stop-hint"></p>
+            <button id="continue-btn" class="stop-btn go" type="button" tabindex="-1">continue</button>
+            <button id="stop-btn" class="stop-btn" type="button" tabindex="-1"><span class="sq" aria-hidden="true"></span><span id="stop-btn-t">stop</span></button>
+          </div>
         </div>
       </div>
 

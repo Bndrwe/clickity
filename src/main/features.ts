@@ -20,7 +20,7 @@ import { log } from './log';
  * The extra chord-engine handlers (dictation, the type tap, the hands-free toggle) plus Enter /
  * Esc wrappers: a waiting draft / walkthrough / routine offer gets the key first, then the base.
  */
-export function featureHotkeyHandlers(base: { onEnter(): void; onEscape(): void }): Partial<HotkeyHandlers> & { onEnter(): void; onEscape(): void } {
+export function featureHotkeyHandlers(base: { onEnter(): void; onEscape(): void; onStop?(): void }): Partial<HotkeyHandlers> & { onEnter(): void; onEscape(): void } {
   return {
     onDictateDown,
     onDictateDraft,
@@ -38,6 +38,11 @@ export function featureHotkeyHandlers(base: { onEnter(): void; onEscape(): void 
     onEscape: () => {
       if (draftEscape() || routineEscape()) return;
       base.onEscape();
+    },
+    // the stop / pause key (default esc): a draft / dictation / routine offer first, then the turn
+    onStop: () => {
+      if (draftEscape() || routineEscape()) return;
+      (base.onStop ?? base.onEscape)();
     },
   };
 }

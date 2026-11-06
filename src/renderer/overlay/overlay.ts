@@ -1,7 +1,7 @@
 // Overlay renderer: the cursor companion, reply bubble, pointing flight, mic capture and speech playback.
 // Talks to main only through window.overlay (see src/shared/ipc.ts).
 import type { OverlayApi } from '../../shared/ipc';
-import type { CompanionPhase, InkCommand, OverlayChoice, OverlayConfig, OverlayPoint, OverlayState, PttStopRequest, SpeakCommand } from '../../shared/types';
+import type { CompanionPhase, InkCommand, OverlayBusy, OverlayChoice, OverlayConfig, OverlayPoint, OverlayState, PttStopRequest, SpeakCommand } from '../../shared/types';
 import { MicRecorder, encodeWav, peakLevel, resampleTo16k } from './audio';
 import { Spring2D, clamp, ease, spring } from './motion';
 import { Speaker } from './speech';
@@ -35,6 +35,10 @@ const noteEl = $('note');
 const stepEl = $('step');
 const confirmEl = $('confirm');
 const confirmTextEl = $('confirm-text');
+const stopHintEl = $('stop-hint');
+const stopBtn = $<HTMLButtonElement>('stop-btn');
+const stopBtnText = $('stop-btn-t');
+const continueBtn = $<HTMLButtonElement>('continue-btn');
 const choiceWrap = $('choice-wrap');
 const choiceOptsEl = $('choice-opts');
 const choiceHintEl = $('choice-hint');
@@ -125,6 +129,10 @@ let localNote = '';
 let confirmText = '';
 /** agent mode: "step 2 of 8" */
 let stepText = '';
+/** busy: the stop key works ("esc to stop" + stop button); null = idle */
+let busy: OverlayBusy | null = null;
+/** the user stopped the last reply: it lingers marked "stopped" */
+let stoppedReply = false;
 /** a choice question waiting for an answer (pills); null = none */
 let choice: OverlayChoice | null = null;
 /** the type box was opened from the bubble (reply / something else / type chord over a reply): keep the bubble up */
@@ -537,7 +545,7 @@ function renderBubble(): void {
   bubbleEl.classList.toggle('has-step', wantStep);
   confirmEl.setAttribute('aria-hidden', String(!wantConfirm));
   // status lines are shown even with the reply bubble turned off: they explain why nothing happens
-  const note = phase === 'listening' || phase === 'transcribing' ? localNote || serverNote : phase !== 'idle' && phase !== 'error' ? serverNote : '';
+  const note = phase === 'listening' || phase === 'transcribing' ? localNote || serverNote : phase !== 'idle' && phase !== 'error' ? serverNote : stoppedReply && wantReply ? 'stopped' : '';
   const wantNote = !!note;
   noteEl.textContent = note;
   bubbleEl.classList.toggle('has-note', wantNote);
@@ -567,7 +575,18 @@ function renderBubble(): void {
   const wantReplyBtn = wantReply && !wantChoice && !wantConfirm && !typeOpen && (phase === 'speaking' || lingering) && !isError;
   bubbleEl.classList.toggle('has-reply-btn', wantReplyBtn);
 
-  const want = isError || wantTranscript || wantReply || wantNote || wantConfirm || wantStep || wantChoice;
+  // busy: a quiet "esc to stop" under whatever the bubble shows; a paused agent run always shows
+  const paused = busy?.mode === 'paused';
+  const wantStop = !!busy && phase !== 'idle' && phase !== 'error' && !wantConfirm && !wantChoice && !typeOpen && (paused || wantTranscript || wantReply || wantNote || wantStep);
+  if (wantStop && busy) {
+    stopHintEl.textContent = busy.hint;
+    stopBtnText.textContent = busy.mode === 'pause' ? 'pause' : 'stop';
+    stopBtn.setAttribute('aria-label', busy.mode === 'pause' ? `pause (${busy.key})` : `stop (${busy.key})`);
+  }
+  bubbleEl.classList.toggle('has-stop', wantStop);
+  bubbleEl.classList.toggle('is-paused', wantStop && paused);
+
+  const want = isError || wantTranscript || wantReply || wantNote || wantConfirm || wantStep || wantChoice || wantStop;
   if (want !== bubbleIn) {
     bubbleIn = want;
     if (want) bubbleSnap = true;
@@ -593,6 +612,7 @@ function onState(s: OverlayState): void {
   confirmText = (s.confirm ?? '').trim();
   bubbleEl.classList.toggle('confirm-always', !!s.confirmAlways); // agent mode: "a = always allow" 
   stepText = (s.step ?? '').trim();
+  stoppedReply = phase === 'idle' && !!s.stopped;
   if (phase !== 'listening' && phase !== 'transcribing') micNote = '';
   localNote = modelNote || micNote;
 
@@ -1143,6 +1163,12 @@ api.onVisuals((v) => {
   kick();
 });
 api.onChoice(onChoice);
+api.onBusy((b) => {
+  busy = b;
+  renderBubble();
+});
+stopBtn.addEventListener('click', () => api.stop());
+continueBtn.addEventListener('click', () => api.resume());
 replyBtn.addEventListener('click', () => {
   replyBox = true;
   api.openReply();

@@ -17,6 +17,9 @@ export interface TrayActions {
   isPaused(): boolean;
   setPaused(paused: boolean): void;
   clearConversation(): void;
+  /** clickity is doing something the "stop" item can stop */
+  isBusy?(): boolean;
+  stop?(): void;
   quit(): void;
 }
 
@@ -123,6 +126,13 @@ function buildMenu(a: TrayActions): Menu {
         { label: 'manage clickys…', click: () => a.openSettings('clickys') },
       ],
     },
+    {
+      // stop / pause: enabled while clickity talks, thinks, listens, acts or dictates
+      label: `stop${a.isBusy?.() ? ` (${hotkeyLabel(s.hotkeys.stop ?? ['Escape'], process.platform)})` : ''}`,
+      enabled: !!a.isBusy?.(),
+      click: () => a.stop?.(),
+    },
+    { type: 'separator' },
     { label: 'chats…', click: () => a.openChats() },
     { label: 'settings…', accelerator: isMac ? 'Command+,' : undefined, click: () => a.openSettings() },
     {

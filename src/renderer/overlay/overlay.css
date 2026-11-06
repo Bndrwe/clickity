@@ -623,6 +623,84 @@ body {
   box-shadow: 0 0 0 1.5px var(--ink);
 }
 
+/* busy: a quiet "esc to stop" line + a small stop button (paused agent run: continue / stop) */
+.stop-row {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+.bubble.has-stop .stop-row {
+  display: flex;
+}
+.bubble.has-stop.has-reply-btn .reply-row {
+  display: none;
+}
+.stop-hint {
+  flex: 1;
+  margin: 0;
+  min-width: 0;
+  color: var(--ink-muted);
+  font: 400 12px/1.4 var(--sans);
+  text-transform: lowercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stop-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px 3px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-muted);
+  box-shadow: 0 0 0 1px var(--line);
+  font: 500 12px/1.4 var(--sans);
+  text-transform: lowercase;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: color 0.25s var(--ease), box-shadow 0.25s var(--ease), background 0.25s var(--ease);
+}
+.stop-btn .sq {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: currentColor;
+}
+.stop-btn:hover {
+  color: var(--ink);
+  box-shadow: 0 0 0 1px var(--ink-muted);
+}
+.stop-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--ink);
+}
+.stop-btn.go {
+  display: none;
+  color: var(--bg-elev);
+  background: var(--ink);
+  box-shadow: none;
+}
+.bubble.is-paused .stop-btn.go {
+  display: inline-flex;
+}
+.bubble.is-paused .stop-hint {
+  color: var(--ink-2);
+}
+.bubble.is-paused .stop-row {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.bubble.has-stop:not(.has-reply):not(.has-note):not(.has-step):not(.has-transcript) .stop-row {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
 /* choices as a vertical stack (one full-width row per option, Opal hairlines) */
 .choice-opts {
   display: flex;

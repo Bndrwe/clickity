@@ -18,6 +18,7 @@ import {
 } from '../../shared/types';
 import type { HotkeyStatus, KeyRecordEvent, UpdateState } from '../../shared/ipc';
 import { canonicalCode, chordLabel, orderChord, sameBinding, validateChord } from './keys';
+import { stopKeyProblem } from '../../main/stop-logic';
 import { initClickys, initNotchSetting } from './clickys';
 import { initExtras } from './extras';
 
@@ -654,14 +655,16 @@ const RECORD_PLACEHOLDER = 'press whatever keys…';
 const NATIVE_GRACE_MS = 300;
 
 function initKeys(): void {
-  type Which = 'talk' | 'type' | 'dictate' | 'typeTap' | 'alwaysOn';
-  const defs: Array<{ which: Which; well: HTMLElement; btn: HTMLElement; taps?: boolean }> = [
+  type Which = 'talk' | 'type' | 'dictate' | 'typeTap' | 'alwaysOn' | 'stop';
+  const defs: Array<{ which: Which; well: HTMLElement; btn: HTMLElement; taps?: boolean; stop?: boolean }> = [
     { which: 'talk', well: $('chord-talk'), btn: $('rec-talk') },
     { which: 'type', well: $('chord-type'), btn: $('rec-type') },
     { which: 'dictate', well: $('chord-dictate'), btn: $('rec-dictate') },
     // these two may also be a double / triple tap of one key
     { which: 'typeTap', well: $('chord-typeTap'), btn: $('rec-typeTap'), taps: true },
     { which: 'alwaysOn', well: $('chord-alwaysOn'), btn: $('rec-alwaysOn'), taps: true },
+    // stop / pause: one key (esc, an f-key) or a chord; a lone esc here means esc, not "cancel"
+    { which: 'stop', well: $('chord-stop'), btn: $('rec-stop'), stop: true },
   ];
   document.querySelectorAll<HTMLButtonElement>('[data-off]').forEach((b) =>
     b.addEventListener('click', () => {
@@ -677,7 +680,7 @@ function initKeys(): void {
   for (const d of defs) {
     syncers.push(() => {
       if (recording && (d as any)._active) return;
-      d.well.textContent = label(settings.hotkeys[d.which] ?? []);
+      d.well.textContent = label(settings.hotkeys[d.which] ?? (d.stop ? ['Escape'] : []));
     });
     d.btn.addEventListener('click', () => {
       if (recording) {
@@ -725,7 +728,7 @@ function initKeys(): void {
     let taps: { key: KeyName; count: number; timer?: number } | null = null;
     /** all keys released with this chord: cancel, complain, or save */
     function complete(chord: KeyName[]): void {
-      if (chord.length === 1 && chord[0] === 'Escape' && !taps) return finish(null);
+      if (chord.length === 1 && chord[0] === 'Escape' && !taps) return d.stop ? commitChord(chord) : finish(null);
       if (d.taps && chord.length === 1) {
         // a single key: maybe the first tap of a double / triple tap
         const key = chord[0];
@@ -748,7 +751,10 @@ function initKeys(): void {
     }
     function commitChord(chord: KeyName[]): void {
       const isTap = chord[0] === 'DoubleTap' || chord[0] === 'TripleTap';
-      if (!isTap) {
+      if (d.stop) {
+        const err = stopKeyProblem(chord, platform);
+        if (err) return showError(err);
+      } else if (!isTap) {
         const err = validateChord(chord, platform);
         if (err) return showError(err); // keep recording: try again
       }
@@ -801,7 +807,7 @@ function initKeys(): void {
       e.stopPropagation();
       if (e.repeat) return;
       const k = canonicalCode(e.code);
-      if (k === 'Escape' && domHeld.size === 0 && domPeak.length === 0 && !sawNative && !taps) return finish(null);
+      if (k === 'Escape' && domHeld.size === 0 && domPeak.length === 0 && !sawNative && !taps) return d.stop ? commitChord(['Escape']) : finish(null);
       domHeld.add(k);
       if (domHeld.size >= domPeak.length) domPeak = orderChord(domHeld);
       if (source === 'dom') return showKeys(domPeak);
@@ -863,7 +869,7 @@ function initKeys(): void {
     const talk: KeyName[] = mac ? ['Control', 'Fn'] : [...d.talk];
     const type: KeyName[] = mac ? ['Control', 'Alt', 'Space'] : [...d.type];
     const dictate: KeyName[] = mac ? ['Shift', 'Fn'] : [...d.dictate];
-    void save({ hotkeys: { talk, type, mode: d.mode, dictate, typeTap: [...d.typeTap], alwaysOn: [...d.alwaysOn] } });
+    void save({ hotkeys: { talk, type, mode: d.mode, dictate, typeTap: [...d.typeTap], alwaysOn: [...d.alwaysOn], stop: [...(d.stop ?? ['Escape'])] } });
     flash($('reset-keys'), 'defaults restored');
   });
 

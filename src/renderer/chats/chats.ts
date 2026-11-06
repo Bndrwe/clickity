@@ -36,6 +36,8 @@ let includeScreen = true;
 let attachments: ChatAttachment[] = [];
 /** turnIds currently streaming, by chatId */
 const streaming = new Map<string, string>();
+/** chats clickity is busy in (voice / typed / agent turns too: speaking, listening, acting…), by chatId */
+const busyChats = new Map<string, { mode: 'stop' | 'pause' | 'paused'; turnId?: string }>();
 /** waiting for send() to tell us which chat a new conversation landed in */
 let awaitingNewChat = false;
 let modelCache = new Map<ProviderKind, ModelInfo[]>();
@@ -144,7 +146,7 @@ function autosize(): void {
 }
 
 function isStreamingHere(): boolean {
-  return !!chat && streaming.has(chat.id);
+  return !!chat && (streaming.has(chat.id) || busyChats.has(chat.id));
 }
 
 function syncComposer(): void {
@@ -793,6 +795,7 @@ function metaFor(t: ChatTurn): string[] {
     if (t.model) bits.push(t.model.toLowerCase());
     if (t.points?.length) bits.push(`pointed at: ${t.points.join(', ').toLowerCase()}`);
     if (t.actions?.length) bits.push(t.actions.join(' · ').toLowerCase());
+    if (t.stopped && !t.error) bits.push('stopped');
   }
   if (t.at) bits.push(clock(t.at));
   return bits;
@@ -1051,12 +1054,57 @@ function renderConfirm(e: Extract<ChatEvent, { type: 'confirm' }>): void {
 
 function renderActing(e: Extract<ChatEvent, { type: 'acting' }>): void {
   // only the newest step shows progress; the run ending clears it everywhere
-  for (const n of el.turns.querySelectorAll('.agent-note.live')) n.remove();
+  for (const n of el.turns.querySelectorAll('.agent-note.live, .agent-run')) n.remove();
   if (!e.step) {
-    for (const n of el.turns.querySelectorAll('.agent-note:not(.live)')) n.remove();
+    for (const n of el.turns.querySelectorAll('.agent-note:not(.live), .agent-paused')) n.remove();
     return;
   }
-  agentSlot(e.turnId)?.replaceChildren(h('div', { class: 'agent-note live', text: `${e.step} · acting on your screen…` }));
+  const slot = agentSlot(e.turnId);
+  if (!slot) return;
+  slot.replaceChildren(h('div', { class: 'agent-run' }, h('span', { class: 'agent-note live', text: `${e.step} · acting on your screen…` }), pauseButton()));
+}
+
+/** "pause" next to an agent run's progress (the stop key does the same: esc) */
+function pauseButton(): HTMLElement {
+  const b = h('button', { class: 'agent-btn small', type: 'button', text: 'pause', title: 'pause after the current action' }) as HTMLButtonElement;
+  b.hidden = !(chat && busyChats.get(chat.id)?.mode === 'pause');
+  b.addEventListener('click', () => {
+    if (!chat) return;
+    b.disabled = true;
+    void api.pause(chat.id).catch(() => {});
+  });
+  return b;
+}
+
+/** busy changed for the open chat: stop button (composer), pause / paused row for agent runs */
+function renderBusy(e: Extract<ChatEvent, { type: 'busy' }>): void {
+  for (const n of el.turns.querySelectorAll('.agent-paused')) n.remove();
+  for (const b of el.turns.querySelectorAll<HTMLButtonElement>('.agent-run .agent-btn')) {
+    b.hidden = !(e.busy && e.mode === 'pause');
+    b.disabled = false;
+  }
+  if (!e.busy || e.mode !== 'paused' || !e.turnId) return;
+  const slot = agentSlot(e.turnId);
+  if (!slot) return;
+  for (const n of el.turns.querySelectorAll('.agent-note.live, .agent-run')) n.remove();
+  const go = h('button', { class: 'agent-btn primary', type: 'button', text: 'continue' }) as HTMLButtonElement;
+  const stop = h('button', { class: 'agent-btn', type: 'button', text: 'stop' }) as HTMLButtonElement;
+  go.addEventListener('click', () => {
+    go.disabled = stop.disabled = true;
+    void api.resume(e.chatId).catch(() => {});
+  });
+  stop.addEventListener('click', () => {
+    go.disabled = stop.disabled = true;
+    void api.stop(e.chatId).catch(() => {});
+  });
+  slot.append(
+    h('div', { class: 'agent-confirm agent-paused', role: 'group', 'aria-label': 'agent run paused' },
+      h('div', { class: 'agent-summary', text: 'paused' }),
+      h('div', { class: 'agent-actions' }, go, stop, h('span', { class: 'agent-hint', text: 'or enter · esc' })),
+    ),
+  );
+  afterGrow(false);
+  announce('paused. continue or stop?');
 }
 
 function onEvent(e: ChatEvent): void {
@@ -1070,6 +1118,10 @@ function onEvent(e: ChatEvent): void {
     }
   }
 
+  if (e.type === 'busy') {
+    if (e.busy) busyChats.set(e.chatId, { mode: e.mode ?? 'stop', turnId: e.turnId });
+    else busyChats.delete(e.chatId);
+  }
   if (e.type === 'start') streaming.set(e.chatId, e.turnId);
   if (e.type === 'done' || e.type === 'error') streaming.delete(e.chatId);
   // an agent run keeps the stop button up while it waits for approval or acts
@@ -1105,6 +1157,9 @@ function onEvent(e: ChatEvent): void {
       break;
     case 'acting':
       renderActing(e);
+      break;
+    case 'busy':
+      renderBusy(e);
       break;
     case 'turn':
       // a stored turn changed (its question was answered / dismissed)

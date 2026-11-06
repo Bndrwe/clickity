@@ -4,7 +4,8 @@
 import { session } from 'electron';
 import { getSettings, updateSettings } from './settings-store';
 import { getChat, listChats } from './chat-store';
-import { answerConfirm, answerFromWindow, cancelTalk, choicePending, confirmPending, isListening, onEnter, onEscape, onTalkDown, onTalkUp, sendFromWindow, submitTypedText } from './conversation';
+import { answerConfirm, answerFromWindow, busyNow, cancelTalk, choicePending, confirmPending, isListening, onEnter, onEscape, onStopKey, onTalkDown, onTalkUp, pauseChat, resumeChat, sendFromWindow, stopChat, stopEverything, stopKeyState, submitTypedText } from './conversation';
+import { grabOwner, hotkeyBackend, isGrabbed } from './hotkey';
 import { fakeInputLog } from './agent-input';
 import { logPath } from './log';
 import { trayMenu } from './tray';
@@ -17,6 +18,17 @@ export function installTestHook(): void {
     onTalkUp,
     onEscape,
     cancelTalk,
+    /** stop / pause: the key, the chats window / notch / tray buttons, what's grabbed */
+    onStopKey,
+    stopChat,
+    pauseChat,
+    resumeChat,
+    stopEverything,
+    busyNow,
+    stopKeyState,
+    isGrabbed,
+    grabOwner,
+    hotkeyBackend,
     /** agent mode: the enter key / chats window allow-deny, the pending state, faked actions */
     onEnter,
     answerConfirm,

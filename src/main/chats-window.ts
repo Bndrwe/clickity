@@ -1,6 +1,7 @@
 // The chats window: stored conversations + a composer. Single instance, always dark.
 import path from 'node:path';
 import { app, BrowserWindow, shell } from 'electron';
+import { resendBusy } from './busy';
 
 const isMac = process.platform === 'darwin';
 let win: BrowserWindow | null = null;
@@ -64,6 +65,8 @@ export function openChatsWindow(): BrowserWindow {
     win = null;
   });
 
+  // a turn may already be running (voice, agent run): show its stop / pause right away
+  w.webContents.on('did-finish-load', () => setTimeout(resendBusy, 300));
   void w.loadFile(path.join(__dirname, '../renderer/chats/chats.html'));
   return w;
 }

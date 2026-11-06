@@ -22,6 +22,7 @@ import { memoryPrompt } from './memory';
 import { activeAppName, isTerminalApp } from './live-context';
 import { holdHandsFree } from './hands-free';
 import { grabKeys, releaseKeys } from './hotkey';
+import { pokeBusy } from './busy';
 import { log } from './log';
 
 const MIN_PRESS_MS = 300;
@@ -78,6 +79,11 @@ export function isDictating(): boolean {
   return !!session;
 }
 
+/** A dictation records / transcribes, or a draft streams / waits in its preview (the stop key works). */
+export function dictationBusy(): boolean {
+  return !!session || !!pending || !!draftAbort;
+}
+
 /* ───────── chord handlers ───────── */
 
 export function onDictateDown(draft: boolean): void {
@@ -88,6 +94,7 @@ export function onDictateDown(draft: boolean): void {
   const release = holdHandsFree('dictation');
   const s: Session = { id: ++seq, win, startedAt: Date.now(), draft, abort: new AbortController(), release, app: activeAppName().catch(() => '') };
   session = s;
+  pokeBusy();
   log('dictation', `${draft ? 'draft' : 'dictate'} down (session ${s.id})`);
   const start = (): void => {
     if (session !== s) return;
@@ -115,6 +122,7 @@ export function onDictateCancel(): void {
   const s = session;
   if (!s) return;
   log('dictation', `cancelled (session ${s.id})`);
+  s.abort.abort(); // also after release: transcription stops, nothing is typed
   sendToOverlay(s.win, IPC.overlayPttCancel);
   cue(s.win, null);
   end(s);
@@ -143,8 +151,11 @@ export function onDictateUp(draft: boolean): void {
 
 function end(s: Session): void {
   if (session === s) session = null;
+  const w = resultWaiters.get(s.win.webContents.id);
   resultWaiters.delete(s.win.webContents.id);
+  if (w && s.abort.signal.aborted) w({ durationMs: 0, error: 'cancelled' });
   s.release();
+  pokeBusy();
 }
 
 function waitResult(s: Session): Promise<PttResult> {
@@ -156,7 +167,8 @@ function waitResult(s: Session): Promise<PttResult> {
     }, RESULT_TIMEOUT_MS);
     resultWaiters.set(id, (r) => {
       clearTimeout(timer);
-      resolve(r);
+      if (s.abort.signal.aborted) reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+      else resolve(r);
     });
   });
 }
@@ -187,6 +199,7 @@ async function finish(s: Session): Promise<void> {
   const screensP = s.draft ? captureScreens(screen.getCursorScreenPoint()).catch(() => [] as CapturedScreen[]) : null;
   const r = await resultP;
   const raw = await toText(r, settings, prompt, s.abort.signal);
+  if (s.abort.signal.aborted) return; // stopped while transcribing: type nothing
   const text = postProcess(raw, settings);
   log('dictation', `session ${s.id}: ${r.durationMs}ms → ${text.length} chars${s.draft ? ' (draft instruction)' : ''}`);
   if (!text) {
@@ -257,10 +270,12 @@ function confirm(win: BrowserWindow, preview: string, question: string): Promise
       if (pending === p) pending = null;
       releaseKeys('draft');
       state(win, { phase: 'idle' });
+      pokeBusy();
       resolve(ok);
     };
     const p = { settle };
     pending = p;
+    pokeBusy();
     const timer = setTimeout(() => settle(false), CONFIRM_TIMEOUT_MS);
     grabKeys('draft', { Return: () => settle(true), Escape: () => settle(false) });
     state(win, { phase: 'speaking', reply: preview, confirm: question });
@@ -335,6 +350,7 @@ export async function runDraft(opts: { instruction: string; screens: CapturedScr
   draftAbort?.abort();
   const abort = new AbortController();
   draftAbort = abort;
+  pokeBusy();
   const win = opts.win ?? overlayForPoint(screen.getCursorScreenPoint());
   const settings = getSettings();
   const kind = settings.provider;
@@ -368,6 +384,7 @@ export async function runDraft(opts: { instruction: string; screens: CapturedScr
     log('dictation', `draft from ${kind} / ${model}: ${text.length} chars in ${Date.now() - t0}ms`);
     if (!text) throw new Error('the model returned an empty draft');
     if (draftAbort === abort) draftAbort = null;
+    pokeBusy();
     const secret = looksSecret(text);
     const auto = settings.companion.actions === 'auto' && !secret;
     if (!auto) {
@@ -388,5 +405,6 @@ export async function runDraft(opts: { instruction: string; screens: CapturedScr
   } finally {
     if (draftAbort === abort) draftAbort = null;
     release();
+    pokeBusy();
   }
 }

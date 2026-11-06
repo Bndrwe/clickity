@@ -21,6 +21,11 @@ import {
   newChat,
   onEnter,
   onEscape,
+  onStopKey,
+  pauseChat,
+  resumeChat,
+  busyNow,
+  stopEverything,
   onTalkDown,
   onTalkUp,
   onType,
@@ -35,6 +40,7 @@ import { getChat, listChats, onChatsChanged, renameChat } from './chat-store';
 import { openChatsWindow, sendToChats } from './chats-window';
 import { getPermissions, installPermissionHandlers, requestPermission, resetPermissions } from './permissions';
 import { createTray, destroyTray, refreshTray } from './tray';
+import { onBusyChanged } from './busy';
 import { installAppMenu, launchedAtLogin } from './app-menu';
 import { applySettingsTheme, openSettingsWindow, sendToSettings } from './settings-window';
 import { log, logPath, logStartup } from './log';
@@ -240,6 +246,8 @@ function registerIpc(): void {
   ipcMain.handle(IPC.chatsDelete, (_e, id: unknown) => removeChat(assertId(id)));
   ipcMain.handle(IPC.chatsSend, (_e, req: ChatSendRequest) => sendFromWindow(req));
   ipcMain.handle(IPC.chatsStop, (_e, id: unknown) => stopChat(assertId(id)));
+  ipcMain.handle(IPC.chatsPause, (_e, id: unknown) => pauseChat(assertId(id)));
+  ipcMain.handle(IPC.chatsResume, (_e, id: unknown) => resumeChat(assertId(id)));
   ipcMain.handle(IPC.chatsActive, () => getActiveChatId());
   ipcMain.handle(IPC.chatsApprove, (_e, turnId: unknown) => answerConfirm(assertId(turnId), true));
   ipcMain.handle(IPC.chatsDeny, (_e, turnId: unknown) => answerConfirm(assertId(turnId), false));
@@ -315,7 +323,7 @@ async function bootstrap(): Promise<void> {
       },
       // dictation / draft, double-tap type box, hands-free toggle; enter / esc reach a waiting
       // draft, walkthrough or routine offer first, then agent mode (ignored unless something waits)
-      ...featureHotkeyHandlers({ onEnter, onEscape }),
+      ...featureHotkeyHandlers({ onEnter, onEscape: () => onEscape('hook'), onStop: () => onStopKey('hook') }),
       // AltGr / ctrl+alt+<key>: the chord was another shortcut, drop the recording quietly
       onTalkCancel: cancelTalk,
       isTalking: isListening,
@@ -337,8 +345,12 @@ async function bootstrap(): Promise<void> {
     isPaused: () => paused,
     setPaused,
     clearConversation: () => clearHistory(),
+    isBusy: () => !!busyNow(),
+    stop: () => stopEverything('tray'),
     quit: () => app.quit(),
   });
+  // the tray's "stop" item follows busy-ness
+  onBusyChanged(() => refreshTray());
 
   installAppMenu(appMenuActions);
 

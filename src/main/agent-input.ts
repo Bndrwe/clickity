@@ -17,6 +17,10 @@ export async function performActions(actions: InputAction[], signal?: AbortSigna
     throw e;
   }
   if (fake()) {
+    // take about as long as the real thing (waits wait, typing ~30ms a character), so tests can
+    // press the stop key mid-action; logged once done
+    const ms = actions.reduce((n, a) => n + (a.type === 'wait' ? a.ms : a.type === 'type' ? a.text.length * 30 : 0), 0);
+    if (ms > 0) await new Promise((r) => setTimeout(r, Math.min(ms, 10_000)));
     fakeInputLog.push(actions.map((a) => ({ ...a })));
     log('agent', `fake input: ${JSON.stringify(actions)}`);
     return;

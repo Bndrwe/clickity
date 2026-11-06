@@ -16,6 +16,7 @@ const el = {
   switchList: $('switch-list'),
   atts: $('atts'),
   screen: $<HTMLButtonElement>('screen'),
+  ctl: $('ctl'),
 };
 
 /** clickity mark (same geometry as assets/logo-mark.svg), in the clicky's color */
@@ -85,6 +86,7 @@ el.pill.addEventListener('mouseleave', () => {
   leaveTimer = window.setTimeout(collapse, 260);
 });
 el.pill.addEventListener('mousedown', (e) => {
+  if ((e.target as HTMLElement).closest('.ctl')) return; // stop / pause / continue: just a click
   if ((e.target as HTMLElement).closest('button')) {
     if (!pinned) expand(true);
     return;
@@ -305,6 +307,8 @@ function render(): void {
   el.line.textContent = line;
   el.line.classList.toggle('err', s.phase === 'error' && !note);
 
+  renderControls(s);
+
   el.switchList.hidden = !switching;
   el.msgs.hidden = switching;
   if (switching) return renderSwitcher();
@@ -339,6 +343,41 @@ function render(): void {
     el.msgs.append(p);
   }
   if (atBottom || !known.size) el.msgs.scrollTop = el.msgs.scrollHeight;
+}
+
+/** busy: a stop button (agent runs: pause + stop; paused: continue + stop) */
+let ctlKey = '';
+function renderControls(s: NotchState): void {
+  const mode = s.busy ?? null;
+  const key = `${mode}|${s.stopLabel}`;
+  el.ctl.hidden = !mode;
+  if (key === ctlKey) return;
+  ctlKey = key;
+  if (!mode) return el.ctl.replaceChildren();
+  const btn = (label: string, a: 'stop' | 'pause' | 'continue', title: string, primary = false): HTMLButtonElement => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.ctl = a;
+    b.title = title;
+    if (primary) b.className = 'primary';
+    if (a === 'stop') {
+      const sq = document.createElement('span');
+      sq.className = 'sq';
+      sq.setAttribute('aria-hidden', 'true');
+      b.append(sq);
+    }
+    b.append(label);
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      api.action(a);
+    });
+    return b;
+  };
+  const k = s.stopLabel || 'esc';
+  const stop = btn('stop', 'stop', mode === 'pause' ? 'stop the agent run' : `stop (${k})`);
+  if (mode === 'paused') el.ctl.replaceChildren(btn('continue', 'continue', 'continue (enter)', true), stop);
+  else if (mode === 'pause') el.ctl.replaceChildren(btn('pause', 'pause', `pause after this action (${k})`), stop);
+  else el.ctl.replaceChildren(stop);
 }
 
 api.onState((s) => {

@@ -33,7 +33,11 @@ import { getChatsWindow, sendToChats } from './chats-window';
 import { transcribe } from './speech/stt';
 import { synthesize } from './speech/tts';
 import { getProvider } from './providers/index';
-import { hotkeyLabel, setAgentKeysSuspended, setChoiceKeys, setConfirmKeys } from './hotkey';
+import { grabFiredRecently, hotkeyLabel, chordToAccelerator, setAgentKeysSuspended, setBusyStopKey, setChoiceKeys, setConfirmKeys } from './hotkey';
+import { PauseControl, PressDedupe, busyState, stopHint, stopStep, type BusySnapshot } from './stop-logic';
+import { publishBusy, setBusyPoke, setBusyResend, type BusyInfo } from './busy';
+import { onOverlayState } from './overlay';
+import { onSettingsChanged } from './settings-store';
 import { hasVisualTag, parseVisualTags, stripVisualTags, visualContextNote, visualPromptSection } from './visual-tags';
 import type { ChatVisual } from '../shared/visuals';
 import { askContextNote, composeAskReply, parseAskTag, spokenAsk, stripAskTags, type ParsedAsk } from './ask-tags';
@@ -53,10 +57,10 @@ import {
 import { log } from './log';
 // features beside the core turn (memory, highlights, walkthroughs, routines, web pages, pdfs, drafts…)
 import { capturedSince, deleteCaptureFiles } from './capture';
-import { alwaysAllow, clearHighlights, completionCue, countdown, destructiveReason, extrasPrompt, handleReplyExtras, offerRoutines, runWalkthrough, stripExtras, type ReplyExtras } from './turn-extras';
+import { alwaysAllow, clearHighlights, completionCue, countdown, destructiveReason, extrasPrompt, handleReplyExtras, offerRoutines, routineEscape, runWalkthrough, stripExtras, type ReplyExtras } from './turn-extras';
 import { pagesForMessage } from './web-fetch';
 import { extractPdfText } from './pdf-text';
-import { isDictating, isDraftRequest, runDraft } from './dictation';
+import { dictationBusy, draftEscape, isDictating, isDraftRequest, runDraft } from './dictation';
 import { copyText } from './text-insert';
 import { grabKeys, releaseKeys } from './hotkey';
 import type { HandsFreeUtterance, Routine } from '../shared/types';
@@ -103,6 +107,10 @@ interface Turn {
   gesture?: { path: GesturePath; stop: (() => void) | null; cleared?: boolean };
   /** the latest reply's walkthrough steps / routine offers ([STEP] / [ROUTINE], turn-extras.ts) */
   extras?: ReplyExtras;
+  /** the latest assistant turn stored without error (the stop key marks it "stopped") */
+  replyId?: string;
+  /** the latest visible reply text (the bubble keeps it when stopped) */
+  lastReply?: string;
 }
 
 /** The turn is over: drop its screenshot temp files now (the 2-minute sweep is only a backstop) and fade highlights. */
@@ -449,19 +457,25 @@ function recallPoints(turn: Turn): void {
   turn.pointed.clear();
 }
 
-/** Abort the in-flight turn (recording, thinking or speaking) and tidy its overlay. */
-function cancelCurrent(): void {
+/**
+ * Abort the in-flight turn (recording, thinking or speaking) and tidy its overlay. `stopped`:
+ * the user stopped it (stop key / button): the bubble keeps the text a moment, marked "stopped".
+ */
+function cancelCurrent(opts: { stopped?: boolean; reply?: string } = {}): void {
   const turn = current;
   if (!turn) return;
   current = null;
   turn.controller.abort();
+  turn.agent?.waiting?.(false, 'cancelled');
   clearInk(turn);
   if (turn.stage === 'recording') sendToOverlay(turn.overlay, IPC.overlayPttCancel);
   sendToOverlay(turn.overlay, IPC.overlayStopSpeaking);
   for (const win of turn.pointed) sendToOverlay(win, IPC.overlayStopSpeaking);
   recallPoints(turn);
-  sendState(turn.overlay, { phase: 'idle' });
+  const reply = opts.reply ?? turn.lastReply;
+  sendState(turn.overlay, opts.stopped && turn.stage !== 'recording' && reply ? { phase: 'idle', reply, stopped: true } : { phase: 'idle' });
   releaseTurnResources(turn);
+  syncBusy();
 }
 
 function beginTurn(overlay: BrowserWindow | null, stage: Turn['stage'], kind: Turn['kind']): Turn {
@@ -480,6 +494,7 @@ function beginTurn(overlay: BrowserWindow | null, stage: Turn['stage'], kind: Tu
     chatId: null,
   };
   current = turn;
+  syncBusy();
   return turn;
 }
 
@@ -490,6 +505,7 @@ function endTurn(turn: Turn, finalState: OverlayState | null = { phase: 'idle' }
   recallPoints(turn);
   if (finalState) sendState(turn.overlay, finalState);
   releaseTurnResources(turn);
+  syncBusy();
 }
 
 function failTurn(turn: Turn, err: unknown): void {
@@ -577,9 +593,12 @@ export function removeChat(id: string): void {
   store.deleteChat(id);
 }
 
-/** Abort the reply streaming into `chatId` (chats window stop button). */
+/**
+ * Chats window / notch stop button: stop whatever runs in `chatId` — a reply streaming, speech,
+ * a voice turn, an agent run (stopped, not paused; recorded "stopped by you").
+ */
 export function stopChat(chatId: string): void {
-  if (current && current.chatId === chatId) cancelCurrent();
+  if (current && current.chatId === chatId) stopOrPause('stop', 'chats');
 }
 
 /** Last `pairs` completed user → assistant exchanges of a chat, as text-only model context. */
@@ -599,7 +618,7 @@ function chatContext(chatId: string, pairs: number): ChatMessage[] {
     for (const a of replies) {
       if (!a.text.trim() && !a.actions?.length) continue;
       if (a.error && !a.actions?.length) {
-        if (a.error.startsWith('not done')) parts.push(`${a.text.trim()} (${a.error})`.trim());
+        if (a.error.startsWith('not done') || a.error === 'stopped by you') parts.push(`${a.text.trim()} (${a.error})`.trim());
         continue; // failed / stopped replies aren't context
       }
       // Remember where we pointed / what we did so follow-ups ("and then?") make sense.
@@ -665,6 +684,7 @@ async function runTurn(turn: Turn, input: TurnInput): Promise<void> {
   if (input.source !== 'window' && !input.attachments?.length && (await runSwitchCommand(turn, input))) return;
   const chatId = turn.chatId ?? resolveChat(null, false);
   turn.chatId = chatId;
+  syncBusy(); // the chats window can show stop for this turn now
   // the chat's clicky: its name / persona in the prompt, its brain and voice overrides
   const settings = settingsForClicky(getSettings(), chatClickyId(store.getSummary(chatId) ?? {}));
   const kind = input.provider ?? settings.provider;
@@ -777,14 +797,17 @@ async function askModel(
   ctx: ModelCtx,
   messages: ChatMessage[],
   screens: CapturedScreen[],
-  opts: { thinking: OverlayState; step?: string; imageNames?: string[] },
+  opts: { thinking: OverlayState; step?: string; imageNames?: string[]; call?: AbortController },
 ): Promise<ModelReply | null> {
   const { settings, kind, model, cfg, chatId, input } = ctx;
-  const signal = turn.controller.signal;
+  // agent runs pass `call`: pausing aborts just this model call, not the turn
+  const signal = opts.call ? AbortSignal.any([turn.controller.signal, opts.call.signal]) : turn.controller.signal;
+  const pausedCall = (): boolean => !!opts.call?.signal.aborted && !turn.controller.signal.aborted;
   const show = (state: OverlayState): void => {
     if (isTurnCurrent(turn)) sendState(turn.overlay, state);
   };
   const assistantId = store.newId();
+  turn.replyId = undefined;
   emitChat({ type: 'start', chatId, turnId: assistantId });
 
   let buffer = '';
@@ -805,6 +828,8 @@ async function askModel(
     });
     if (error || !stored) emitChat({ type: 'error', chatId, turnId: assistantId, error: error ?? 'chat was deleted' });
     else emitChat({ type: 'done', chatId, turn: stored });
+    if (!error && stored) turn.replyId = assistantId;
+    if (text) turn.lastReply = text;
   };
 
   try {
@@ -832,6 +857,7 @@ async function askModel(
       if (!force && now - lastSentAt < STATE_THROTTLE_MS) return;
       lastSent = visible;
       lastSentAt = now;
+      if (visible) turn.lastReply = visible;
       show(visible ? { phase: 'speaking', reply: visible, step: opts.step } : opts.thinking);
       emitChat({ type: 'delta', chatId, turnId: assistantId, text: visible });
     };
@@ -849,8 +875,9 @@ async function askModel(
       }
     }
     if (signal.aborted) {
-      log('turn', `${turn.id} stopped after ${Date.now() - t0}ms`);
-      record(visibleText(buffer, false), [], 'stopped');
+      const paused = pausedCall();
+      log('turn', `${turn.id} ${paused ? 'paused' : 'stopped'} after ${Date.now() - t0}ms`);
+      record(visibleText(buffer, false), [], paused ? 'paused' : 'stopped');
       return null;
     }
     log('turn', `${turn.id} reply from ${kind} / ${model}: first text ${firstAt ? firstAt - t0 : '-'}ms, total ${Date.now() - t0}ms, ${buffer.length} chars`);
@@ -874,6 +901,10 @@ async function askModel(
     if (isTurnCurrent(turn)) sendToOverlay(turn.overlay, IPC.overlayVisuals, visuals.length ? visuals : null);
     return { assistantId, raw: buffer, reply, points, actions: parsed.actions, done: parsed.done, ask };
   } catch (err) {
+    if (pausedCall()) {
+      record(visibleText(buffer, false), [], 'paused');
+      return null;
+    }
     record(visibleText(buffer, false), [], signal.aborted ? 'stopped' : errorMessage(err));
     throw err;
   }
@@ -953,7 +984,31 @@ interface PendingConfirm {
 
 interface AgentState {
   confirm: PendingConfirm | null;
+  /** the act → look → continue loop is running (false once it says its final words) */
+  running: boolean;
+  /** the stop key: first press pauses at the next safe point, the second stops */
+  pause: PauseControl;
+  /** automatic mode's 3 s countdown before the first action */
+  countdown: boolean;
+  /** the in-flight model call (pausing aborts just this) */
+  call: AbortController | null;
+  /** paused and waiting: (true) = continue, (false) = stop */
+  waiting: ((go: boolean, why: string) => void) | null;
+  /** the newest assistant turn of the run ("stopped by you" goes there; the paused row sits under it) */
+  lastTurnId: string | null;
+  /** its visible text (the bubble while paused / pausing) */
+  lastReply: string;
+  /** a keyboard action that would press the stop key is running: the stop-key grab is released */
+  typingStopKey: boolean;
 }
+
+function newAgentState(): AgentState {
+  return { confirm: null, running: false, pause: new PauseControl(), countdown: false, call: null, waiting: null, lastTurnId: null, lastReply: '', typingStopKey: false };
+}
+
+/** a paused agent run stops by itself after this long */
+const PAUSE_TIMEOUT_MS = 120_000;
+const AGENT_RESUME = 'i paused you for a moment and now want you to continue. here is the screen now. carry on with the task from where you were, or reply [DONE] if it is finished.';
 
 /** Agent mode applies to this turn: actions on, the turn may point (voice / type / shared screen), and we can see. */
 function agentEnabled(settings: Settings, input: TurnInput, screens: CapturedScreen[]): boolean {
@@ -1022,16 +1077,19 @@ function inputProblem(detail: string): string {
   return `agent mode ${/^(needs|is|can|requires|has|isn't)\b/.test(d) ? d : `can't act: ${d}`}${where}`;
 }
 
-/** Keys while an agent run owns the companion: enter approves (only while asking), esc stops. */
+/**
+ * Keys while an agent run waits for approval: enter approves, esc says no. Otherwise nothing
+ * here: the stop key (owner 'busy', see syncBusy) pauses / stops the run.
+ */
 function grabAgentKeys(turn: Turn, confirming: boolean): void {
-  if (!isTurnCurrent(turn)) return setConfirmKeys(null);
-  setConfirmKeys(confirming ? { onEnter, onEscape } : { onEscape });
+  if (!isTurnCurrent(turn) || !confirming) return setConfirmKeys(null);
+  setConfirmKeys({ onEnter, onEscape: () => onEscape('grab') });
 }
 
 /** Show what's about to happen and wait for enter / the chats window's allow (esc / deny / 60s = no). */
 function confirmActions(turn: Turn, ctx: ModelCtx, res: ModelReply, summary: string, step: string | undefined, offerAlways = true): Promise<ConfirmOutcome> {
   const signal = turn.controller.signal;
-  const agent = (turn.agent ??= { confirm: null });
+  const agent = (turn.agent ??= newAgentState());
   return new Promise<ConfirmOutcome>((resolve, reject) => {
     if (signal.aborted) return reject(abortError());
     let settled = false;
@@ -1041,6 +1099,7 @@ function confirmActions(turn: Turn, ctx: ModelCtx, res: ModelReply, summary: str
       clearTimeout(timer);
       signal.removeEventListener('abort', onAbort);
       if (agent.confirm === pending) agent.confirm = null;
+      syncBusy();
       releaseKeys('always-allow');
       grabAgentKeys(turn, false);
       emitChat({ type: 'confirm', chatId: ctx.chatId, turnId: res.assistantId, summary, pending: false, outcome: outcome ?? 'cancelled' });
@@ -1053,6 +1112,7 @@ function confirmActions(turn: Turn, ctx: ModelCtx, res: ModelReply, summary: str
     const timer = setTimeout(() => finish('timeout'), CONFIRM_TIMEOUT_MS);
     signal.addEventListener('abort', onAbort, { once: true });
     agent.confirm = pending;
+    syncBusy();
     grabAgentKeys(turn, true);
     // "a" = always allow: agent mode becomes automatic (destructive steps still ask)
     if (offerAlways)
@@ -1069,20 +1129,35 @@ function confirmActions(turn: Turn, ctx: ModelCtx, res: ModelReply, summary: str
   });
 }
 
-/** Fly to each target, click / type / press, one action at a time. */
-async function performPlanned(turn: Turn, planned: PlannedAction[], step: string, reply: string): Promise<void> {
+/** Does this input action press the stop key itself ([KEY:esc] with esc as the stop key)? */
+function pressesStopKey(a: InputAction): boolean {
+  if (a.type !== 'key') return false;
+  const stop = getSettings().hotkeys.stop ?? ['Escape'];
+  return a.keys.some((k) => stop.includes(k) && !['Control', 'Alt', 'Shift', 'Meta'].includes(k));
+}
+
+/**
+ * Fly to each target, click / type / press, one action at a time. A pause requested meanwhile
+ * lets the current action finish (never half a word) and skips the rest. Returns how many ran.
+ */
+async function performPlanned(turn: Turn, planned: PlannedAction[], step: string, reply: string): Promise<number> {
   const signal = turn.controller.signal;
   closeTyping(); // the type box is the only part of an overlay that takes clicks
   let prev: BrowserWindow | null = null;
+  let done = 0;
   for (const p of planned) {
     if (!isTurnCurrent(turn)) throw abortError();
+    if (done > 0 && turn.agent?.pause.pending) {
+      log('agent', `${turn.id} pausing: skipped ${planned.length - done} action(s)`);
+      break;
+    }
     const t = p.target;
     if (t?.win && t.local) {
       if (prev && prev !== t.win) {
         sendToOverlay(prev, IPC.overlayPoint, null);
         turn.pointed.delete(prev);
       }
-      sendState(t.win, { phase: 'acting', reply: t.win === turn.overlay ? reply : undefined, step });
+      if (!turn.agent?.pause.pending) sendState(t.win, { phase: 'acting', reply: t.win === turn.overlay ? reply : undefined, step });
       sendToOverlay(t.win, IPC.overlayPoint, t.local);
       turn.pointed.add(t.win);
       prev = t.win;
@@ -1091,25 +1166,34 @@ async function performPlanned(turn: Turn, planned: PlannedAction[], step: string
     }
     const keyboard = p.input.type === 'type' || p.input.type === 'key';
     // our own synthetic keys must not reach the chord engine / the esc grab (an [KEY:esc] would stop us)
+    const ownStop = pressesStopKey(p.input);
     if (keyboard) {
       setConfirmKeys(null);
       setAgentKeysSuspended(true);
     }
+    if (ownStop && turn.agent) {
+      turn.agent.typingStopKey = true;
+      applyBusy(); // now, not on the next tick: the key is about to be pressed
+    }
     try {
       await performActions([p.input], signal);
+      done++;
     } finally {
-      if (keyboard) {
-        setAgentKeysSuspended(false);
-        grabAgentKeys(turn, false);
+      if (keyboard) setAgentKeysSuspended(false);
+      if (ownStop && turn.agent) {
+        turn.agent.typingStopKey = false;
+        syncBusy();
       }
     }
   }
+  return done;
 }
 
 /**
  * The act → look → continue loop. `first` is the reply that asked for actions; each round asks
  * (in 'ask' mode), acts, waits for the UI, takes fresh screenshots and lets the model continue,
  * until [DONE], a reply without actions, esc / stop, an error, or max steps.
+ * The stop key pauses it at a safe point (see requestPause); enter continues with a fresh look.
  */
 async function runAgent(
   turn: Turn,
@@ -1125,8 +1209,9 @@ async function runAgent(
   let res = start.first;
   let steps = 0;
   let speech: Promise<void> = Promise.resolve();
-  let lastTurnId = res.assistantId;
-  turn.agent ??= { confirm: null };
+  const agent = (turn.agent ??= newAgentState());
+  agent.lastTurnId = res.assistantId;
+  agent.lastReply = res.reply;
   log('agent', `${turn.id} agent run (${settings.companion.actions}, max ${maxSteps} steps)`);
 
   const status = await agentInputStatus();
@@ -1138,8 +1223,10 @@ async function runAgent(
 
   /** Final words. `spoken`: the text was already said as the step's plan, so just let it be read. */
   const end = async (text: string, step?: string, spoken = false, offer?: AskOffer | null): Promise<void> => {
+    agent.running = false; // from here the stop key just stops the final words
+    syncBusy();
     await speech;
-    emitChat({ type: 'acting', chatId, turnId: lastTurnId, step: null });
+    emitChat({ type: 'acting', chatId, turnId: agent.lastTurnId ?? res.assistantId, step: null });
     setConfirmKeys(null);
     if (steps) completionCue(turn.overlay, settings);
     if (!spoken || !input.speak || offer) return finishReply(turn, input, settings, text, [], screens, step, offer);
@@ -1151,11 +1238,59 @@ async function runAgent(
     endTurn(turn);
   };
 
+  const stepLabel = (): string => `step ${Math.max(1, steps)} of ${maxSteps}`;
+
+  /**
+   * Fresh screenshots → the model continues. Pauses first when the stop key asked for it (and
+   * again if it's pressed while the model thinks); after a pause the model is told so.
+   * null = the run was stopped.
+   */
+  const look = async (text: string): Promise<ModelReply | null> => {
+    for (;;) {
+      if (agent.pause.reached()) {
+        const go = await waitPaused(turn, agent, steps ? stepLabel() : undefined);
+        if (!go || !isTurnCurrent(turn)) return null;
+        text = AGENT_RESUME;
+      }
+      if (!isTurnCurrent(turn)) return null;
+      const label = steps ? stepLabel() : undefined;
+      sendState(turn.overlay, { phase: 'thinking', step: label });
+      const fresh = await safeCapture(screen.getCursorScreenPoint());
+      if (!isTurnCurrent(turn)) return null;
+      if (agent.pause.pending) continue; // pressed while capturing
+      if (!fresh.length) throw userError("couldn't see the screen after acting — stopped");
+      screens = fresh;
+      // only the newest message carries screenshots
+      userMsg = { role: 'user', text, images: screens.map((s) => s.image) };
+      agent.call = new AbortController();
+      let next: ModelReply | null;
+      try {
+        next = await askModel(turn, ctx, [...history, userMsg], screens, { thinking: { phase: 'thinking', step: label }, step: label, call: agent.call });
+      } finally {
+        agent.call = null;
+      }
+      if (!isTurnCurrent(turn)) return null;
+      if (next) return next;
+      if (!agent.pause.pending) return null;
+      // paused while the model was thinking: that partial reply is recorded as "paused"; look again after
+    }
+  };
+
   try {
+    agent.running = true;
+    syncBusy();
     grabAgentKeys(turn, false);
     for (;;) {
       if (!isTurnCurrent(turn)) return;
-      lastTurnId = res.assistantId;
+      if (agent.pause.pending) {
+        // paused before acting on this reply: the screen may change meanwhile, so look again after
+        history = [...history, { role: 'user', text: userMsg.text }, { role: 'assistant', text: `${res.raw.trim() || '(planned)'} (the user paused me before i did this)` }];
+        const next = await look(AGENT_RESUME);
+        if (!next) return;
+        res = next;
+      }
+      agent.lastTurnId = res.assistantId;
+      agent.lastReply = res.reply || agent.lastReply;
       if (!res.actions.length) {
         // finished: "[DONE] saved it" or just an answer
         await end(res.reply || 'done.', steps ? `${steps} step${steps === 1 ? '' : 's'}` : undefined, false, askOffer(ctx, res));
@@ -1173,8 +1308,15 @@ async function runAgent(
       const destructive = destructiveReason(res.actions);
       if (destructive && settings.companion.actions !== 'ask') log('agent', `${turn.id} destructive step (${destructive}): asking even in automatic mode`);
       if (settings.companion.actions !== 'ask' && !destructive && steps === 0) {
-        // automatic mode: a moment to say no before the first action
-        await countdown(signal, (n) => sendState(turn.overlay, { phase: 'acting', reply: res.reply, step: `starting in ${n}… esc to cancel` }));
+        // automatic mode: a moment to say no before the first action (the stop key cancels it)
+        agent.countdown = true;
+        syncBusy();
+        try {
+          await countdown(signal, (n) => sendState(turn.overlay, { phase: 'acting', reply: res.reply, step: `starting in ${n}… ${hotkeyLabel(getSettings().hotkeys.stop ?? ['Escape'])} to cancel` }));
+        } finally {
+          agent.countdown = false;
+          syncBusy();
+        }
         if (!isTurnCurrent(turn)) return;
       }
       if (settings.companion.actions === 'ask' || destructive) {
@@ -1187,27 +1329,30 @@ async function runAgent(
           return;
         }
       }
+      if (agent.pause.pending) continue; // paused while it asked / counted down: look again first
 
       steps++;
       emitChat({ type: 'acting', chatId, turnId: res.assistantId, step: nextStep });
       sendState(turn.overlay, { phase: 'acting', reply: res.reply, step: nextStep });
       log('agent', `${turn.id} ${nextStep}: ${JSON.stringify(planned.map((p) => p.input))}`);
+      let ran = planned.length;
       try {
-        await performPlanned(turn, planned, nextStep, res.reply);
+        ran = await performPlanned(turn, planned, nextStep, res.reply);
       } catch (err) {
         if (signal.aborted) throw err;
         store.updateTurn(chatId, res.assistantId, { error: `couldn't act: ${errorMessage(err)}` });
         throw userError(`couldn't do that: ${errorMessage(err)}`);
       }
-      const past = res.actions.filter((a) => a.type !== 'wait').map((a) => describeAction(a, 'past'));
-      const updated = store.updateTurn(chatId, res.assistantId, { actions: past.length ? past : res.actions.map((a) => describeAction(a, 'past')) });
+      const doneActions = res.actions.slice(0, ran);
+      const past = doneActions.filter((a) => a.type !== 'wait').map((a) => describeAction(a, 'past'));
+      const updated = store.updateTurn(chatId, res.assistantId, { actions: past.length ? past : doneActions.map((a) => describeAction(a, 'past')) });
       if (updated) emitChat({ type: 'done', chatId, turn: updated });
 
-      if (res.done) {
+      if (res.done && ran === planned.length && !agent.pause.pending) {
         await end(res.reply || 'done.', nextStep, !!res.reply);
         return;
       }
-      if (steps >= maxSteps) {
+      if (steps >= maxSteps && !agent.pause.pending) {
         log('agent', `${turn.id} stopped at max steps (${maxSteps})`);
         await end(`i stopped after ${maxSteps} step${maxSteps === 1 ? '' : 's'} — ask me to keep going if there's more to do.`, nextStep);
         return;
@@ -1215,29 +1360,108 @@ async function runAgent(
 
       // look again: let the UI settle, then fresh screenshots (companion back home, bubble small)
       recallPoints(turn);
-      sendState(turn.overlay, { phase: 'thinking', step: nextStep });
+      sendState(turn.overlay, { phase: 'thinking', step: agent.pause.pending ? 'pausing…' : nextStep });
       await delay(ACT_SETTLE_MS, signal);
-      const fresh = await safeCapture(screen.getCursorScreenPoint());
-      if (!isTurnCurrent(turn)) return;
-      if (!fresh.length) throw userError("couldn't see the screen after acting — stopped");
-      screens = fresh;
-      // only the newest message carries screenshots
       history = [...history, { role: 'user', text: userMsg.text }, { role: 'assistant', text: res.raw.trim() || '(acted)' }];
-      userMsg = { role: 'user', text: AGENT_FOLLOW_UP, images: screens.map((s) => s.image) };
-      const next = await askModel(turn, ctx, [...history, userMsg], screens, { thinking: { phase: 'thinking', step: nextStep }, step: nextStep });
-      if (!next || !isTurnCurrent(turn)) return;
+      const next = await look(AGENT_FOLLOW_UP);
+      if (!next) return;
       res = next;
+      // a resumed run may still be at max steps: one more round is allowed after a pause
+      if (steps >= maxSteps && res.actions.length) {
+        log('agent', `${turn.id} stopped at max steps (${maxSteps})`);
+        await end(`i stopped after ${maxSteps} step${maxSteps === 1 ? '' : 's'} — ask me to keep going if there's more to do.`, nextStep);
+        return;
+      }
     }
   } finally {
-    if (turn.agent) turn.agent.confirm = null;
+    agent.confirm = null;
+    agent.running = false;
+    agent.waiting?.(false, 'run over');
+    releaseKeys('pause');
     setConfirmKeys(null);
     setAgentKeysSuspended(false);
-    emitChat({ type: 'acting', chatId, turnId: lastTurnId, step: null });
+    emitChat({ type: 'acting', chatId, turnId: agent.lastTurnId ?? res.assistantId, step: null });
+    syncBusy();
   }
 }
 
-/** Enter: approve the pending agent-mode actions (no-op unless a confirmation is waiting). */
+/* ───────────────────────── agent pause ───────────────────────── */
+
+/**
+ * Paused at a safe point: "paused · enter to continue · esc to stop" in the bubble, continue /
+ * stop in the chats window and the notch. Enter (grabbed), continue → true; the stop key, stop,
+ * 2 minutes idle or the turn ending → false.
+ */
+function waitPaused(turn: Turn, agent: AgentState, step?: string): Promise<boolean> {
+  const signal = turn.controller.signal;
+  return new Promise<boolean>((resolve) => {
+    if (signal.aborted) return resolve(false);
+    let settled = false;
+    const finish = (go: boolean, why: string): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal.removeEventListener('abort', onAbort);
+      if (agent.waiting === finish) agent.waiting = null;
+      releaseKeys('pause');
+      if (go) agent.pause.resume();
+      log('agent', `${turn.id} ${go ? 'continues' : 'stays stopped'} (${why})`);
+      syncBusy();
+      resolve(go);
+    };
+    const onAbort = (): void => finish(false, 'turn over');
+    const timer = setTimeout(() => {
+      if (isTurnCurrent(turn)) stopAgentRun(turn, '2 minutes paused');
+      finish(false, 'timeout');
+    }, PAUSE_TIMEOUT_MS);
+    signal.addEventListener('abort', onAbort, { once: true });
+    agent.waiting = finish;
+    sendToOverlay(turn.overlay, IPC.overlayStopSpeaking);
+    recallPoints(turn);
+    grabKeys('pause', { Return: () => finish(true, 'enter') });
+    sendState(turn.overlay, { phase: 'speaking', reply: agent.lastReply || 'paused.', step });
+    log('agent', `${turn.id} paused${step ? ` at ${step}` : ''}`);
+    syncBusy();
+  });
+}
+
+/** First stop-key press during an agent run: pause after the current action / model call. */
+function requestPause(turn: Turn): void {
+  const agent = turn.agent;
+  if (!agent) return;
+  if (agent.pause.request() === 'stop') return stopAgentRun(turn, 'stop key');
+  log('agent', `${turn.id} pausing (stop key)`);
+  agent.call?.abort(); // thinking: drop this model call, look again after the pause
+  sendToOverlay(turn.overlay, IPC.overlayStopSpeaking);
+  sendState(turn.overlay, { phase: 'acting', reply: agent.lastReply || undefined, step: 'pausing after this action…' });
+  syncBusy();
+}
+
+/** Stop an agent run (second stop press, a stop button, 2 minutes paused): recorded "stopped by you". */
+function stopAgentRun(turn: Turn, why: string): void {
+  const agent = turn.agent;
+  log('agent', `${turn.id} stopped by you (${why})`);
+  const id = agent?.lastTurnId;
+  if (id && turn.chatId) {
+    const updated = store.updateTurn(turn.chatId, id, { error: 'stopped by you', stopped: true });
+    if (updated) emitChat({ type: 'turn', chatId: turn.chatId, turn: updated });
+  }
+  agent?.call?.abort();
+  agent?.waiting?.(false, why);
+  if (current === turn) cancelCurrent({ stopped: true, reply: 'stopped.' });
+}
+
+/** Continue a paused agent run (enter, the bubble's / chats window's / notch's continue). */
+export function resumeAgent(): boolean {
+  const w = current?.agent?.waiting;
+  if (!w) return false;
+  w(true, 'continue');
+  return true;
+}
+
+/** Enter: continue a paused agent run, or approve the pending agent-mode actions (no-op otherwise). */
 export function onEnter(): void {
+  if (resumeAgent()) return;
   const c = current?.agent?.confirm;
   if (!c || !current || current.controller.signal.aborted) return;
   log('agent', `${current.id} allowed (enter)`);
@@ -1774,7 +1998,6 @@ interface PendingChoice extends AskOffer {
 let pendingChoice: PendingChoice | null = null;
 /** when the overlay type box last closed (its esc must not also dismiss the choice) */
 let typingClosedAt = 0;
-let choiceEscAt = 0;
 
 function offerChoice(turn: Turn, input: TurnInput, offer: AskOffer, reply: string, screens: CapturedScreen[]): void {
   clearChoice(null);
@@ -1808,7 +2031,7 @@ function syncChoiceKeys(): void {
   const focused = BrowserWindow.getFocusedWindow();
   const overlayFocused = !!focused && isOverlayWindow(focused);
   const want = !typingOverlay && !overlayFocused && !(chats && chats.isFocused());
-  const keys = want ? setChoiceKeys({ count: p.ask.options.length, onDigit: (n) => pickChoice(n - 1, `key ${n}`), onEscape }) : setChoiceKeys(null);
+  const keys = want ? setChoiceKeys({ count: p.ask.options.length, onDigit: (n) => pickChoice(n - 1, `key ${n}`), onEscape: () => onEscape('grab') }) : setChoiceKeys(null);
   if (keys === p.keys) return;
   p.keys = keys;
   sendToOverlay(p.overlay, IPC.overlayChoice, { reply: p.reply, question: p.ask.question, options: p.ask.options, keys });
@@ -1922,44 +2145,231 @@ export function choicePending(): { chatId: string; turnId: string; question: str
 
 /* ───────────────────────── escape / misc ───────────────────────── */
 
-let confirmEscAt = 0;
+/** Esc / stop presses that arrive twice (grab + native hook) count once. */
+const stopPresses = new PressDedupe(400);
 
-export function onEscape(): void {
+/** Where a key press came from: the global-shortcut grab, the native hook, or a button. */
+export type KeySource = 'grab' | 'hook' | 'ui';
+
+function stopKeys(): string[] {
+  const k = getSettings().hotkeys.stop;
+  return k?.length ? k : ['Escape'];
+}
+
+/** The stop key is plain esc (the default): then esc is the stop key. */
+function stopIsEscape(): boolean {
+  const k = stopKeys();
+  return k.length === 1 && k[0] === 'Escape';
+}
+
+/** Drop the second delivery of one physical press (grab + native hook). */
+function acceptPress(source: KeySource, accel: string): boolean {
+  if (source === 'ui') return true;
+  const now = Date.now();
+  // the native hook's echo of a press a grab (any owner: walkthrough, draft…) already handled
+  if (source === 'hook' && grabFiredRecently(accel, 400, now)) return false;
+  return stopPresses.accept(source, now);
+}
+
+/**
+ * Esc answers whatever is waiting: closes the type box, dismisses a choice, says no to an agent
+ * confirmation or a routine offer. True when it did one of those.
+ */
+function escapePrompts(): boolean {
   // the type box open over a pending choice: esc closes just the box
   const wasTyping = !!typingOverlay;
   closeTyping();
-  if (pendingChoice && (wasTyping || Date.now() - typingClosedAt < 400)) return;
+  if (pendingChoice && (wasTyping || Date.now() - typingClosedAt < 400)) return true;
   // a choice waiting: esc dismisses it (and stops the question being read out)
   if (pendingChoice) {
     log('choice', 'dismissed (escape)');
-    choiceEscAt = Date.now();
     const askedBy = current;
     clearChoice('escape');
     if (askedBy && askedBy.kind !== 'window') cancelCurrent();
     clearErrorTimer();
-    return;
+    return true;
   }
-  if (Date.now() - choiceEscAt < 400) return; // the same press echoed by the other key backend
   // agent mode waiting for approval: esc = "no" (said and recorded, unlike a plain stop)
   const pending = current?.agent?.confirm;
   if (pending) {
     log('agent', `${current!.id} cancelled (escape)`);
-    confirmEscAt = Date.now();
     pending.settle('cancelled');
     clearErrorTimer();
-    return;
+    return true;
   }
-  // the same esc press can arrive twice (global-shortcut grab + uiohook): don't let the echo
-  // also stop the "okay, i won't do that" that the first one started
-  if (Date.now() - confirmEscAt < 400) return;
-  // Escape is global (uiohook hears it in every app): pressing it in an editor must not kill a
-  // reply streaming into the chats window, which has its own stop button. An agent run acting on
-  // the screen is the exception: esc always stops it.
-  if (current && (current.kind !== 'window' || current.agent)) {
-    log('turn', `${current.id} cancelled (escape)`);
-    cancelCurrent();
+  if (routineEscape()) return true;
+  return wasTyping;
+}
+
+/**
+ * Plain esc (chord engine, prompt grabs). With esc as the stop key (the default) this is the stop
+ * key; with a custom stop key esc only answers prompts (type box, choice, confirm, routine offer).
+ */
+export function onEscape(source: KeySource = 'hook'): void {
+  if (stopIsEscape()) return onStopKey(source);
+  if (!acceptPress(source, 'Escape')) return;
+  escapePrompts();
+  clearErrorTimer();
+}
+
+/**
+ * The stop / pause key (settings.hotkeys.stop, default esc) — from the busy grab, the native
+ * hook, or the bubble's stop button. Answers a waiting prompt first, then: an agent run pauses
+ * (press again to stop), anything else stops (speech, a reply, listening, a dictation, a
+ * walkthrough, a draft preview). Chats-window replies ignore the global key (they have stop).
+ */
+export function onStopKey(source: KeySource = 'hook'): void {
+  const accel = chordToAccelerator(stopKeys()) ?? 'Escape';
+  if (!acceptPress(source, accel)) return;
+  if (escapePrompts()) return;
+  stopOrPause('key', source);
+}
+
+/**
+ * One stop request. 'key' = the stop key / the bubble's stop button (an agent run pauses first);
+ * 'stop' = an explicit stop (chats window, notch, tray): always stops.
+ */
+function stopOrPause(how: 'key' | 'stop', from: string): void {
+  const step = stopStep(busySnapshot(), how);
+  const turn = current;
+  if (step !== 'none') log('turn', `${turn ? `${turn.id} ` : ''}stop request (${from}): ${step}`);
+  switch (step) {
+    case 'dictation':
+      draftEscape();
+      break;
+    case 'pause-agent':
+      if (turn) requestPause(turn);
+      break;
+    case 'stop-agent':
+      if (turn) {
+        if (turn.agent?.confirm) turn.agent.confirm.settle('cancelled');
+        else stopAgentRun(turn, from);
+      }
+      break;
+    case 'cancel-turn':
+      if (turn) stopTurnByUser(turn);
+      break;
   }
   clearErrorTimer();
+}
+
+/** Stop a turn for the user: speech stops now, the reply stays (marked "stopped"); a stream keeps its partial text. */
+function stopTurnByUser(turn: Turn): void {
+  if (turn.stage === 'processing' && turn.replyId && turn.chatId) {
+    const updated = store.updateTurn(turn.chatId, turn.replyId, { stopped: true });
+    if (updated) emitChat({ type: 'turn', chatId: turn.chatId, turn: updated });
+  }
+  log('turn', `${turn.id} stopped by you (${turn.stage === 'recording' ? 'listening' : turn.replyId ? 'speaking' : 'thinking'})`);
+  cancelCurrent({ stopped: true });
+}
+
+/** Tray / notch "stop": stop whatever clickity is doing, wherever it started (agent runs stop, not pause). */
+export function stopEverything(from = 'tray'): void {
+  if (current || dictationBusy()) stopOrPause('stop', from);
+}
+
+/** Chats window "pause" for an agent run in `chatId`. */
+export function pauseChat(chatId: string): void {
+  const t = current;
+  if (t && t.chatId === chatId && t.agent?.running && !t.agent.pause.pending && !t.agent.confirm && !t.agent.countdown) requestPause(t);
+}
+
+/** Chats window "continue" for a paused agent run in `chatId`. */
+export function resumeChat(chatId: string): void {
+  if (current && current.chatId === chatId) resumeAgent();
+}
+
+/** The notch / bubble "pause" (= the stop key while an agent run acts). */
+export function pauseCurrent(): void {
+  const t = current;
+  if (t?.agent?.running && !t.agent.pause.pending && !t.agent.confirm && !t.agent.countdown) requestPause(t);
+}
+
+/* ───────────────────────── busy: stop-key grab, hints, chats / notch / tray ───────────────────────── */
+
+function busySnapshot(): BusySnapshot {
+  const t = current && !current.controller.signal.aborted ? current : null;
+  const a = t?.agent;
+  return {
+    turn: t
+      ? {
+          kind: t.kind,
+          agent: a ? { running: a.running, pausing: a.pause.state === 'pausing', paused: a.pause.state === 'paused' && !!a.waiting, confirming: !!a.confirm, countdown: a.countdown } : null,
+        }
+      : null,
+    dictation: dictationBusy(),
+  };
+}
+
+let busyQueued = false;
+/** what the stop-key grab holds now ('' = nothing) */
+let grabbedStop = '';
+let lastBusyKey = '';
+let busyOverlay: BrowserWindow | null = null;
+/** chat → its last busy event key (so the chats window hears each change once) */
+let busyChat: { chatId: string; key: string } | null = null;
+
+/** Recompute busy-ness on the next tick (coalesced): grab / release the stop key, update hints. */
+function syncBusy(): void {
+  if (busyQueued) return;
+  busyQueued = true;
+  setImmediate(() => {
+    busyQueued = false;
+    applyBusy();
+  });
+}
+
+function applyBusy(): void {
+  const snap = busySnapshot();
+  const st = busyState(snap);
+  const keys = stopKeys();
+  // grab only while busy with something the global key may stop, and never while agent mode
+  // itself is about to press that key
+  const typing = !!current?.agent?.typingStopKey;
+  const want = st?.global && !typing ? keys.join('+') : '';
+  if (want !== grabbedStop) {
+    const accel = want ? setBusyStopKey(keys, () => onStopKey('grab')) : setBusyStopKey(null);
+    grabbedStop = want;
+    log('hotkey', want ? `stop key ${accel ? `grabbed (${accel})` : `not grabbable (${want})`}` : 'stop key released');
+  }
+  const label = hotkeyLabel(keys, process.platform);
+  const t = current && !current.controller.signal.aborted ? current : null;
+  const chatId = t?.chatId ?? null;
+  const info: BusyInfo | null = st ? { mode: st.mode, global: st.global, chatId } : null;
+  const key = info ? `${info.mode}|${info.global}|${chatId}|${label}` : '';
+  // the bubble: "esc to stop" + stop button, on the turn's overlay (a dictation: the cursor's)
+  const win = st ? (t ? t.overlay : overlayForPoint(screen.getCursorScreenPoint())) : null;
+  if (key !== lastBusyKey || win !== busyOverlay) {
+    if (busyOverlay && busyOverlay !== win) sendToOverlay(busyOverlay, IPC.overlayBusy, null);
+    busyOverlay = win;
+    if (win) sendToOverlay(win, IPC.overlayBusy, { mode: st!.mode, key: label, hint: stopHint(st!.mode, label) });
+  }
+  if (key !== lastBusyKey) {
+    lastBusyKey = key;
+    publishBusy(info);
+  }
+  // the chats window: stop (and pause / continue) for the turn in this chat
+  const turnId = t?.agent?.lastTurnId ?? undefined;
+  const chatKey = chatId && st ? `${st.mode}|${turnId ?? ''}` : '';
+  if (busyChat && (busyChat.chatId !== chatId || !chatKey)) {
+    emitChat({ type: 'busy', chatId: busyChat.chatId, busy: false });
+    busyChat = null;
+  }
+  if (chatId && chatKey && busyChat?.key !== chatKey) {
+    busyChat = { chatId, key: chatKey };
+    emitChat({ type: 'busy', chatId, busy: true, mode: st!.mode, turnId });
+  }
+}
+
+/** Busy right now (tray "stop", tests). */
+export function busyNow(): BusyInfo | null {
+  const st = busyState(busySnapshot());
+  return st ? { mode: st.mode, global: st.global, chatId: current?.chatId ?? null } : null;
+}
+
+/** Tests: what the stop key would do and whether it is grabbed. */
+export function stopKeyState(): { busy: BusyInfo | null; grabbed: string } {
+  return { busy: busyNow(), grabbed: grabbedStop };
 }
 
 /** True while a voice turn is recording (the hotkey engine's toggle mode resyncs on this). */
@@ -2083,6 +2493,22 @@ export function initConversation(): void {
     if (typeof index === 'number' && Number.isInteger(index)) pickChoice(index, 'click');
   });
   ipcMain.on(IPC.overlayReply, (e) => openReplyBox(e.sender.id));
+  // stop / pause: the bubble's buttons, and anything that changes busy-ness
+  ipcMain.on(IPC.overlayStop, () => onStopKey('ui'));
+  ipcMain.on(IPC.overlayContinue, () => void resumeAgent());
+  setBusyPoke(syncBusy);
+  setBusyResend(() => {
+    busyChat = null;
+    applyBusy();
+  });
+  onOverlayState(() => syncBusy());
+  onSettingsChanged((s, prev) => {
+    if ((s.hotkeys.stop ?? []).join('+') !== (prev.hotkeys.stop ?? []).join('+')) {
+      grabbedStop = ''; // re-grab the new key if busy
+      setBusyStopKey(null);
+      syncBusy();
+    }
+  });
   // the chats window taking / losing focus decides whether digits are grabbed
   app.on('browser-window-focus', () => syncChoiceKeys());
   app.on('browser-window-blur', () => syncChoiceKeys());
