@@ -13,12 +13,13 @@ import type { UpdateState } from '../shared/ipc';
 import {
   DEFAULT_API,
   cleanAppImageEnv,
-  downloadAsset,
-  fetchLatestRelease,
+  downloadWithRetry,
+  fetchLatest,
   isNewer,
   macSwapScript,
   networkError,
   pickAsset,
+  realMacBundle,
   relaunchAfterExit,
   swapAppImage,
   type ReleaseInfo,
@@ -160,7 +161,7 @@ export function checkForUpdate(manual = true): Promise<UpdateState> {
     const prev = state;
     if (manual) set({ status: 'checking', error: undefined, message: undefined });
     try {
-      const info = await fetchLatestRelease(apiBase(), fetchImpl);
+      const info = await fetchLatest(apiBase(), fetchImpl);
       const current = app.getVersion();
       log('update', `latest v${info.version}, running v${current}${manual ? ' (manual)' : ''}`);
       if (!isNewer(info.version, current)) {
@@ -210,6 +211,9 @@ function quitSoon(): void {
   set({ status: 'installing', progress: undefined });
   log('update', 'quitting to finish the update');
   setTimeout(() => app.quit(), 300);
+  // if something keeps the app alive (a window refusing to close), make sure we really exit so the
+  // installer / swap script can replace us
+  setTimeout(() => app.exit(0), 6000).unref?.();
 }
 
 async function installMac(file: string, tmp: string, version: string): Promise<void> {
@@ -221,24 +225,18 @@ async function installMac(file: string, tmp: string, version: string): Promise<v
   const newApp = fs.readdirSync(out).find((n) => n.endsWith('.app'));
   if (!newApp) throw new Error('the download has no app inside');
   const newPath = path.join(out, newApp);
-  const bundle = path.resolve(app.getPath('exe'), '../../..');
-  log('update', `bundle ${bundle}`);
-  const parent = path.dirname(bundle);
-  const translocated = bundle.includes('/AppTranslocation/') || bundle.startsWith('/Volumes/');
-  if (!bundle.endsWith('.app') || translocated || !writable(parent) || !writable(bundle)) {
-    log('update', `can't replace ${bundle} (translocated=${translocated}), showing the new app instead`);
+  const running = path.resolve(app.getPath('exe'), '../../..');
+  const bundle = realMacBundle(running, os.homedir());
+  log('update', `running from ${running}, installed at ${bundle ?? 'unknown'}`);
+  if (!bundle || !bundle.endsWith('.app')) {
     shell.showItemInFolder(newPath);
-    set({
-      status: 'ready',
-      progress: undefined,
-      message: translocated
-        ? `drag the new clickity into applications, then open it from there`
-        : `couldn't replace clickity where it is. drag the new one (v${version}) over it`,
-    });
+    set({ status: 'ready', progress: undefined, message: `drag the new clickity (v${version}) into applications, then open it from there` });
     return;
   }
+  // a folder we can't write to (installed by another user): the swap asks for the password instead of failing
+  const asAdmin = !writable(path.dirname(bundle)) || !writable(bundle);
   const script = path.join(tmp, 'swap.sh');
-  fs.writeFileSync(script, macSwapScript(process.pid, newPath, bundle, logPath()), { mode: 0o755 });
+  fs.writeFileSync(script, macSwapScript(process.pid, newPath, bundle, logPath(), asAdmin), { mode: 0o755 });
   spawn('/bin/sh', [script], { detached: true, stdio: 'ignore' }).unref();
   log('update', 'swap script started', script);
   quitSoon();
@@ -246,7 +244,9 @@ async function installMac(file: string, tmp: string, version: string): Promise<v
 
 function installWindows(file: string): void {
   log('update', 'running installer silently', file);
-  spawn(file, ['/S', '--force-run'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+  // start the installer only after clickity has exited, or NSIS finds its files in use and fails
+  const ps = `Wait-Process -Id ${process.pid} -Timeout 60 -ErrorAction SilentlyContinue; Start-Process -FilePath '${file.replace(/'/g, "''")}' -ArgumentList '/S','--force-run'`;
+  spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', ps], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
   quitSoon();
 }
 
@@ -296,7 +296,7 @@ export async function installUpdate(): Promise<UpdateState> {
     log('update', `downloading ${asset.name} (${asset.size} bytes) → ${file}`);
     set({ status: 'downloading', progress: 0, error: undefined, message: undefined });
     const reuse = fs.existsSync(file) && asset.size > 0 && fs.statSync(file).size === asset.size;
-    if (!reuse) await downloadAsset(asset, file, (f) => set({ progress: f }), fetchImpl);
+    if (!reuse) await downloadWithRetry(asset, file, (f) => set({ progress: f }), fetchImpl);
     log('update', `downloaded${reuse ? ' (cached)' : ''}`);
     set({ status: 'ready', progress: 1 });
     if (process.platform === 'darwin') await installMac(file, tmp, info.version);

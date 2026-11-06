@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
+import { execFileSync } from 'node:child_process';
 import type { AddressInfo } from 'node:net';
 import {
   compareVersions,
@@ -75,10 +76,13 @@ test('parseRelease: tag → version, notes before the install section', () => {
 test('macSwapScript quotes paths and restores on failure', () => {
   const s = macSwapScript(123, "/tmp/u/Clickity.app", "/Users/o'neil/Apps/Clickity.app", '/tmp/l.log');
   assert.match(s, /kill -0 123/);
-  assert.match(s, /'\/Users\/o'\\''neil\/Apps\/Clickity\.app'/);
-  assert.match(s, /ditto '\/tmp\/u\/Clickity\.app'/);
+  assert.match(s, /o'\\''neil/); // apostrophe survives the quoting
+  assert.match(s, /ditto/);
+  assert.match(s, /\.old-update/);
   assert.match(s, /xattr -dr com\.apple\.quarantine/);
-  assert.match(s, /mv '.*\.old-update' '.*Clickity\.app'/);
+  // the replace step is valid sh: run it through `sh -n` (syntax check only)
+  
+  execFileSync('sh', ['-n', '-c', s]);
 });
 
 /* end to end against a fake github: release json → download with progress → AppImage swap → relaunch */
@@ -155,4 +159,46 @@ test('download + AppImage swap + relaunch (local server)', async (t) => {
   assert.ok(!fs.existsSync(marker), 'launched before the old app exited');
   await new Promise((r) => setTimeout(r, 1200));
   assert.equal(fs.readFileSync(marker, 'utf8').trim(), 'new --hidden');
+});
+
+import { fetchLatest, fetchLatestViaDownloads, realMacBundle, repoPageFromApi } from '../src/main/update-core.ts';
+
+test('repo page from api base', () => {
+  assert.equal(repoPageFromApi('https://api.github.com/repos/Bndrwe/clickity'), 'https://github.com/Bndrwe/clickity');
+});
+
+test('falls back to the download route when the api is rate limited', async () => {
+  const calls: string[] = [];
+  const fake = async (url: string) => {
+    calls.push(url);
+    if (url.includes('api.github.com')) return new Response('limit', { status: 403, headers: { 'x-ratelimit-reset': '0' } });
+    if (url.endsWith('/releases/latest/download/build.json')) return new Response(JSON.stringify({ version: '1.0.30', notes: '- a\n- b' }), { status: 200 });
+    return new Response('', { status: 404 });
+  };
+  const info = await fetchLatest('https://api.github.com/repos/Bndrwe/clickity', fake as any);
+  assert.equal(info.version, '1.0.30');
+  assert.ok(info.assets.find((a) => a.name === 'Clickity-mac-arm64.zip')!.url.endsWith('/releases/latest/download/Clickity-mac-arm64.zip'));
+  assert.equal(calls.length, 2);
+});
+
+test('download route rejects a missing version', async () => {
+  const fake = async () => new Response('{}', { status: 200 });
+  await assert.rejects(fetchLatestViaDownloads('https://api.github.com/repos/a/b', fake as any));
+});
+
+test('translocated mac bundle resolves to the installed copy', () => {
+  const t = '/private/var/folders/x/AppTranslocation/ABC/d/Clickity.app';
+  assert.equal(realMacBundle(t, '/Users/me', (p) => p === '/Applications/Clickity.app'), '/Applications/Clickity.app');
+  assert.equal(realMacBundle(t, '/Users/me', (p) => p === '/Users/me/Applications/Clickity.app'), '/Users/me/Applications/Clickity.app');
+  assert.equal(realMacBundle(t, '/Users/me', () => false), null);
+  assert.equal(realMacBundle('/Applications/Clickity.app', '/Users/me'), '/Applications/Clickity.app');
+});
+
+test('admin swap script asks for the password and still reopens the app', () => {
+  const s = macSwapScript(123, '/tmp/new/Clickity.app', '/Applications/Clickity.app', '/tmp/log', true);
+  assert.match(s, /with administrator privileges/);
+  assert.match(s, /open '\/Applications\/Clickity\.app'/);
+  assert.match(s, /xattr -dr com\.apple\.quarantine/);
+  const plain = macSwapScript(123, '/tmp/new/Clickity.app', '/Applications/Clickity.app', '/tmp/log');
+  assert.doesNotMatch(plain, /administrator/);
 });

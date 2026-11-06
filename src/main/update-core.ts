@@ -171,6 +171,91 @@ export async function fetchLatestRelease(apiBase = DEFAULT_API, fetchImpl: Fetch
   return info;
 }
 
+/** The installers every release carries (names never include the version). */
+export const RELEASE_ASSET_NAMES = [
+  'Clickity-mac-arm64.zip',
+  'Clickity-mac-x64.zip',
+  'Clickity-mac-arm64.dmg',
+  'Clickity-mac-x64.dmg',
+  'Clickity-win-x64.exe',
+  'Clickity-linux-x86_64.AppImage',
+  'Clickity-linux-amd64.deb',
+];
+
+/** "https://api.github.com/repos/o/r" → "https://github.com/o/r" */
+export function repoPageFromApi(apiBase: string): string {
+  const m = /^https:\/\/api\.github\.com\/repos\/([^/]+)\/([^/]+)/.exec(apiBase.replace(/\/+$/, ''));
+  return m ? `https://github.com/${m[1]}/${m[2]}` : apiBase.replace(/\/+$/, '');
+}
+
+/**
+ * Check without the GitHub API (which allows only 60 unauthenticated requests an hour per network,
+ * so checks failed "sometimes"): /releases/latest/download/<file> is a plain redirect to the asset
+ * and isn't rate limited. build.json carries the version + notes; asset URLs follow the same pattern
+ * (sizes unknown, so the download checks content-length instead).
+ */
+export async function fetchLatestViaDownloads(apiBase = DEFAULT_API, fetchImpl: FetchLike = fetch as FetchLike): Promise<ReleaseInfo> {
+  const base = `${repoPageFromApi(apiBase)}/releases/latest/download`;
+  let res: Response;
+  try {
+    res = await fetchImpl(`${base}/build.json`, { headers: { 'User-Agent': USER_AGENT }, signal: AbortSignal.timeout(20_000) });
+  } catch (err) {
+    throw networkError(err);
+  }
+  if (res.status === 404) throw short('no releases yet');
+  if (!res.ok) throw short(`github said ${res.status}`);
+  let b: { version?: unknown; notes?: unknown };
+  try {
+    b = (await res.json()) as typeof b;
+  } catch {
+    throw short('github sent something unexpected');
+  }
+  const version = typeof b?.version === 'string' ? b.version.replace(/^v/i, '') : '';
+  if (!parseVersion(version)) throw short('latest release has no version');
+  const notes = typeof b?.notes === 'string' ? b.notes.trim().split('\n').slice(0, 12).join('\n') : '';
+  return {
+    version,
+    tag: `v${version}`,
+    notes,
+    assets: RELEASE_ASSET_NAMES.map((name) => ({ name, size: 0, url: `${base}/${name}` })),
+    page: `${repoPageFromApi(apiBase)}/releases/latest`,
+  };
+}
+
+/** API first (exact sizes); on rate limits or API errors, the download-link route. */
+export async function fetchLatest(apiBase = DEFAULT_API, fetchImpl: FetchLike = fetch as FetchLike): Promise<ReleaseInfo> {
+  try {
+    return await fetchLatestRelease(apiBase, fetchImpl);
+  } catch (apiErr) {
+    if (/offline|can't reach/.test((apiErr as Error).message)) throw apiErr;
+    try {
+      return await fetchLatestViaDownloads(apiBase, fetchImpl);
+    } catch {
+      throw apiErr;
+    }
+  }
+}
+
+/** downloadAsset with retries (2s, 5s backoff) for flaky connections. */
+export async function downloadWithRetry(
+  asset: ReleaseAsset,
+  dest: string,
+  onProgress: (fraction: number) => void = () => {},
+  fetchImpl: FetchLike = fetch as FetchLike,
+  attempts = 3,
+): Promise<string> {
+  let last: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await downloadAsset(asset, dest, onProgress, fetchImpl);
+    } catch (err) {
+      last = err;
+      if (i < attempts - 1) await new Promise((r) => setTimeout(r, i === 0 ? 2000 : 5000));
+    }
+  }
+  throw last;
+}
+
 /** Stream an asset to `dest` (via dest.part), reporting 0..1 progress; checks the size github reported. */
 export async function downloadAsset(
   asset: ReleaseAsset,
@@ -213,9 +298,10 @@ export async function downloadAsset(
     fs.rmSync(part, { force: true });
     throw networkError(err);
   }
-  if (asset.size && got !== asset.size) {
+  const expected = asset.size || Number(res.headers.get('content-length')) || 0;
+  if (expected && got !== expected) {
     fs.rmSync(part, { force: true });
-    throw short(`download incomplete (${got} of ${asset.size} bytes)`);
+    throw short(`download incomplete (${got} of ${expected} bytes)`);
   }
   if (!got) {
     fs.rmSync(part, { force: true });
@@ -274,22 +360,47 @@ export function cleanAppImageEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.P
  * The detached script that replaces the running .app once we've quit: move the old bundle aside,
  * ditto the new one into place (restoring the old one if that fails), strip quarantine, reopen.
  */
-export function macSwapScript(pid: number, newApp: string, bundle: string, logFile: string): string {
+export function macSwapScript(pid: number, newApp: string, bundle: string, logFile: string, asAdmin = false): string {
   const B = shq(bundle);
   const OLD = shq(`${bundle}.old-update`);
+  // the replace step on its own, so it can run with administrator rights when the folder isn't ours
+  const swap = [
+    `rm -rf ${OLD}`,
+    `if mv ${B} ${OLD} && ditto ${shq(newApp)} ${B}; then rm -rf ${OLD}; else rm -rf ${B}; mv ${OLD} ${B}; exit 1; fi`,
+  ].join('; ');
+  const runSwap = asAdmin
+    ? `/usr/bin/osascript -e ${shq(`do shell script ${JSON.stringify(swap)} with administrator privileges with prompt "Clickity needs your password to install its update."`)}`
+    : `sh -c ${shq(swap)}`;
   return [
     '#!/bin/sh',
     `exec >>${shq(logFile)} 2>&1`,
     `echo "$(date -u +%FT%TZ) [update] waiting for ${pid}"`,
-    `i=0; while kill -0 ${pid} 2>/dev/null && [ $i -lt 600 ]; do sleep 0.2; i=$((i+1)); done`,
-    `rm -rf ${OLD}`,
-    `if mv ${B} ${OLD} && ditto ${shq(newApp)} ${B}; then`,
-    `  rm -rf ${OLD}; echo "$(date -u +%FT%TZ) [update] replaced ${bundle}"`,
+    // wait for clickity to quit; if it's still running after 30s, ask it to quit, then stop waiting at 60s
+    `i=0; while kill -0 ${pid} 2>/dev/null && [ $i -lt 300 ]; do sleep 0.2; i=$((i+1)); [ $i -eq 150 ] && kill ${pid} 2>/dev/null; done`,
+    `if ${runSwap}; then`,
+    `  echo "$(date -u +%FT%TZ) [update] replaced ${bundle}"`,
     'else',
-    `  echo "$(date -u +%FT%TZ) [update] replace failed, restoring"; rm -rf ${B}; mv ${OLD} ${B}`,
+    `  echo "$(date -u +%FT%TZ) [update] replace failed, kept the old version"`,
     'fi',
+    // no quarantine flag = no Gatekeeper prompt and no translocation from now on
     `xattr -dr com.apple.quarantine ${B} 2>/dev/null`,
     `open ${B}`,
     '',
   ].join('\n');
+}
+
+/**
+ * Where the real app lives. A quarantined app opened via "open anyway" runs from a read-only
+ * AppTranslocation copy, so the running bundle path can't be replaced; the installed copy is usually
+ * /Applications/Clickity.app (or ~/Applications).
+ */
+export function realMacBundle(running: string, home: string, exists: (p: string) => boolean = fs.existsSync): string | null {
+  const translocated = running.includes('/AppTranslocation/') || running.startsWith('/Volumes/');
+  if (!translocated) return running;
+  const name = path.basename(running);
+  for (const dir of ['/Applications', path.join(home, 'Applications')]) {
+    const p = path.join(dir, name);
+    if (exists(p)) return p;
+  }
+  return null;
 }
