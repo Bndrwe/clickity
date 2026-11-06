@@ -244,6 +244,13 @@ export interface HotkeySettings {
   typeTap: KeyName[];
   /** toggle hands-free (always listening) mode. default: triple-tap control. [] = off. */
   alwaysOn: KeyName[];
+  /**
+   * stop / pause: stops what clickity is doing (speech, a reply, listening, a dictation, a
+   * walkthrough, a draft preview); pauses an agent run (press again to stop it). Grabbed as a
+   * global shortcut only while clickity is busy, so it goes back to other apps when idle.
+   * One key or a chord with one non-modifier key. default: ['Escape'].
+   */
+  stop: KeyName[];
 }
 
 /* ───────────────────────── settings ───────────────────────── */
@@ -386,6 +393,7 @@ export const DEFAULT_SETTINGS: Settings = {
     dictate: ['Control', 'Shift', 'Space'],
     typeTap: ['DoubleTap', 'Control'],
     alwaysOn: ['TripleTap', 'Control'],
+    stop: ['Escape'],
   },
   companion: { followCursor: true, show: 'always', offsetX: 18, offsetY: 20, scale: 1, color: '', showBubble: true, pointing: true, actions: 'ask', maxSteps: 8, captions: false, autoCopy: true, notch: 'off' },
   theme: 'system',
@@ -470,6 +478,22 @@ export interface OverlayState {
   step?: string;
   /** agent mode confirm: also offer "a = always allow" */
   confirmAlways?: boolean;
+  /** the user stopped this reply (stop key / button): the bubble keeps the text, marked "stopped" */
+  stopped?: boolean;
+}
+
+/**
+ * main → overlay (IPC.overlayBusy; null = idle): clickity is busy and the stop key works.
+ * The bubble shows a quiet `hint` ("esc to stop", "esc to pause") and a small stop button;
+ * `paused` (agent run) shows "paused · enter to continue · esc to stop" with continue / stop.
+ */
+export interface OverlayBusy {
+  /** 'stop' = the key stops; 'pause' = the key pauses an agent run; 'paused' = waiting for enter */
+  mode: 'stop' | 'pause' | 'paused';
+  /** the configured stop key's label, e.g. "esc" */
+  key: string;
+  /** the quiet line, e.g. "esc to stop" / "paused · enter to continue · esc to stop" */
+  hint: string;
 }
 
 /**
@@ -611,6 +635,8 @@ export interface ChatTurn {
   ask?: ChatAsk;
   /** assistant turns: a 2D card / 3D models the reply carried ([CARD:…] / [MODEL3D:…]) */
   visuals?: ChatVisual[];
+  /** assistant turns: the user stopped it while it was being read out / acted on (stop key / button) */
+  stopped?: boolean;
 }
 
 /** A choice question an assistant turn asked (2–5 short options). */
@@ -689,7 +715,14 @@ export type ChatEvent =
   /** agent mode: acting on screen ("step 2 of 8"); step null = the agent run is over */
   | { type: 'acting'; chatId: string; turnId: string; step: string | null }
   /** a stored turn changed after the fact (e.g. its choice question was answered: turn.ask.answered) */
-  | { type: 'turn'; chatId: string; turn: ChatTurn };
+  | { type: 'turn'; chatId: string; turn: ChatTurn }
+  /**
+   * clickity is busy with a turn in this chat (voice, typed, chats window, agent run) or no longer
+   * (busy false). The chats window keeps its stop button up while busy (chats.stop works for any
+   * of them). Agent runs: mode 'pause' = acting (chats.pause), 'paused' = waiting for chats.resume
+   * / enter (turnId = the assistant turn the paused row sits under).
+   */
+  | { type: 'busy'; chatId: string; busy: boolean; mode?: 'stop' | 'pause' | 'paused'; turnId?: string };
 
 /* ───────────────────────── agent mode (input control) ───────────────────────── */
 

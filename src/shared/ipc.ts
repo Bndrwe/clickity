@@ -33,6 +33,7 @@ import type {
   ClickySuggestion,
   ClickyCreateResult,
   CompanionPhase,
+  OverlayBusy,
 } from './types';
 import type { ChatVisual } from './visuals';
 
@@ -106,6 +107,7 @@ export const IPC = {
   overlayHighlight: 'overlay:highlight', // OverlayHighlight[] | null — soft outlines ([HIGHLIGHT:…]); null = fade out
   overlayHandsFree: 'overlay:hands-free', // HandsFreeState — always-listening mode
   overlayWalkthrough: 'overlay:walkthrough', // boolean — a guided walkthrough is running (bubble click = next)
+  overlayBusy: 'overlay:busy', // OverlayBusy | null — busy: "esc to stop" line + stop button (paused: continue / stop)
 
   /* overlay → main (ipcRenderer.send) */
   pttResult: 'ptt:result', // PttResult
@@ -121,6 +123,8 @@ export const IPC = {
   handsFreeUtterance: 'hands-free:utterance', // HandsFreeUtterance — voice activity ended: transcribe / run it
   handsFreeSpeech: 'hands-free:speech', // void — voice activity started (barge-in: stop speaking)
   walkNext: 'overlay:walk-next', // void — walkthrough: the bubble was clicked (next step)
+  overlayStop: 'overlay:stop', // void — the bubble's stop button (same as the stop key: pauses an agent run)
+  overlayContinue: 'overlay:continue', // void — paused agent run: "continue"
 
   /* settings window → main (ipcRenderer.invoke) */
   settingsGet: 'settings:get', // () => Settings
@@ -165,7 +169,7 @@ export const IPC = {
   notchReady: 'notch:ready', // notch → main: void — renderer loaded, send state
   notchExpand: 'notch:expand', // notch → main: { expanded, focus } — grow / shrink the window (focus = take keyboard)
   notchSend: 'notch:send', // notch → main (invoke): NotchSendRequest => { chatId, switched? }
-  notchAction: 'notch:action', // notch → main: 'new-chat' | 'open-chats' | 'open-settings' | 'stop'
+  notchAction: 'notch:action', // notch → main: 'new-chat' | 'open-chats' | 'open-settings' | 'stop' | 'pause' | 'continue'
   notchCollapse: 'notch:collapse', // main → notch: void — collapse (clicked outside / esc)
 
   openChats: 'app:open-chats', // () => void — from settings (and tray / app menu in main)
@@ -179,7 +183,9 @@ export const IPC = {
   chatsRename: 'chats:rename', // (id, title) => void
   chatsDelete: 'chats:delete', // (id) => void
   chatsSend: 'chats:send', // (req: ChatSendRequest) => { chatId } — reply streams via chatsEvent
-  chatsStop: 'chats:stop', // (chatId) => void — abort a reply in progress
+  chatsStop: 'chats:stop', // (chatId) => void — stop whatever runs in that chat (reply, speech, voice turn, agent run)
+  chatsPause: 'chats:pause', // (chatId) => void — agent run: pause after the current action
+  chatsResume: 'chats:resume', // (chatId) => void — paused agent run: continue (fresh screenshot)
   chatsActive: 'chats:active', // () => string | null — id of the active conversation
   chatsApprove: 'chats:approve', // (turnId) => void — agent mode: allow the pending actions
   chatsDeny: 'chats:deny', // (turnId) => void — agent mode: cancel the pending actions
@@ -241,6 +247,12 @@ export interface OverlayApi {
   onHighlight(cb: (h: OverlayHighlight[] | null) => void): void;
   onHandsFree(cb: (s: HandsFreeState) => void): void;
   onWalkthrough(cb: (on: boolean) => void): void;
+  /** busy: show the stop hint + button (null = idle) */
+  onBusy(cb: (b: OverlayBusy | null) => void): void;
+  /** the bubble's stop button (pauses an agent run, like the stop key) */
+  stop(): void;
+  /** paused agent run: continue */
+  resume(): void;
   /** hands-free: an utterance ended (voice activity detector) */
   handsFreeUtterance(u: HandsFreeUtterance): void;
   /** hands-free: speech started (stop the companion talking) */
@@ -328,6 +340,9 @@ export interface ChatsApi extends UpdateApi {
   /** switched = the text was "switch to <name>": handled locally, nothing was sent (chatId '') */
   send(req: ChatSendRequest): Promise<{ chatId: string; switched?: string }>;
   stop(chatId: string): Promise<void>;
+  /** agent run: pause after the current action / continue a paused run */
+  pause(chatId: string): Promise<void>;
+  resume(chatId: string): Promise<void>;
   active(): Promise<string | null>;
   /** agent mode: allow / cancel the actions a reply is waiting on (ChatEvent 'confirm') */
   approve(turnId: string): Promise<void>;
@@ -358,6 +373,10 @@ export interface NotchState {
   chatId: string | null;
   theme: 'light' | 'dark';
   hotkeyLabel: string;
+  /** clickity is busy (stop button); 'pause' = an agent run (pause button), 'paused' = continue / stop */
+  busy?: 'stop' | 'pause' | 'paused' | null;
+  /** the stop key's label ("esc") */
+  stopLabel?: string;
 }
 
 export interface NotchSendRequest {
@@ -374,7 +393,7 @@ export interface NotchApi {
   /** grow / shrink the window; focus = it needs the keyboard (typing) */
   setExpanded(expanded: boolean, focus: boolean): void;
   send(req: NotchSendRequest): Promise<{ chatId: string; switched?: string }>;
-  action(a: 'new-chat' | 'open-chats' | 'open-settings' | 'stop'): void;
+  action(a: 'new-chat' | 'open-chats' | 'open-settings' | 'stop' | 'pause' | 'continue'): void;
   /** switch the active clicky */
   switchClicky(id: string): Promise<void>;
 }

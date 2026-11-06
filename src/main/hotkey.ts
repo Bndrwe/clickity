@@ -61,7 +61,7 @@ export function buildKeycodeMap(K: UiohookKeyTable): Map<number, KeyName> {
 /* ───────────────────────── accelerator conversion (fallback) ───────────────────────── */
 
 const ACCEL_KEYS: Record<string, string> = {
-  Space: 'Space', Enter: 'Return', Tab: 'Tab', Backspace: 'Backspace', Delete: 'Delete', Insert: 'Insert',
+  Escape: 'Escape', Space: 'Space', Enter: 'Return', Tab: 'Tab', Backspace: 'Backspace', Delete: 'Delete', Insert: 'Insert',
   Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown', ArrowUp: 'Up', ArrowDown: 'Down',
   ArrowLeft: 'Left', ArrowRight: 'Right', Backquote: '`', Minus: '-', Equal: '=', BracketLeft: '[',
   BracketRight: ']', Backslash: '\\', Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/',
@@ -174,6 +174,11 @@ function lazyRequire<T = any>(name: string): T {
 }
 
 function startUiohook(cfg: HotkeySettings, handlers: HotkeyHandlers): boolean {
+  // tests: behave like a mac without accessibility (no native hook, global shortcuts only)
+  if (process.env.CLICKITY_NO_UIOHOOK === '1') {
+    console.warn('[hotkey] CLICKITY_NO_UIOHOOK=1: using the globalShortcut fallback');
+    return false;
+  }
   try {
     if (process.platform === 'darwin') {
       const { systemPreferences } = lazyRequire('electron');
@@ -337,7 +342,13 @@ export function setRecordingSuspended(recording: boolean): void {
 // press goes to the owner that grabbed it most recently. Releasing an owner hands the key back to
 // the one below it, and unregisters it when nobody wants it any more.
 
-type GrabOwner = 'confirm' | 'choice' | (string & {});
+type GrabOwner = 'confirm' | 'choice' | 'busy' | (string & {});
+/**
+ * Owners that sit under every other owner whatever order they grabbed in: 'busy' holds the stop
+ * key the whole time clickity works, so a confirm / choice / walkthrough grabbing esc later (or
+ * earlier) still gets the press while it waits.
+ */
+const LOW_OWNERS = new Set<string>(['busy']);
 interface Grab {
   owner: GrabOwner;
   fn(): void;
@@ -346,6 +357,24 @@ interface Grab {
 const grabs = new Map<string, Grab[]>();
 /** accelerators the OS actually gave us */
 const grabbedAccels = new Set<string>();
+/** when each grabbed accelerator last fired (the native hook drops its echo of the same press) */
+const grabFiredAt = new Map<string, number>();
+
+/** When a grabbed accelerator last fired (ms epoch, 0 = never). */
+export function grabFiredRecently(accel: string, withinMs: number, now = Date.now()): boolean {
+  return now - (grabFiredAt.get(accel) ?? -Infinity) < withinMs;
+}
+
+/** Whether `accel` is currently grabbed (registered with the OS) by anyone. */
+export function isGrabbed(accel: string): boolean {
+  return grabbedAccels.has(accel);
+}
+
+/** The owner a press of `accel` goes to right now (tests / logs). */
+export function grabOwner(accel: string): string | null {
+  const stack = grabs.get(accel);
+  return stack?.[stack.length - 1]?.owner ?? null;
+}
 
 function globalShortcutApi(): Electron.GlobalShortcut | null {
   try {
@@ -359,6 +388,7 @@ function dispatchGrab(accel: string): void {
   const stack = grabs.get(accel);
   const top = stack?.[stack.length - 1];
   if (!top) return;
+  grabFiredAt.set(accel, Date.now());
   try { top.fn(); } catch (e) { console.warn(`[hotkey] ${top.owner} handler for ${accel} threw:`, e); }
 }
 
@@ -374,7 +404,8 @@ export function grabKeys(owner: GrabOwner, keys: Record<string, () => void>): st
   const ok: string[] = [];
   for (const [accel, fn] of Object.entries(keys)) {
     const stack = grabs.get(accel) ?? [];
-    stack.push({ owner, fn });
+    if (LOW_OWNERS.has(owner)) stack.unshift({ owner, fn });
+    else stack.push({ owner, fn });
     grabs.set(accel, stack);
     if (!grabbedAccels.has(accel)) {
       try {
@@ -446,6 +477,26 @@ export function setChoiceKeys(handlers: { count: number; onDigit(n: number): voi
   if (handlers.onEscape) keys.Escape = handlers.onEscape;
   const ok = grabKeys('choice', keys);
   return n > 0 && ok.some((a) => /^\d$/.test(a));
+}
+
+/**
+ * While clickity is busy (a reply, speech, listening, an agent run, a dictation…), grab the stop
+ * key so it works without the native hook (macOS without accessibility) and doesn't also close
+ * something in the focused app. Owner 'busy' sits under confirm / choice / walkthrough owners.
+ * Pass null to give the key back (idle). Returns the accelerator when grabbed.
+ */
+export function setBusyStopKey(keys: KeyName[] | null, fn?: () => void): string | null {
+  if (!keys || !fn) {
+    releaseKeys('busy');
+    return null;
+  }
+  const accel = chordToAccelerator(keys);
+  if (!accel) {
+    releaseKeys('busy');
+    return null;
+  }
+  const ok = grabKeys('busy', { [accel]: fn });
+  return ok.includes(accel) ? accel : null;
 }
 
 let agentSuspended = false;

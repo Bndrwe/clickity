@@ -1,6 +1,7 @@
 // Enum / platform checks for loaded or patched settings. Pure (type imports only) so it can be
 // unit tested with `node --experimental-strip-types --test`; settings-store.ts calls it.
 import type { Settings } from '../shared/types';
+import { DEFAULT_STOP, stopKeyProblem } from './stop-logic.ts';
 
 const THEMES = ['system', 'light', 'dark'];
 const MODES = ['hold', 'toggle'];
@@ -37,6 +38,9 @@ export function fixEnums(s: Settings, d: Settings, platform: string): Settings {
       if (s.hotkeys[k]?.includes('Fn')) s.hotkeys[k] = [...d.hotkeys[k]];
     }
   }
+  // stop / pause key: older settings have none (the defaults merge adds esc); anything that can't
+  // be grabbed as a shortcut (fn, taps, plain letters…) falls back to esc
+  if (stopKeyProblem(s.hotkeys.stop, platform)) s.hotkeys.stop = [...(d.hotkeys.stop ?? DEFAULT_STOP)];
   fixFeatures(s, d);
   return s;
 }

@@ -25,6 +25,11 @@ export interface HotkeyHandlers {
   onType(): void;
   onEscape(): void;
   /**
+   * The stop / pause key (hotkeys.stop, default esc) pressed on its own. Falls back to onEscape.
+   * With a custom stop key, plain esc still reaches onEscape (it answers prompts only).
+   */
+  onStop?(): void;
+  /**
    * Enter / numpad enter pressed on its own. Agent mode uses it to approve pending actions; the
    * handler ignores it unless a confirmation is waiting.
    */
@@ -57,7 +62,7 @@ export interface HotkeyHandlers {
 }
 
 /** The engine's view of HotkeySettings: the extra bindings are optional (older configs, tests). */
-type EngineConfig = Pick<HotkeySettings, 'talk' | 'type' | 'mode'> & Partial<Pick<HotkeySettings, 'dictate' | 'typeTap' | 'alwaysOn'>>;
+type EngineConfig = Pick<HotkeySettings, 'talk' | 'type' | 'mode'> & Partial<Pick<HotkeySettings, 'dictate' | 'typeTap' | 'alwaysOn' | 'stop'>>;
 
 
 function sameSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
@@ -91,6 +96,8 @@ export class ChordEngine {
   /** chord forms of the typeTap / alwaysOn bindings (when they aren't taps) */
   private typeChord2 = new Set<string>();
   private alwaysOnChord = new Set<string>();
+  /** the stop / pause key (default: esc) */
+  private stopChord = new Set<string>(['Escape']);
   /** tap bindings: key → count → handler */
   private taps = new Map<string, Map<number, () => void>>();
   /** the press that may become a tap */
@@ -118,6 +125,7 @@ export class ChordEngine {
     this.type = new Set(cfg.type);
     this.mode = cfg.mode;
     this.dictate = new Set(cfg.dictate ?? []);
+    this.stopChord = new Set(cfg.stop?.length ? cfg.stop : ['Escape']);
     this.taps.clear();
     this.typeChord2.clear();
     this.alwaysOnChord.clear();
@@ -195,6 +203,10 @@ export class ChordEngine {
     // talking: it was another shortcut (AltGr+Q = Ctrl+Alt+Q → "@" on German layouts). Cancel.
     if (this.talkActive && this.chordHeld && !this.talk.has(key) && !(this.type.size && sameSet(this.held, this.type))) {
       this.cancelTalk();
+      return;
+    }
+    if (this.stopChord.has(key) && sameSet(this.held, this.stopChord)) {
+      this.safe(() => (this.handlers.onStop ?? this.handlers.onEscape).call(this.handlers));
       return;
     }
     if (key === 'Escape' && this.held.size === 1) {
