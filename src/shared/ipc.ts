@@ -31,6 +31,7 @@ import type {
   ChatTurn,
   ClickyQuizAnswers,
   ClickySuggestion,
+  ClickyCreateResult,
   CompanionPhase,
 } from './types';
 import type { ChatVisual } from './visuals';
@@ -154,6 +155,7 @@ export const IPC = {
   voicePreview: 'speech:preview', // (provider, voice) => SpeakCommand | null — a short line in that voice (settings plays it)
   routineRun: 'routines:run', // (id) => void — run a routine now
 
+  clickysCreate: 'clickys:create', // (description: string) => ClickyCreateResult — settings › clickys › "make a clicky"
   clickysSuggest: 'clickys:suggest', // (answers: ClickyQuizAnswers) => ClickySuggestion[] — settings › clickys › suggest
   clickysMemory: 'clickys:memory', // (clickyId) => number — how many facts that clicky remembers
   clickysForget: 'clickys:forget', // (clickyId) => void — clear that clicky's memory
@@ -308,6 +310,8 @@ export interface SettingsApi extends UpdateApi {
   runRoutine(id: string): Promise<void>;
   /** settings › clickys: ask the model for up to 3 clickys that fit the quiz answers */
   suggestClickys(answers: ClickyQuizAnswers): Promise<ClickySuggestion[]>;
+  /** describe a clicky in your own words; it's written by the cheapest model you have set up */
+  createClickys(description: string): Promise<ClickyCreateResult>;
   /** how many facts a clicky remembers / forget them */
   clickyMemoryCount(clickyId: string): Promise<number>;
   clickyForget(clickyId: string): Promise<void>;

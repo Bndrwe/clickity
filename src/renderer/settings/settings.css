@@ -411,3 +411,7 @@ dialog#onboard .ob-actions { margin-top: 32px; }
 }
 .nav-menu a { padding: 8px 12px; border-radius: 9px; font-size: 14px; }
 .nav-menu a:hover, .nav-menu a:focus-visible { background: var(--bg-sunken); }
+
+.sg-input { width: 100%; min-height: 84px; resize: vertical; padding: 12px 14px; border: 0; border-radius: 12px; background: var(--bg-sunken); color: var(--ink); font: 15px/1.5 var(--sans); }
+.sg-input:focus { outline: none; box-shadow: 0 0 0 1px var(--ink); }
+.sg-input::placeholder { color: var(--faint); }

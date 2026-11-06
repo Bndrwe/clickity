@@ -712,3 +712,10 @@ export interface InputStatus {
   /** short lowercase reason when !ok, e.g. "needs accessibility", "install xdotool" */
   detail: string;
 }
+
+/** settings › clickys › "make a clicky": what the model wrote and which (cheapest) model wrote it */
+export interface ClickyCreateResult {
+  suggestions: ClickySuggestion[];
+  /** e.g. "local · qwen3-vl:8b" or "gemini · gemini-3.5-flash-lite" */
+  via: string;
+}

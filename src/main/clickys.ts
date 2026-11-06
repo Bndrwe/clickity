@@ -2,7 +2,7 @@
 // "switch to <name>" command and "suggest clickys for me". Pure helpers: ../shared/clickys.ts.
 import { ipcMain } from 'electron';
 import { IPC } from '../shared/ipc';
-import { PROVIDER_META, type Clicky, type ClickyQuizAnswers, type ClickySuggestion, type DeepPartial, type Settings } from '../shared/types';
+import { PROVIDER_META, type Clicky, type ClickyCreateResult, type ClickyQuizAnswers, type ClickySuggestion, type DeepPartial, type ProviderKind, type Settings } from '../shared/types';
 import { activeClicky, clickyById, parseSuggestions, parseSwitchCommand, CLICKY_COLORS } from '../shared/clickys';
 import { getSettings, onSettingsChanged, updateSettings } from './settings-store';
 import { getProvider } from './providers/index';
@@ -115,6 +115,92 @@ export async function suggestClickys(answers: ClickyQuizAnswers): Promise<Clicky
   return out.map((sug, i) => ({ ...sug, color: used.has(sug.color) && free[i] ? free[i] : sug.color }));
 }
 
+/* ───────────────────────── make a clicky from a description ───────────────────────── */
+
+/**
+ * Cheapest first: a local model is free; then the lightest model of each subscription the user already
+ * pays for; then API keys (pay per request), cheapest models first. Only providers that report ready
+ * (CLI signed in, key saved, server reachable) are used. Falls back to the user's own model.
+ */
+const CHEAP_ORDER: Array<{ kind: ProviderKind; model?: string }> = [
+  { kind: 'local' }, // whatever local model they picked
+  { kind: 'gemini-subscription', model: 'gemini-3.5-flash-lite' },
+  { kind: 'chatgpt-subscription', model: 'gpt-6-luna' },
+  { kind: 'claude-subscription', model: 'haiku' },
+  { kind: 'openrouter', model: 'google/gemini-3.5-flash-lite' },
+  { kind: 'gemini-api', model: 'gemini-3.5-flash-lite' },
+  { kind: 'openai-api', model: 'gpt-6-luna' },
+  { kind: 'anthropic-api', model: 'claude-haiku-5-5' },
+];
+let cheapCache: { at: number; pick: { kind: ProviderKind; model: string } } | null = null;
+
+export async function cheapestModel(): Promise<{ kind: ProviderKind; model: string }> {
+  if (cheapCache && Date.now() - cheapCache.at < 10 * 60_000) return cheapCache.pick;
+  const s = getSettings();
+  for (const c of CHEAP_ORDER) {
+    try {
+      const ready = await Promise.race([
+        getProvider(c.kind).status(s.providers[c.kind] ?? {}),
+        new Promise<{ ok: false }>((r) => setTimeout(() => r({ ok: false }), 12_000)),
+      ]);
+      if (!ready.ok) continue;
+      const pick = { kind: c.kind, model: c.model ?? (s.models[c.kind] || PROVIDER_META[c.kind].defaultModel) };
+      cheapCache = { at: Date.now(), pick };
+      return pick;
+    } catch {
+      /* not set up */
+    }
+  }
+  // nothing answered "ready" in time: still use the lightest model of the provider they already use
+  const own = CHEAP_ORDER.find((c) => c.kind === s.provider);
+  return { kind: s.provider, model: own?.model ?? (s.models[s.provider] || PROVIDER_META[s.provider].defaultModel) };
+}
+
+function createPrompt(description: string, existing: Clicky[]): string {
+  return `The user wants a new "clicky": a small AI companion that lives next to their mouse cursor, sees their screen and answers by voice. They described it in their own words:
+
+"${description}"
+
+They already have: ${existing.map((c) => c.name).join(', ') || 'none'}.
+
+Make exactly what they asked for: one clicky, or several only if they clearly asked for more than one (max 3). Keep their wording for the name if they gave one. Reply with ONLY a JSON array, no prose, no code fence:
+[{"name": "1-3 lowercase words", "persona": "2-4 sentences in second person, starting with 'You are' or 'You help', saying what it focuses on and how it talks", "why": "one short lowercase line"}]`;
+}
+
+export async function createClickys(description: unknown): Promise<ClickyCreateResult> {
+  const text = String(description ?? '').replace(/\s+/g, ' ').trim().slice(0, 600);
+  if (!text) throw new Error('describe the clicky you want first');
+  const s = getSettings();
+  const { kind, model } = await cheapestModel();
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), SUGGEST_TIMEOUT_MS);
+  const t0 = Date.now();
+  let out = '';
+  try {
+    for await (const d of getProvider(kind).stream(
+      { system: 'You design helpful AI companion personas. You reply with JSON only.', messages: [{ role: 'user', text: createPrompt(text, s.clickys) }], model, signal: ctrl.signal },
+      s.providers[kind] ?? {},
+    )) {
+      out += d;
+      if (out.length > 20_000) break;
+    }
+  } catch (err) {
+    log('clickys', 'create failed:', err);
+    throw new Error(ctrl.signal.aborted ? 'the model took too long — try again' : (err instanceof Error ? err.message : String(err)).split('\n')[0].toLowerCase());
+  } finally {
+    clearTimeout(timer);
+  }
+  const list = parseSuggestions(out, s.clickys.map((c) => c.name)).slice(0, 3);
+  log('clickys', `create via ${kind} / ${model}: ${list.length} clicky(s) in ${Date.now() - t0}ms`);
+  if (!list.length) throw new Error("couldn't read the model's answer — try again");
+  const used = new Set(s.clickys.map((c) => c.color));
+  const free = CLICKY_COLORS.filter((c) => c && !used.has(c));
+  return {
+    suggestions: list.map((sug, i) => ({ ...sug, color: used.has(sug.color) && free[i] ? free[i] : sug.color })),
+    via: `${PROVIDER_META[kind].label} · ${model}`,
+  };
+}
+
 /* ───────────────────────── init ───────────────────────── */
 
 export function initClickys(): void {
@@ -122,6 +208,7 @@ export function initClickys(): void {
   initialized = true;
   onSettingsChanged(syncColor);
   ipcMain.handle(IPC.clickysSuggest, (_e, answers: ClickyQuizAnswers) => suggestClickys(answers));
+  ipcMain.handle(IPC.clickysCreate, (_e, description: unknown) => createClickys(description));
   // each clicky has its own memory (memory.ts: memory.json for the default one, memory-<id>.json)
   ipcMain.handle(IPC.clickysMemory, (_e, id: unknown) => (typeof id === 'string' && getSettings().clickys.some((c) => c.id === id) ? listFacts(id).length : 0));
   ipcMain.handle(IPC.clickysForget, (_e, id: unknown) => {

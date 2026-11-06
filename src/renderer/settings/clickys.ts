@@ -312,101 +312,132 @@ function debounced(el: HTMLInputElement | HTMLTextAreaElement, commit: () => voi
 
 /* ───────────── suggest clickys for me ───────────── */
 
-const QUIZ: Array<{ key: keyof ClickyQuizAnswers; q: string; options: string[] }> = [
-  { key: 'use', q: 'what do you use your computer for?', options: ['work & documents', 'coding', 'studying', 'creative work', 'email & browsing'] },
-  { key: 'stuck', q: 'where do you get stuck most?', options: ['spreadsheets & data', 'writing', 'learning new apps', 'errors & bugs', 'staying organised'] },
-  { key: 'tone', q: 'how should it talk to you?', options: ['short & direct', 'patient, step by step', 'playful', 'like a teacher'] },
+
+const EXAMPLES = [
+  'a spanish tutor that fixes my grammar',
+  'a patient excel helper for my budget sheets',
+  'a blunt code reviewer that keeps answers short',
+  'a study buddy that quizzes me on biology',
 ];
 
+/** "make a clicky": type what you want; the cheapest model you have set up writes it and it's added. */
 function initSuggest(ctx: ClickysCtx, added: (c: Clicky) => void): void {
   const dlg = $<HTMLDialogElement>('suggest-dlg');
   const body = $('sg-body');
   const go = $<HTMLButtonElement>('sg-go');
   const step = $('sg-step');
   const titleEl = $('sg-title');
-  let answers: Partial<ClickyQuizAnswers> = {};
   let busy = false;
+  let input: HTMLTextAreaElement | null = null;
 
-  const ready = () => QUIZ.every((q) => answers[q.key]);
-  function renderQuiz(): void {
-    step.textContent = 'three quick questions';
-    titleEl.textContent = 'Suggest clickys for me.';
+  function renderAsk(prefill = ''): void {
+    step.textContent = 'in your own words';
+    titleEl.textContent = 'Make a clicky.';
     go.hidden = false;
-    go.querySelector('span')!.textContent = 'suggest';
-    body.replaceChildren(
-      ...QUIZ.map((q) => {
-        const picks = h('div', { class: 'sg-picks', role: 'radiogroup', 'aria-label': q.q });
-        for (const o of q.options) {
-          const b = h('button', { class: 'sg-pick', type: 'button', role: 'radio', 'aria-checked': String(answers[q.key] === o), text: o });
-          b.addEventListener('click', () => {
-            answers[q.key] = o;
-            picks.querySelectorAll('.sg-pick').forEach((x) => x.setAttribute('aria-checked', String(x === b)));
-            go.disabled = !ready();
-          });
-          picks.append(b);
-        }
-        return h('div', { class: 'sg-q' }, h('p', { class: 'sg-qtext', text: q.q }), picks);
+    go.querySelector('span')!.textContent = 'make it';
+    input = h('textarea', {
+      class: 'sg-input',
+      rows: '3',
+      maxlength: '600',
+      'aria-label': 'describe the clicky you want',
+      placeholder: `e.g. ${EXAMPLES[Math.floor(Math.random() * EXAMPLES.length)]}`,
+    }) as HTMLTextAreaElement;
+    input.value = prefill;
+    input.addEventListener('input', () => (go.disabled = !input!.value.trim()));
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        void run();
+      }
+    });
+    const chips = h(
+      'div',
+      { class: 'sg-picks' },
+      ...EXAMPLES.map((ex) => {
+        const c = h('button', { class: 'sg-pick', type: 'button', text: ex });
+        c.addEventListener('click', () => {
+          input!.value = ex;
+          go.disabled = false;
+          input!.focus();
+        });
+        return c;
       }),
     );
-    go.disabled = !ready();
+    body.replaceChildren(
+      input,
+      h('p', { class: 'hint', text: 'it’s written by the cheapest ai you have set up (a local model first, then the lightest model on your plan), and added right away.' }),
+      chips,
+    );
+    go.disabled = !input.value.trim();
+    setTimeout(() => input?.focus(), 50);
   }
 
-  function renderResults(list: ClickySuggestion[]): void {
-    step.textContent = `${list.length} idea${list.length === 1 ? '' : 's'}`;
-    titleEl.textContent = 'Some clickys for you.';
+  async function addAll(list: ClickySuggestion[]): Promise<Clicky[]> {
+    const made: Clicky[] = [];
+    await mutateClickys(ctx, (st) => {
+      const next = [...st.clickys];
+      for (const s of list) {
+        if (next.length >= MAX_CLICKYS) break;
+        const c: Clicky = { id: clickyIdFor(s.name, next.map((x) => x.id)), name: s.name, color: s.color, persona: s.persona, createdAt: Date.now() };
+        next.push(c);
+        made.push(c);
+      }
+      return made.length ? { clickys: next } : null;
+    });
+    return made;
+  }
+
+  function renderMade(made: Clicky[], list: ClickySuggestion[], via: string, description: string): void {
+    step.textContent = `made with ${via}`;
+    titleEl.textContent = made.length === 1 ? `Say hi to ${made[0]!.name}.` : 'Your new clickys.';
     go.hidden = false;
-    go.querySelector('span')!.textContent = 'ask again';
+    go.querySelector('span')!.textContent = 'make another';
     go.disabled = false;
     body.replaceChildren(
-      ...list.map((s) => {
-        const add = h('button', { class: 'btn', type: 'button' }, h('span', { text: 'add' }));
-        add.addEventListener('click', async () => {
-          if (ctx.get().clickys.length >= MAX_CLICKYS) return void (add.querySelector('span')!.textContent = 'too many clickys');
-          let c: Clicky | null = null;
-          await mutateClickys(ctx, (st) => {
-            if (st.clickys.length >= MAX_CLICKYS) return null;
-            c = { id: clickyIdFor(s.name, st.clickys.map((x) => x.id)), name: s.name, color: s.color, persona: s.persona, createdAt: Date.now() };
-            return { clickys: [...st.clickys, c] };
-          });
-          if (!c) return;
-          add.disabled = true;
-          add.querySelector('span')!.textContent = 'added';
-          added(c);
+      ...made.map((c, i) => {
+        const undo = h('button', { class: 'text-btn', type: 'button' }, h('span', { text: 'undo' }));
+        undo.addEventListener('click', async () => {
+          await mutateClickys(ctx, (st) => ({ clickys: st.clickys.filter((x) => x.id !== c.id) }));
+          undo.disabled = true;
+          undo.querySelector('span')!.textContent = 'removed';
         });
+        const why = list[i]?.why;
         return h(
           'div',
           { class: 'sg-card' },
-          h('div', { class: 'sg-card-head' }, clickyMark(s.color, 22), h('span', { class: 'sg-name', text: s.name }), add),
-          s.why ? h('p', { class: 'sg-why', text: s.why }) : null,
-          h('p', { class: 'sg-persona', text: s.persona }),
+          h('div', { class: 'sg-card-head' }, clickyMark(c.color, 22), h('span', { class: 'sg-name', text: c.name }), undo),
+          why ? h('p', { class: 'sg-why', text: why }) : null,
+          h('p', { class: 'sg-persona', text: c.persona }),
         );
       }),
     );
+    if (!made.length) body.append(h('p', { class: 'result err', text: 'you already have the most clickys allowed — remove one first' }));
+    for (const c of made) added(c);
+    void description;
   }
 
   async function run(): Promise<void> {
-    if (busy || !ready()) return;
+    const text = input?.value.trim() ?? '';
+    if (busy || !text) return;
     busy = true;
     go.disabled = true;
-    step.textContent = 'thinking';
-    body.replaceChildren(h('p', { class: 'loading sg-loading', text: 'asking your model for a few ideas…', 'aria-live': 'polite' }));
+    step.textContent = 'making it';
+    body.replaceChildren(h('p', { class: 'loading sg-loading', text: 'finding the cheapest model you have and writing your clicky…', 'aria-live': 'polite' }));
     try {
-      renderResults(await ctx.api.suggestClickys(answers as ClickyQuizAnswers));
+      const res = await ctx.api.createClickys(text);
+      const made = await addAll(res.suggestions);
+      renderMade(made, res.suggestions, res.via, text);
     } catch (err) {
       const msg = (err instanceof Error ? err.message : String(err)).replace(/^error invoking remote method '[^']+': (error: )?/i, '').toLowerCase();
-      body.replaceChildren(h('p', { class: 'result err', text: msg || 'something went wrong' }));
-      go.querySelector('span')!.textContent = 'try again';
-      go.disabled = false;
+      renderAsk(text);
+      body.append(h('p', { class: 'result err', text: msg || 'something went wrong' }));
     } finally {
       busy = false;
     }
   }
 
   go.addEventListener('click', () => {
-    if (go.querySelector('span')!.textContent === 'ask again') {
-      renderQuiz();
-      return;
-    }
+    if (go.querySelector('span')!.textContent === 'make another') return renderAsk();
     void run();
   });
   $('sg-close').addEventListener('click', () => dlg.close());
@@ -414,7 +445,7 @@ function initSuggest(ctx: ClickysCtx, added: (c: Clicky) => void): void {
     if (e.target === dlg) dlg.close();
   });
   $('clicky-suggest').addEventListener('click', () => {
-    if (!busy) renderQuiz();
+    if (!busy) renderAsk();
     dlg.showModal();
   });
 }

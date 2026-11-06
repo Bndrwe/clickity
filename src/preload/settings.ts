@@ -46,6 +46,7 @@ const api: SettingsApi = {
   inputStatus: () => ipcRenderer.invoke(IPC.inputStatus),
   memoryList: () => ipcRenderer.invoke(IPC.memoryList),
   suggestClickys: (answers) => ipcRenderer.invoke(IPC.clickysSuggest, answers),
+  createClickys: (description) => ipcRenderer.invoke(IPC.clickysCreate, description),
   clickyMemoryCount: (id) => ipcRenderer.invoke(IPC.clickysMemory, id),
   clickyForget: (id) => ipcRenderer.invoke(IPC.clickysForget, id),
   memorySet: (facts) => ipcRenderer.invoke(IPC.memorySet, facts),
