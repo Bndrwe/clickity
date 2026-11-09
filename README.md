@@ -20,9 +20,9 @@
 </p>
 
 <p align="center">
-  <a href="docs/media/clickity-demo.mp4"><img src="docs/media/clickity-demo.gif" width="760" alt="clickity demo: hold a key and circle something, it gets what you mean, points the way, and asks when it's not sure"></a>
+  <a href="docs/media/clickity-demo.mp4"><img src="docs/media/clickity-demo.gif" width="760" alt="clickity demo: helping with a sales spreadsheet, physics and biology homework, and everyday tasks"></a>
   <br>
-  <sub><a href="docs/media/clickity-demo.mp4">▶ watch the full 43-second demo (with sound)</a> · made with <a href="https://github.com/heygen-com/hyperframes">hyperframes</a> ↗</sub>
+  <sub><a href="docs/media/clickity-demo.mp4">▶ watch the full 59-second demo (with sound)</a> · made with <a href="https://github.com/heygen-com/hyperframes">hyperframes</a> ↗</sub>
 </p>
 
 clickity is a little ink triangle that follows your mouse. hold the talk key, say what you need, and let go. it looks at your screens, answers in a short bubble, says it out loud, and — when the answer is something on screen — flies over and points at it.
