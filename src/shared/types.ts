@@ -859,3 +859,12 @@ export interface ClickyCreateResult {
   /** e.g. "local · qwen3-vl:8b" or "gemini · gemini-3.5-flash-lite" */
   via: string;
 }
+
+/** Quiz mode: something the user missed in a quiz, kept per clicky for "quiz me again" (settings › memory › to review). */
+export interface QuizReviewItem {
+  /** a short fact, e.g. "7 x 8 is 56" */
+  text: string;
+  /** times missed */
+  misses: number;
+  lastMissedAt: number;
+}

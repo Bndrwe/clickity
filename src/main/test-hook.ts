@@ -10,6 +10,7 @@ import { fakeInputLog } from './agent-input';
 import { logPath } from './log';
 import { trayMenu } from './tray';
 import { testFeatures } from './features';
+import { listReview, quizSnapshot } from './quiz';
 
 export function installTestHook(): void {
   if (process.env.CLICKITY_TEST !== '1') return;
@@ -45,6 +46,9 @@ export function installTestHook(): void {
     listChats,
     getChat,
     logPath,
+    /** quiz mode: the running quiz and the review list */
+    quizSnapshot,
+    listReview,
     /** the tray menu (named companions: click "clicky: <name> ▸" items) */
     trayMenu,
     /** dictation, hands-free, memory, routines, walkthrough (features.ts) */

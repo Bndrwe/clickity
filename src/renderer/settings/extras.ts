@@ -1,7 +1,7 @@
 // Settings window: dictation dictionary, memory, routines, voice extras (language picker, mic,
 // voice previews, captions), hands-free, show in dock, replay tour. Talks to main through
 // window.clicky like settings.ts, which hands in its helpers.
-import type { DeepPartial, Routine, Settings, SpeakCommand } from '../../shared/types';
+import type { DeepPartial, QuizReviewItem, Routine, Settings, SpeakCommand } from '../../shared/types';
 
 type H = <K extends keyof HTMLElementTagNameMap>(tag: K, props?: Record<string, string | boolean | number>, ...kids: Array<Node | string | null | undefined | false>) => HTMLElementTagNameMap[K];
 
@@ -30,6 +30,7 @@ export function initExtras(ctx: ExtrasCtx): void {
   initSwitches(ctx);
   initDictation(ctx);
   initMemory(ctx);
+  initQuizReview(ctx);
   initRoutines(ctx);
   initAbout(ctx);
   initSpeed(ctx);
@@ -301,6 +302,47 @@ function initMemory(ctx: ExtrasCtx): void {
     facts = f;
     render();
   });
+}
+
+/* ───────── quiz review (things missed in quizzes) ───────── */
+
+function initQuizReview(ctx: ExtrasCtx): void {
+  const list = $('quiz-review-list');
+  const empty = $('quiz-review-empty');
+  const clear = $('quiz-review-clear');
+  let items: QuizReviewItem[] = [];
+  const render = (): void => {
+    list.replaceChildren(
+      ...items
+        .slice()
+        .reverse()
+        .map((r) => {
+          const got = ctx.h('button', { class: 'text-btn', type: 'button', 'aria-label': `remove ${r.text}` }, ctx.h('span', { text: 'got it' }));
+          got.addEventListener('click', () => void api.quizReviewRemove(r.text).then((next) => ((items = next), render())));
+          return ctx.h('div', { class: 'pair' }, ctx.h('span', { class: 'grow', text: r.text }), r.misses > 1 ? ctx.h('span', { class: 'muted tnum', text: `missed ${r.misses}×` }) : null, got);
+        }),
+    );
+    empty.hidden = items.length > 0;
+    clear.hidden = !items.length;
+  };
+  clear.addEventListener('click', () => void api.quizReviewClear().then(() => ((items = []), render())));
+  api.onQuizReviewChanged((next) => {
+    items = next;
+    render();
+  });
+  const refresh = (): void =>
+    void api.quizReviewList().then((next) => {
+      items = next;
+      render();
+    });
+  // each clicky has its own list: follow the active one
+  let clicky = '';
+  ctx.sync(() => {
+    if (ctx.get().activeClicky === clicky) return;
+    clicky = ctx.get().activeClicky;
+    refresh();
+  });
+  refresh();
 }
 
 /* ───────── routines ───────── */

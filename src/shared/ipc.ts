@@ -37,6 +37,7 @@ import type {
   ClickyCreateResult,
   CompanionPhase,
   OverlayBusy,
+  QuizReviewItem,
 } from './types';
 import type { ChatVisual } from './visuals';
 
@@ -163,6 +164,9 @@ export const IPC = {
   memoryList: 'memory:list', // () => string[] — remembered facts, oldest first
   memorySet: 'memory:set', // (facts: string[]) => string[] — replace the list (edit / delete)
   memoryClear: 'memory:clear', // () => void — forget everything
+  quizReviewList: 'quiz:review-list', // () => QuizReviewItem[] — what the user missed in quizzes (active clicky)
+  quizReviewRemove: 'quiz:review-remove', // (text) => QuizReviewItem[] — drop one item
+  quizReviewClear: 'quiz:review-clear', // () => void — clear the review list
   voicePreview: 'speech:preview', // (provider, voice) => SpeakCommand | null — a short line in that voice (settings plays it)
   latencyGet: 'speech:latency', // () => LatencyInfo — the last voice turn's timing + the current pipeline summary
   routineRun: 'routines:run', // (id) => void — run a routine now
@@ -210,6 +214,7 @@ export const IPC = {
   hotkeyHeard: 'hotkey:heard', // HotkeyHeard — a chord fired
   hotkeyStatusChanged: 'hotkey:status-changed', // HotkeyStatus
   memoryChanged: 'memory:changed', // string[]
+  quizReviewChanged: 'quiz:review-changed', // QuizReviewItem[]
 
   /* main → settings + chats windows */
   updateChanged: 'update:changed', // UpdateState
@@ -352,6 +357,11 @@ export interface SettingsApi extends UpdateApi {
   memorySet(facts: string[]): Promise<string[]>;
   memoryClear(): Promise<void>;
   onMemoryChanged(cb: (facts: string[]) => void): void;
+  /** quiz mode: things missed in quizzes, asked first next time (settings › memory › to review) */
+  quizReviewList(): Promise<QuizReviewItem[]>;
+  quizReviewRemove(text: string): Promise<QuizReviewItem[]>;
+  quizReviewClear(): Promise<void>;
+  onQuizReviewChanged(cb: (items: QuizReviewItem[]) => void): void;
   /** a short line in this voice (null = nothing to play) */
   voicePreview(provider: string, voice: string): Promise<SpeakCommand | null>;
   /** settings › voice speed summary and about › diagnostics latency line */

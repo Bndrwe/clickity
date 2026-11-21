@@ -74,6 +74,7 @@ import { SpeechStream } from './speech/speak-stream';
 import { encodeScreens, grabScreens, screensChanged, type ScreenGrab } from './capture';
 import { pickVoiceModel } from './fast-model';
 import { extrasPromptParts } from './turn-extras';
+import { quizAfterReply, quizEscape, quizRunningIn } from './quiz';
 import { prewarmClaude } from './providers/claude-cli';
 import { preconnect } from './providers/http';
 import type { PttStartRequest, SpeakCommand, SpeechTiming, TurnTiming } from '../shared/types';
@@ -738,7 +739,7 @@ async function runTurn(turn: Turn, input: TurnInput): Promise<void> {
   const chosen = input.model || settings.models[kind] || PROVIDER_META[kind].defaultModel;
   // fast replies: plain voice questions go to the provider's fastest model
   const pick =
-    input.source === 'voice' && lessonChatId !== chatId // mid-lesson: keep the model that's teaching
+    input.source === 'voice' && lessonChatId !== chatId && !quizRunningIn(chatId) // mid-lesson / quiz: keep the model that's teaching
       ? pickVoiceModel(kind, chosen, input.userText, { enabled: settings.speech.fastReplies !== false, agent: settings.companion.actions !== 'off' && input.screens.length > 0, pinned: !!input.model })
       : { model: chosen, fast: false, reason: '' };
   const model = pick.model;
@@ -897,7 +898,7 @@ async function askModel(
     show(opts.thinking);
     // the cursor note describes this turn's own screenshots, not an agent step's fresh ones
     const parts = buildSystemParts(settings, screens, { source: input.source, imageNames: opts.imageNames, cursorNote: screens === input.screens ? input.cursorNote : undefined, fast: ctx.fast });
-    const extras = await extrasPromptParts(settings, screens);
+    const extras = await extrasPromptParts(settings, screens, chatId);
     const systemStable = parts.stable + extras.stable;
     const req: ChatRequest = {
       system: systemStable + parts.dynamic + extras.dynamic,
@@ -1017,6 +1018,9 @@ async function finishReply(turn: Turn, input: TurnInput, settings: Settings, rep
     lessonChatId = null; // the last step
     log('lesson', `finished (${lessonStep.total} steps)`);
   } else if (turn.chatId && turn.chatId === lessonChatId) lessonChatId = null; // moved on
+  // quiz mode ([QUIZ:n/m]): the score footer; a question stays up until it's answered
+  const quiz = turn.chatId && extras ? quizAfterReply(turn.chatId, extras.quiz, reply, settings.activeClicky, turn.overlay) : null;
+  if (quiz?.step && !lessonStep) step = quiz.step;
   if (extras?.steps.length && !offer) {
     // guided walkthrough: the intro, then step by step (enter / bubble click = next, esc = end)
     sendState(turn.overlay, { phase: 'speaking', reply, step });
@@ -1053,7 +1057,7 @@ async function finishReply(turn: Turn, input: TurnInput, settings: Settings, rep
   if (extras?.routines.length) await offerRoutines(extras.routines, turn.overlay, signal).catch(() => 0);
   if (!isTurnCurrent(turn)) return;
   log('turn', `${turn.id} done (${points.length} point(s))`);
-  if (lessonStep && pendingLesson?.turnId === turn.id) {
+  if ((lessonStep && pendingLesson?.turnId === turn.id) || quiz?.hold) {
     endTurn(turn, { phase: 'idle', reply, step, hold: true });
     return;
   }
@@ -2574,8 +2578,10 @@ function escapePrompts(): boolean {
   if (pendingChoice) {
     log('choice', 'dismissed (escape)');
     const askedBy = current;
+    const askedIn = pendingChoice.chatId;
     clearChoice('escape');
     if (askedBy && askedBy.kind !== 'window') cancelCurrent();
+    if (quizRunningIn(askedIn)) quizEscape(); // a multiple-choice quiz question: esc ends the quiz too
     clearErrorTimer();
     return true;
   }
@@ -2595,6 +2601,13 @@ function escapePrompts(): boolean {
     clearLesson('escape');
     if (reading) cancelCurrent(); // still reading the step out: stop
     sendState(win, { phase: 'idle' });
+    clearErrorTimer();
+    return true;
+  }
+  const quiz = quizEscape();
+  if (quiz) {
+    if (current && current.chatId === quiz.chatId && current.kind !== 'window') cancelCurrent(); // still reading the question out
+    sendState(quiz.overlay, { phase: 'idle' });
     clearErrorTimer();
     return true;
   }

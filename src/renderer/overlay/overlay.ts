@@ -144,6 +144,8 @@ let choice: OverlayChoice | null = null;
 let replyBox = false;
 let lingerTimer = 0;
 let lingering = false;
+/** an idle reply held up for the user (a lesson step / quiz question): its footer stays too */
+let heldStep = false;
 let transcriptTimer = 0;
 let transcriptOpen = false;
 let bubbleIn = false;
@@ -623,7 +625,7 @@ function renderBubble(): void {
   const wantReply = !!reply && ((showBubble && (phase === 'thinking' || phase === 'speaking' || phase === 'acting' || lingering || keepForReply)) || wantChoice);
   // agent mode lines show even with the reply bubble off: they're how the user stays in control
   const wantConfirm = !!confirmText && phase !== 'idle' && phase !== 'error' && phase !== 'listening';
-  const wantStep = !!stepText && (phase === 'thinking' || phase === 'speaking' || phase === 'acting');
+  const wantStep = !!stepText && (phase === 'thinking' || phase === 'speaking' || phase === 'acting' || (heldStep && lingering && !!reply));
   // status lines are shown even with the reply bubble turned off: they explain why nothing happens
   const note = phase === 'listening' || phase === 'transcribing' ? localNote || serverNote : phase !== 'idle' && phase !== 'error' ? serverNote : stoppedReply && wantReply ? 'stopped' : '';
   const wantNote = !!note;
@@ -730,6 +732,7 @@ function onState(s: OverlayState): void {
   confirmText = (s.confirm ?? '').trim();
   bubbleEl.classList.toggle('confirm-always', !!s.confirmAlways); // agent mode: "a = always allow" 
   stepText = (s.step ?? '').trim();
+  heldStep = phase === 'idle' && !!s.hold;
   stoppedReply = phase === 'idle' && !!s.stopped;
   // closed by the user: a new turn (listening / thinking) brings the bubble back; stale states don't
   if (phase === 'listening' || phase === 'transcribing' || phase === 'thinking') dismissed = false;

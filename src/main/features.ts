@@ -10,6 +10,7 @@ import { draftEnter, draftEscape, initDictation, onDictateCancel, onDictateDown,
 import { initHandsFree, stopHandsFree, toggleHandsFree } from './hands-free';
 import { checkRoutinesNow, initRoutines, runRoutineNow, stopRoutines } from './routines';
 import { clearFacts, listFacts, onFactsChanged, setFacts } from './memory';
+import { registerQuizIpc } from './quiz';
 import { routineEnter, routineEscape, walkthroughEnter } from './turn-extras';
 import { synthesize } from './speech/tts';
 import { companionBusy, lessonEnter, isListening, latencySnapshot, onType, runRoutineTurn, runUtterance, stopCurrentTurn, testSpeak, turnActivity } from './conversation';
@@ -52,6 +53,7 @@ export function registerFeatureIpc(): void {
   ipcMain.handle(IPC.memoryList, () => listFacts());
   ipcMain.handle(IPC.memorySet, (_e, facts: unknown) => setFacts(facts));
   ipcMain.handle(IPC.memoryClear, () => clearFacts());
+  registerQuizIpc();
   ipcMain.handle(IPC.routineRun, (_e, id: unknown) => {
     if (typeof id !== 'string') throw new Error('missing routine id');
     return runRoutineNow(id);

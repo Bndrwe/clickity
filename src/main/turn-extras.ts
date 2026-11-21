@@ -9,6 +9,8 @@ import { screenshotToGlobal, type CapturedScreen } from './capture';
 import { pickPointScreen } from './point-tags';
 import { MAX_STEPS, parseExtraTags, stripExtraTags, type ParsedHighlight, type ParsedLesson, type ParsedRoutine, type ParsedStep } from './extra-tags';
 import { memoryPrompt, rememberFacts } from './memory';
+import { parseQuizTags, stripQuizTags, type ParsedQuiz } from './quiz-tags';
+import { quizPromptParts } from './quiz';
 import { liveContextPrompt, selfHelpPrompt } from './live-context';
 import { broadcastToOverlays, overlayDisplay, overlayForDisplay, overlayForPoint, sendToOverlay } from './overlay';
 import { grabKeys, hotkeyLabel, releaseKeys } from './hotkey';
@@ -49,7 +51,8 @@ TEACHING STEP BY STEP
 - Step 1 says in a few words what you'll cover, then gives the first step. Keep every step short: one idea or one thing to do, two or three sentences. Use plain words; give a tiny example when it helps.${canPoint ? ' If the step happens on screen, POINT at (or HIGHLIGHT) where it happens.' : ''}
 - Make them do it: when it fits, end the step with a quick thing to try or a small question, and don't give the answer away in the same step.
 - The user moves on by pressing enter or saying "next" — that always means move on: if the last step's question went unanswered, give the answer in a few words and teach the next step. Each new message comes with a fresh screenshot: when the step was something to do on screen, glance at it to check it worked. If they answer (said or typed) and get it wrong, gently correct it and help with that step again (same n); if right, say so in a few words and go on. If they ask a question mid-lesson, answer it briefly and keep the lesson tag with the same n.
-- The last step uses n = m: wrap up in a sentence or two (what they learned, what to try next). Stop adding the tag once the lesson is over or they change the subject.
+- The last step uses n = m: wrap up in a sentence or two (what they learned, what to try next), then offer a quick quiz in one short sentence with [ASK:quick quiz on this?|yes, quiz me|not now]. Stop adding the tag once the lesson is over or they change the subject.
+- A [CHART:…] graph helps when a step is about a function, a line or numbers ("graph y = 2x + 3").
 - Never mention the tag; never use [STEP] tags in a lesson.`;
 }
 
@@ -76,14 +79,16 @@ export async function extrasPrompt(settings: Settings, screens: CapturedScreen[]
  * extrasPrompt split for caching / warm sessions: `stable` (memory, tag protocols, self-help)
  * changes rarely; `dynamic` (date / time, focused app, window titles) changes every turn.
  */
-export async function extrasPromptParts(settings: Settings, screens: CapturedScreen[]): Promise<{ stable: string; dynamic: string }> {
+export async function extrasPromptParts(settings: Settings, screens: CapturedScreen[], chatId?: string | null): Promise<{ stable: string; dynamic: string }> {
   const h = settings.hotkeys;
   const p = process.platform;
   const live = await liveContextPrompt().catch(() => '');
+  const quiz = quizPromptParts(settings.activeClicky, chatId);
   return {
     stable:
       memoryPrompt(settings.memory?.enabled !== false, settings.activeClicky) +
       protocolPrompt(settings, screens) +
+      quiz.stable +
       selfHelpPrompt({
         talk: hotkeyLabel(h.talk, p),
         type: hotkeyLabel(h.type, p),
@@ -91,13 +96,13 @@ export async function extrasPromptParts(settings: Settings, screens: CapturedScr
         typeTap: hotkeyLabel(h.typeTap ?? [], p),
         alwaysOn: hotkeyLabel(h.alwaysOn ?? [], p),
       }),
-    dynamic: live,
+    dynamic: live + quiz.dynamic,
   };
 }
 
 /** Visible text: also hide this module's tags. */
 export function stripExtras(text: string, streaming: boolean): string {
-  return stripExtraTags(text, streaming);
+  return stripQuizTags(stripExtraTags(text, streaming), streaming);
 }
 
 /* ───────────────────────── after a reply ───────────────────────── */
@@ -108,6 +113,8 @@ export interface ReplyExtras {
   lesson: ParsedLesson | null;
   routines: ParsedRoutine[];
   highlights: number;
+  /** [QUIZ:…] tags (quiz mode, quiz.ts); null when the reply has none */
+  quiz: ParsedQuiz | null;
 }
 
 /** Store [REMEMBER] facts, draw [HIGHLIGHT]s, and return walkthrough steps / routine offers. */
@@ -116,7 +123,7 @@ export function handleReplyExtras(raw: string, screens: CapturedScreen[], settin
   if (tags.remember.length && settings.memory?.enabled !== false) rememberFacts(tags.remember, settings.activeClicky);
   let drawn = 0;
   if (tags.highlights.length && screens.length && settings.companion.pointing) drawn = drawHighlights(tags.highlights, screens);
-  return { steps: screens.length && !tags.lesson ? tags.steps : [], lesson: tags.lesson, routines: tags.routines, highlights: drawn };
+  return { steps: screens.length && !tags.lesson ? tags.steps : [], lesson: tags.lesson, routines: tags.routines, highlights: drawn, quiz: parseQuizTags(raw) };
 }
 
 function localRect(h: ParsedHighlight, screens: CapturedScreen[]): { win: BrowserWindow; rect: OverlayHighlight } | null {

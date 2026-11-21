@@ -2,7 +2,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import { updateApi } from './update';
 import { IPC, type HotkeyHeard, type HotkeyStatus, type KeyRecordEvent, type SettingsApi } from '../shared/ipc';
-import type { Settings } from '../shared/types';
+import type { QuizReviewItem, Settings } from '../shared/types';
 
 const api: SettingsApi = {
   ...updateApi,
@@ -53,6 +53,12 @@ const api: SettingsApi = {
   memoryClear: () => ipcRenderer.invoke(IPC.memoryClear),
   onMemoryChanged: (cb) => {
     ipcRenderer.on(IPC.memoryChanged, (_e: IpcRendererEvent, facts: string[]) => cb(facts));
+  },
+  quizReviewList: () => ipcRenderer.invoke(IPC.quizReviewList),
+  quizReviewRemove: (text) => ipcRenderer.invoke(IPC.quizReviewRemove, text),
+  quizReviewClear: () => ipcRenderer.invoke(IPC.quizReviewClear),
+  onQuizReviewChanged: (cb) => {
+    ipcRenderer.on(IPC.quizReviewChanged, (_e: IpcRendererEvent, items: QuizReviewItem[]) => cb(items));
   },
   voicePreview: (provider, voice) => ipcRenderer.invoke(IPC.voicePreview, provider, voice),
   latency: () => ipcRenderer.invoke(IPC.latencyGet),
