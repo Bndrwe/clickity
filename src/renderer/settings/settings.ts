@@ -22,6 +22,7 @@ import { stopKeyProblem } from '../../main/stop-logic';
 import { initClickys, initNotchSetting } from './clickys';
 import { initWakeTips } from './wake-tips';
 import { KOKORO_VOICES, initExtras } from './extras';
+import { initSafety } from './safety';
 
 const api = window.clicky;
 let settings: Settings = structuredClone(DEFAULT_SETTINGS);
@@ -310,6 +311,8 @@ const PAGE_NAMES: Record<string, string> = {
   dictation: 'dictation',
   memory: 'memory',
   routines: 'routines',
+  privacy: 'privacy',
+  usage: 'usage & cost',
   permissions: 'permissions',
   about: 'about & diagnostics',
 };
@@ -1947,6 +1950,7 @@ async function boot(): Promise<void> {
     platform: () => platform,
     openTour: () => (window as any).__openOnboarding?.(),
   });
+  initSafety({ get: () => settings, save, sync: (f) => syncers.push(f), flash, h, platform: () => platform });
 
   try {
     settings = (await api.getSettings()) as Settings;

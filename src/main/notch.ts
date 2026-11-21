@@ -11,6 +11,7 @@ import { getSettings, onSettingsChanged } from './settings-store';
 import { getChat, onChatsChanged } from './chat-store';
 import { getActiveChatId, newChat, pauseCurrent, resumeAgent, sendFromWindow, stopEverything } from './conversation';
 import { currentBusy, onBusyChanged } from './busy';
+import { togglePrivate } from './privacy';
 import { stopHint } from './stop-logic';
 import { onCursorMove, onOverlayState } from './overlay';
 import { openChatsWindow } from './chats-window';
@@ -211,6 +212,7 @@ function buildState(): NotchState {
     hotkeyLabel: hotkeyLabel(s.hotkeys.talk, process.platform),
     busy: currentBusy()?.mode ?? null,
     stopLabel: hotkeyLabel(s.hotkeys.stop ?? ['Escape'], process.platform),
+    privateUntil: s.privacy?.privateUntil ?? 0,
   };
 }
 
@@ -314,6 +316,8 @@ export function initNotch(): void {
       stopEverything('notch');
     } else if (a === 'pause') {
       pauseCurrent();
+    } else if (a === 'private') {
+      togglePrivate(10);
     } else if (a === 'continue') {
       resumeAgent();
     }
@@ -325,7 +329,7 @@ export function initNotch(): void {
   onCursorMove(onCursor);
   onSettingsChanged((s, prev) => {
     if (s.companion.notch !== prev.companion.notch) applyMode(s.companion.notch ?? 'off');
-    if (s.activeClicky !== prev.activeClicky || JSON.stringify(s.clickys) !== JSON.stringify(prev.clickys) || s.hotkeys.talk.join() !== prev.hotkeys.talk.join()) pushState(true);
+    if (s.activeClicky !== prev.activeClicky || JSON.stringify(s.clickys) !== JSON.stringify(prev.clickys) || s.hotkeys.talk.join() !== prev.hotkeys.talk.join() || s.privacy?.privateUntil !== prev.privacy?.privateUntil) pushState(true);
   });
   const reposition = () => {
     if (alive()) place(screen.getAllDisplays().find((d) => d.id === displayId) ?? cursorDisplay());

@@ -143,6 +143,7 @@ export const IPC = {
   wakeStatus: 'wake:status', // WakeStatus — the wake listener's state (mic blocked, model loading, checks)
   tipOpen: 'tip:open', // string (tip id) — the tip dot was clicked
   tipAction: 'tip:action', // 'close' | 'not-now' | 'stop' — the tip bubble's buttons
+  overlayUndo: 'overlay:undo', // void — the bubble's "undo" (agent mode just acted)
 
   /* settings window → main (ipcRenderer.invoke) */
   settingsGet: 'settings:get', // () => Settings
@@ -182,6 +183,13 @@ export const IPC = {
   routineRun: 'routines:run', // (id) => void — run a routine now
   wakeStatusGet: 'wake:status-get', // () => WakeStatus — settings › voice › wake word
   tipsStatusGet: 'tips:status-get', // () => string — settings › companion › tips: a quiet line ("1 tip in the last hour")
+
+  /* privacy, usage, undo (src/main/safety.ts) */
+  usageGet: 'usage:get', // () => UsageSummary — settings › usage
+  usageReset: 'usage:reset', // () => UsageSummary — forget the recorded usage
+  privacyCheck: 'privacy:check', // () => PrivacyCheck — what clickity can see right now (settings › privacy)
+  privacyPrivate: 'privacy:private', // (minutes: number) => number — private mode for n minutes (0 = off) → privateUntil
+  chatsUndo: 'chats:undo', // (chatId) => UndoResult — the chats window's "undo" under an agent run
 
   clickysCreate: 'clickys:create', // (description: string) => ClickyCreateResult — settings › clickys › "make a clicky"
   clickysSuggest: 'clickys:suggest', // (answers: ClickyQuizAnswers) => ClickySuggestion[] — settings › clickys › suggest
@@ -232,6 +240,60 @@ export const IPC = {
   /* main → settings + chats windows */
   updateChanged: 'update:changed', // UpdateState
 } as const;
+
+/** settings › usage: what the meter recorded (src/main/usage.ts). Costs are estimates in USD. */
+export interface UsageTotals {
+  calls: number;
+  input: number;
+  output: number;
+  cached: number;
+  /** estimated USD for api calls with a known price */
+  cost: number;
+  /** api calls whose model has no known price (tokens counted, cost unknown) */
+  unpriced: number;
+}
+
+export interface UsageModelRow extends UsageTotals {
+  /** provider kind, or 'speech' */
+  provider: string;
+  model: string;
+  billing: 'api' | 'subscription' | 'local';
+  /** speech: characters spoken / seconds transcribed */
+  chars?: number;
+  seconds?: number;
+}
+
+export interface UsageSummary {
+  today: UsageTotals;
+  month: UsageTotals;
+  /** this month, biggest cost first */
+  byModel: UsageModelRow[];
+  /** the last 30 days' estimated cost, oldest first ("YYYY-MM-DD") */
+  days: Array<{ day: string; cost: number }>;
+  monthlyLimit: number;
+  overLimit: boolean;
+  /** "prices are estimates (table from 2026-11) — check your provider's bill" */
+  priceNote: string;
+}
+
+/** settings › privacy › "check now": what the never-capture list sees this moment. */
+export interface PrivacyCheck {
+  /** focused app as detected ('' = can't tell) */
+  front: string;
+  /** a never-capture entry matched: why clickity wouldn't look now */
+  blocked: string | null;
+  /** how many other windows could be read (-1 = window list unavailable on this system) */
+  windows: number;
+  /** honest per-platform line: what can and can't be detected here */
+  detail: string;
+}
+
+/** The result of an undo request (chats window / bubble). */
+export interface UndoResult {
+  ok: boolean;
+  /** short lowercase line: what it did / why it couldn't */
+  message: string;
+}
 
 /** The updater calls both windows expose. */
 export interface UpdateApi {
@@ -286,6 +348,8 @@ export interface OverlayApi {
   onDismiss(cb: () => void): void;
   /** paused agent run: continue */
   resume(): void;
+  /** agent mode just acted: undo it (the bubble's "undo") */
+  undo(): void;
   /** hands-free: an utterance ended (voice activity detector) */
   handsFreeUtterance(u: HandsFreeUtterance): void;
   /** hands-free: speech started (stop the companion talking) */
@@ -390,6 +454,13 @@ export interface SettingsApi extends UpdateApi {
   /** settings › voice speed summary and about › diagnostics latency line */
   latency(): Promise<LatencyInfo>;
   runRoutine(id: string): Promise<void>;
+  /** settings › usage */
+  usage(): Promise<UsageSummary>;
+  usageReset(): Promise<UsageSummary>;
+  /** settings › privacy: what the never-capture list sees right now */
+  privacyCheck(): Promise<PrivacyCheck>;
+  /** private mode for `minutes` (0 = off); resolves with privateUntil */
+  setPrivate(minutes: number): Promise<number>;
   /** settings › clickys: ask the model for up to 3 clickys that fit the quiz answers */
   suggestClickys(answers: ClickyQuizAnswers): Promise<ClickySuggestion[]>;
   /** describe a clicky in your own words; it's written by the cheapest model you have set up */
@@ -424,6 +495,8 @@ export interface ChatsApi extends UpdateApi {
   deny(turnId: string): Promise<void>;
   /** answer an assistant turn's choice question (sent as the next message, like the overlay's pills) */
   answer(req: ChatAnswerRequest): Promise<{ chatId: string }>;
+  /** undo the last agent-mode actions in this chat (local where it can, else the model reverses them) */
+  undo(chatId: string): Promise<UndoResult>;
   onEvent(cb: (e: ChatEvent) => void): void;
   onChanged(cb: (list: ChatSummary[]) => void): void;
   // shared with the settings window
@@ -452,6 +525,8 @@ export interface NotchState {
   busy?: 'stop' | 'pause' | 'paused' | null;
   /** the stop key's label ("esc") */
   stopLabel?: string;
+  /** "private for 10 min": screen capture off until this epoch ms (0 / missing = off) */
+  privateUntil?: number;
 }
 
 export interface NotchSendRequest {
@@ -468,7 +543,7 @@ export interface NotchApi {
   /** grow / shrink the window; focus = it needs the keyboard (typing) */
   setExpanded(expanded: boolean, focus: boolean): void;
   send(req: NotchSendRequest): Promise<{ chatId: string; switched?: string }>;
-  action(a: 'new-chat' | 'open-chats' | 'open-settings' | 'stop' | 'pause' | 'continue'): void;
+  action(a: 'new-chat' | 'open-chats' | 'open-settings' | 'stop' | 'pause' | 'continue' | 'private'): void;
   /** switch the active clicky */
   switchClicky(id: string): Promise<void>;
 }

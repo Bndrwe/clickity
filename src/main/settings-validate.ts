@@ -2,6 +2,8 @@
 // unit tested with `node --experimental-strip-types --test`; settings-store.ts calls it.
 import type { Settings } from '../shared/types';
 import { DEFAULT_STOP, stopKeyProblem } from './stop-logic.ts';
+import { DEFAULT_NEVER_CAPTURE } from '../shared/types.ts';
+import { cleanList } from './privacy-match.ts';
 
 const THEMES = ['system', 'light', 'dark'];
 const MODES = ['hold', 'toggle'];
@@ -45,6 +47,7 @@ export function fixEnums(s: Settings, d: Settings, platform: string): Settings {
   if (stopKeyProblem(s.hotkeys.stop, platform)) s.hotkeys.stop = [...(d.hotkeys.stop ?? DEFAULT_STOP)];
   fixFeatures(s, d);
   fixWakeAndTips(s, d, platform);
+  fixSafety(s, d);
   upgradeSpeech(s, d);
   return s;
 }
@@ -123,5 +126,33 @@ export function fixFeatures(s: Settings, d: Settings): Settings {
       enabled: !!r.enabled,
     }))
     .slice(0, 50);
+  return s;
+}
+
+const BLUR = ['off', 'cursor', 'all'];
+const MAX_PRIVATE_MS = 24 * 60 * 60_000;
+const MODS = ['Control', 'Alt', 'Shift', 'Meta'];
+
+/**
+ * Privacy, usage meter and undo key (older files have none: defaults; a hand-edited file can't
+ * turn private mode on for a year or give the undo key a tap / fn binding).
+ */
+export function fixSafety(s: Settings, d: Settings, now = Date.now()): Settings {
+  const dp = d.privacy ?? { neverCapture: [...DEFAULT_NEVER_CAPTURE], blur: 'off', privateUntil: 0 };
+  if (!s.privacy || typeof s.privacy !== 'object') s.privacy = structuredClone(dp);
+  const p = s.privacy;
+  p.neverCapture = Array.isArray(p.neverCapture) ? cleanList(p.neverCapture) : [...dp.neverCapture];
+  if (!BLUR.includes(p.blur)) p.blur = 'off';
+  p.privateUntil = finite(p.privateUntil) && p.privateUntil > now ? Math.min(p.privateUntil, now + MAX_PRIVATE_MS) : 0;
+  if (!s.usage || typeof s.usage !== 'object') s.usage = { monthlyLimit: 0 };
+  const lim = Number(s.usage.monthlyLimit);
+  s.usage.monthlyLimit = Number.isFinite(lim) && lim > 0 ? Math.min(100_000, Math.round(lim * 10_000) / 10_000) : 0;
+  const u = s.hotkeys.undo;
+  const ok =
+    Array.isArray(u) &&
+    u.length <= 4 &&
+    u.every((k) => typeof k === 'string' && !!k && k !== 'Fn' && !/Tap$/.test(k)) &&
+    (u.length === 0 || u.some((k) => !MODS.includes(k)));
+  if (!ok) s.hotkeys.undo = [...(d.hotkeys.undo ?? ['KeyU'])];
   return s;
 }

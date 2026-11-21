@@ -44,6 +44,8 @@
           <div id="wave" class="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
           <div class="dots"><i></i><i></i><i></i></div>
         </div>
+        <!-- private mode: screen capture is off for a while -->
+        <span id="private-tag" class="private-tag">private</span>
       </div>
 
       <div id="bubble-pos" class="pos">
@@ -68,6 +70,8 @@
           </div></div>
           <!-- quick follow-up: continue the same chat in the type box under the bubble -->
           <div id="reply-row" class="reply-row"><button id="reply-btn" class="reply-btn" type="button" tabindex="-1" title="reply">reply</button></div>
+          <!-- agent mode just acted: "u to undo" + undo, for a few seconds -->
+          <div id="undo-row" class="undo-row"><span id="undo-hint" class="undo-hint"></span><button id="undo-btn" class="reply-btn" type="button" tabindex="-1" title="undo what clickity just did">undo</button></div>
           <!-- busy: "esc to stop" / "esc to pause" + stop; a paused agent run: continue / stop -->
           <div id="stop-row" class="stop-row">
             <p id="stop-hint" class="stop-hint"></p>

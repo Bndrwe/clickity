@@ -16,6 +16,7 @@ import {
 import type { UpdateState } from '../../shared/ipc';
 import { $, h, icon, logo, markSvg, type IconName } from './dom';
 import { renderMarkdown } from './markdown';
+import { usageLabel } from '../../shared/usage-math';
 import { initClickySwitch } from './clicky-switch';
 import { GROUPS, clock, groupOf, relTime } from './time';
 import { clickTicks, enterEmptyState, enterGreeting, enterList, enterMessage, openPopover, pressSend } from './motion';
@@ -771,6 +772,8 @@ function showChat(c: Chat | null): void {
   el.turns.replaceChildren(...(c ? c.turns.map((t) => renderTurn(t, false, t.id === liveId)) : []));
   turnEls.clear();
   el.turns.querySelectorAll<HTMLElement>('.msg').forEach((n) => turnEls.set(n.dataset.id!, n));
+  const undo = c ? undoOffers.get(c.id) : undefined;
+  if (undo) renderUndo(undo);
   syncTitle();
   syncComposer();
   renderList();
@@ -790,12 +793,16 @@ function metaFor(t: ChatTurn): string[] {
     else if (t.source === 'type') bits.push('typed');
     if (t.screenshots) bits.push(`${t.screenshots} screen${t.screenshots === 1 ? '' : 's'}`);
     if (t.attachments?.length) bits.push(`${t.attachments.length} file${t.attachments.length === 1 ? '' : 's'}`);
+    if (t.privacy) bits.push(t.privacy);
   } else {
     if (t.provider) bits.push(PROVIDER_META[t.provider]?.label ?? t.provider);
     if (t.model) bits.push(t.model.toLowerCase());
     if (t.points?.length) bits.push(`pointed at: ${t.points.join(', ').toLowerCase()}`);
     if (t.actions?.length) bits.push(t.actions.join(' · ').toLowerCase());
     if (t.stopped && !t.error) bits.push('stopped');
+    // usage meter: "~$0.0031 · 1.2k in · 84 out" / "included in your subscription" / "free (local)"
+    const used = usageLabel(t.usage);
+    if (used) bits.push(used);
   }
   if (t.at) bits.push(clock(t.at));
   return bits;
@@ -1052,6 +1059,28 @@ function renderConfirm(e: Extract<ChatEvent, { type: 'confirm' }>): void {
   }
 }
 
+/** the latest undo offer per chat (shown again when that chat is opened) */
+const undoOffers = new Map<string, Extract<ChatEvent, { type: 'undo' }>>();
+
+/** agent mode acted: "undo" under the run (what it typed is deleted again; clicks / keys: it looks and tries) */
+function renderUndo(e: Extract<ChatEvent, { type: 'undo' }>): void {
+  for (const n of el.turns.querySelectorAll('.agent-undo')) n.remove();
+  if (!e.available) return;
+  const slot = agentSlot(e.turnId);
+  if (!slot) return;
+  const btn = h('button', { class: 'meta-copy', type: 'button', text: 'undo', title: 'undo what clickity just did' }) as HTMLButtonElement;
+  const note = h('span', { text: ' · typed text is deleted again; clicks and keys: it looks and tries to reverse them' });
+  const row = h('div', { class: 'agent-note agent-undo' }, btn, note);
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    const r = await api.undo(e.chatId).catch(() => ({ ok: false, message: "couldn't undo" }));
+    row.replaceChildren(r.message);
+    announce(r.message);
+  });
+  slot.append(row);
+  afterGrow(false);
+}
+
 function renderActing(e: Extract<ChatEvent, { type: 'acting' }>): void {
   // only the newest step shows progress; the run ending clears it everywhere
   for (const n of el.turns.querySelectorAll('.agent-note.live, .agent-run')) n.remove();
@@ -1130,6 +1159,10 @@ function onEvent(e: ChatEvent): void {
   if (e.type === 'start') liveTurns.set(e.chatId, { id: e.turnId, role: 'assistant', text: '', at: Date.now() });
   if (e.type === 'delta') liveTurns.set(e.chatId, { id: e.turnId, role: 'assistant', text: e.text, at: liveTurns.get(e.chatId)?.at ?? Date.now() });
   if (e.type === 'done' || e.type === 'error') liveTurns.delete(e.chatId);
+  if (e.type === 'undo') {
+    undoOffers.clear(); // one run can be undone at a time
+    if (e.available) undoOffers.set(e.chatId, e);
+  }
 
   if (!chat || chat.id !== e.chatId) {
     renderList();
@@ -1160,6 +1193,9 @@ function onEvent(e: ChatEvent): void {
       break;
     case 'busy':
       renderBusy(e);
+      break;
+    case 'undo':
+      renderUndo(e);
       break;
     case 'turn':
       // a stored turn changed (its question was answered / dismissed)

@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { ImageInput } from '../shared/types';
+import { PrivacySkip, blurMode, screenVerdict } from './privacy';
+import { blurWidth, pasteRect, sharpRect } from './privacy-match';
 
 const MAX_SIDE = 1568;
 const JPEG_QUALITY = 80;
@@ -64,6 +66,21 @@ export interface ScreenGrab {
   items: Array<{ display: Display; thumb: NativeImage }>;
   /** tiny grey thumbnails per display id, for screensChanged() */
   sig: Map<number, Buffer>;
+  /** a screen was left out for privacy ("didn't look at one screen — 1password is open there") */
+  privacy?: string;
+}
+
+/** Screenshots of a turn; `privacy` says why some / all screens were left out (settings › privacy). */
+export type Screens = CapturedScreen[] & { privacy?: string };
+
+/** No screenshots, because of the never-capture list / private mode: the bubble line rides along. */
+export function privacyScreens(line: string): Screens {
+  return Object.assign([] as CapturedScreen[], { privacy: line });
+}
+
+/** The privacy line of a turn's screenshots ('' = nothing was left out). */
+export function privacyOf(screens: CapturedScreen[] | null | undefined): string {
+  return (screens as Screens | null | undefined)?.privacy ?? '';
 }
 
 const PERMISSION_MSG = 'screen recording permission needed — open settings › permissions';
@@ -89,7 +106,9 @@ export async function grabScreens(): Promise<ScreenGrab> {
     width: Math.max(...displays.map((d) => Math.round(d.bounds.width * d.scaleFactor))),
     height: Math.max(...displays.map((d) => Math.round(d.bounds.height * d.scaleFactor))),
   };
-  const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize, fetchWindowIcons: false });
+  // privacy (never-capture apps, private mode) is checked while the pixels are fetched
+  const [sources, verdict] = await Promise.all([desktopCapturer.getSources({ types: ['screen'], thumbnailSize, fetchWindowIcons: false }), screenVerdict()]);
+  if (verdict.all) throw new PrivacySkip(verdict.all);
   const pairs = matchSources(displays, sources);
   // macOS 14/15 without screen-recording permission (or with a stale grant for an older
   // ad-hoc build) still returns thumbnails, just wallpaper-only or black ones. Sending those
@@ -110,9 +129,12 @@ export async function grabScreens(): Promise<ScreenGrab> {
     .map((d) => ({ display: d, thumb: pairs.get(d)!.thumbnail }))
     .filter(({ thumb }) => !thumb.isEmpty() && !(process.platform === 'darwin' && isBlack(thumb)));
   if (items.length === 0) throw new Error(PERMISSION_MSG);
+  const kept = items.filter((it) => !verdict.displays.has(it.display.id));
+  const privacy = kept.length < items.length ? verdict.displays.get(items.find((it) => verdict.displays.has(it.display.id))!.display.id) : undefined;
+  if (!kept.length) throw new PrivacySkip(privacy ?? "didn't look");
   const sig = new Map<number, Buffer>();
-  for (const it of items) sig.set(it.display.id, signature(it.thumb));
-  return { at: t0, ms: Date.now() - t0, items, sig };
+  for (const it of kept) sig.set(it.display.id, signature(it.thumb));
+  return { at: t0, ms: Date.now() - t0, items: kept, sig, privacy };
 }
 
 /**
@@ -142,7 +164,7 @@ export async function screensChanged(grab: ScreenGrab): Promise<boolean> {
 }
 
 /** Downscale, annotate (ink stroke) and JPEG-encode a grab. The cursor's display comes first. */
-export async function encodeScreens(grab: ScreenGrab, cursor: Point, annotate?: CaptureAnnotator): Promise<CapturedScreen[]> {
+export async function encodeScreens(grab: ScreenGrab, cursor: Point, annotate?: CaptureAnnotator): Promise<Screens> {
   const cursorDisplay = screen.getDisplayNearestPoint(cursor);
   const usable = [...grab.items].sort((a, b) => {
     if (a.display.id === cursorDisplay.id) return -1;
@@ -150,7 +172,9 @@ export async function encodeScreens(grab: ScreenGrab, cursor: Point, annotate?: 
     return a.display.bounds.x - b.display.bounds.x;
   });
   await fs.promises.mkdir(TEMP_DIR, { recursive: true });
-  const screens: CapturedScreen[] = [];
+  const screens: Screens = [];
+  if (grab.privacy) screens.privacy = grab.privacy;
+  const blur = blurMode();
   for (const [i, { display, thumb }] of usable.entries()) {
     const index = i + 1;
     const isCursorScreen = display.id === cursorDisplay.id;
@@ -165,6 +189,17 @@ export async function encodeScreens(grab: ScreenGrab, cursor: Point, annotate?: 
           })
         : thumb;
     const { width, height } = img.getSize();
+    // settings › privacy › blur before sending: heavy blur (a tiny downscale, scaled back up),
+    // the box around the cursor kept sharp ('cursor'); other screens are blurred all over
+    let blurred = '';
+    if (blur !== 'off') {
+      try {
+        img = blurImage(img, width, height, blur === 'cursor' ? sharpRect({ width, height }, display.bounds, cursor) : null);
+        blurred = blur === 'cursor' && isCursorScreen ? ' · blurred except around the cursor' : ' · blurred on purpose (privacy)';
+      } catch (err) {
+        console.warn('[capture] blur failed:', err);
+      }
+    }
     if (annotate) {
       try {
         const bitmap = img.toBitmap();
@@ -190,7 +225,7 @@ export async function encodeScreens(grab: ScreenGrab, cursor: Point, annotate?: 
         mime: 'image/jpeg',
         base64: data.toString('base64'),
         path: file,
-        label: `screen ${index}${isCursorScreen ? ' (cursor is here)' : ''} · ${width}x${height}px`,
+        label: `screen ${index}${isCursorScreen ? ' (cursor is here)' : ''} · ${width}x${height}px${blurred}`,
         width,
         height,
       },
@@ -199,8 +234,18 @@ export async function encodeScreens(grab: ScreenGrab, cursor: Point, annotate?: 
   return screens;
 }
 
+/** Heavy blur, optionally keeping `sharp` (image pixels) as it was. Cheap: two resizes and a row copy. */
+function blurImage(img: NativeImage, width: number, height: number, sharp: { x: number; y: number; width: number; height: number } | null): NativeImage {
+  const soft = img.resize({ width: blurWidth(width), quality: 'good' }).resize({ width, height, quality: 'good' });
+  if (!sharp) return soft;
+  const dst = soft.toBitmap();
+  const src = img.toBitmap();
+  if (dst.length !== width * height * 4 || src.length !== dst.length) return soft;
+  return nativeImage.createFromBitmap(pasteRect(dst, src, width, sharp), { width, height });
+}
+
 /** Captures every display. The cursor's display comes first, then the rest left to right. */
-export async function captureScreens(cursor: Point, annotate?: CaptureAnnotator): Promise<CapturedScreen[]> {
+export async function captureScreens(cursor: Point, annotate?: CaptureAnnotator): Promise<Screens> {
   cleanupCaptures();
   return encodeScreens(await grabScreens(), cursor, annotate);
 }

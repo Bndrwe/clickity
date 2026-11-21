@@ -1,5 +1,5 @@
 // Anthropic Messages API (direct, with the user's API key).
-import type { ChatRequest, ModelInfo, ProviderConfig, ProviderStatus } from '../../shared/types';
+import type { ChatRequest, ModelInfo, ProviderConfig, ProviderStatus, TokenUsage } from '../../shared/types';
 import { withDefault } from './common';
 import { getJson, parseJson, request, sse } from './http';
 import type { Provider } from './provider';
@@ -73,19 +73,42 @@ async function* stream(req: ChatRequest, cfg: ProviderConfig): AsyncGenerator<st
       stream: true,
     }),
   });
-  for await (const ev of sse(res, req.signal)) {
-    const j = parseJson(ev.data);
-    if (!j) continue;
-    if (j.type === 'content_block_delta' && j.delta?.type === 'text_delta' && typeof j.delta.text === 'string') {
-      yield j.delta.text;
-    } else if (j.type === 'error' || ev.event === 'error') {
-      const msg = String(j.error?.message ?? 'stream error').toLowerCase();
-      const t = j.error?.type === 'overloaded_error' ? 'overloaded, try again' : msg;
-      throw new Error(`${NAME}: ${t}`);
-    } else if (j.type === 'message_stop') {
-      return;
+  // usage meter: message_start carries the prompt side, message_delta the running output count
+  const usage: TokenUsage = { input: 0, output: 0 };
+  let seen = false;
+  try {
+    for await (const ev of sse(res, req.signal)) {
+      const j = parseJson(ev.data);
+      if (!j) continue;
+      if (j.type === 'content_block_delta' && j.delta?.type === 'text_delta' && typeof j.delta.text === 'string') {
+        yield j.delta.text;
+      } else if (j.type === 'message_start' || j.type === 'message_delta') {
+        seen = readUsage(j.type === 'message_start' ? j.message?.usage : j.usage, usage) || seen;
+      } else if (j.type === 'error' || ev.event === 'error') {
+        const msg = String(j.error?.message ?? 'stream error').toLowerCase();
+        const t = j.error?.type === 'overloaded_error' ? 'overloaded, try again' : msg;
+        throw new Error(`${NAME}: ${t}`);
+      } else if (j.type === 'message_stop') {
+        return;
+      }
     }
+  } finally {
+    // also when stopped half-way: those tokens were billed too
+    if (seen) req.onUsage?.(usage);
   }
+}
+
+/** Anthropic usage block → TokenUsage (counts are cumulative; missing fields keep their value). */
+export function readUsage(u: any, into: TokenUsage): boolean {
+  if (!u || typeof u !== 'object') return false;
+  const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+  into.input = num(u.input_tokens) ?? into.input;
+  into.output = num(u.output_tokens) ?? into.output;
+  const cr = num(u.cache_read_input_tokens);
+  const cw = num(u.cache_creation_input_tokens);
+  if (cr !== undefined) into.cacheRead = cr;
+  if (cw !== undefined) into.cacheWrite = cw;
+  return true;
 }
 
 async function listModels(cfg: ProviderConfig): Promise<ModelInfo[]> {

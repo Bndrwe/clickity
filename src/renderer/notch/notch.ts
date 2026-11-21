@@ -157,7 +157,7 @@ function flashNote(text: string): void {
 
 document.querySelectorAll<HTMLButtonElement>('.act').forEach((b) =>
   b.addEventListener('click', () => {
-    const a = b.dataset.a as 'new-chat' | 'open-chats' | 'open-settings';
+    const a = b.dataset.a as 'new-chat' | 'open-chats' | 'open-settings' | 'private';
     api.action(a);
     if (a === 'new-chat') el.ask.focus();
   }),
@@ -308,6 +308,13 @@ function render(): void {
   el.line.classList.toggle('err', s.phase === 'error' && !note);
 
   renderControls(s);
+  // private mode: no screenshots for a while
+  const priv = document.getElementById('act-private');
+  const left = (s.privateUntil ?? 0) - Date.now();
+  if (priv) {
+    priv.textContent = left > 0 ? `private · ${Math.max(1, Math.ceil(left / 60_000))} min left` : 'private 10 min';
+    priv.setAttribute('aria-pressed', String(left > 0));
+  }
 
   el.switchList.hidden = !switching;
   el.msgs.hidden = switching;

@@ -33,6 +33,7 @@ const api: OverlayApi = {
   bubbleVisible: (on) => ipcRenderer.send(IPC.overlayBubble, !!on),
   onDismiss: (cb) => on<void>(IPC.overlayDismiss, () => cb()),
   resume: () => ipcRenderer.send(IPC.overlayContinue),
+  undo: () => ipcRenderer.send(IPC.overlayUndo),
   handsFreeUtterance: (u) => ipcRenderer.send(IPC.handsFreeUtterance, u),
   handsFreeSpeech: () => ipcRenderer.send(IPC.handsFreeSpeech),
   walkNext: () => ipcRenderer.send(IPC.walkNext),

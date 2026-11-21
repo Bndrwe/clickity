@@ -2,6 +2,7 @@
 import path from 'node:path';
 import { app, BrowserWindow, shell } from 'electron';
 import { resendBusy } from './busy';
+import { resendUndo } from './undo';
 
 const isMac = process.platform === 'darwin';
 let win: BrowserWindow | null = null;
@@ -66,7 +67,10 @@ export function openChatsWindow(): BrowserWindow {
   });
 
   // a turn may already be running (voice, agent run): show its stop / pause right away
-  w.webContents.on('did-finish-load', () => setTimeout(resendBusy, 300));
+  w.webContents.on('did-finish-load', () => setTimeout(() => {
+    resendBusy();
+    resendUndo(); // the "undo" under the last agent run
+  }, 300));
   void w.loadFile(path.join(__dirname, '../renderer/chats/chats.html'));
   return w;
 }

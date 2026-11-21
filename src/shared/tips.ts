@@ -101,6 +101,7 @@ export function privateAppNames(privacy: unknown): string[] {
 export function privacyBlocksScreens(privacy: unknown): boolean {
   if (!privacy || typeof privacy !== 'object') return false;
   const p = privacy as Record<string, unknown>;
+  if (typeof p.privateUntil === 'number' && p.privateUntil > Date.now()) return true; // "private for 10 min"
   return p.screenshots === false || p.neverScreenshot === true || p.noScreenshots === true;
 }
 

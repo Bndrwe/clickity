@@ -68,6 +68,10 @@ const api: SettingsApi = {
     ipcRenderer.on(IPC.wakeStatusChanged, (_e: IpcRendererEvent, st: WakeStatus) => cb(st));
   },
   tipsStatus: () => ipcRenderer.invoke(IPC.tipsStatusGet),
+  usage: () => ipcRenderer.invoke(IPC.usageGet),
+  usageReset: () => ipcRenderer.invoke(IPC.usageReset),
+  privacyCheck: () => ipcRenderer.invoke(IPC.privacyCheck),
+  setPrivate: (minutes) => ipcRenderer.invoke(IPC.privacyPrivate, minutes),
 };
 
 contextBridge.exposeInMainWorld('clicky', api);

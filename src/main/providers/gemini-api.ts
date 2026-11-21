@@ -1,5 +1,5 @@
 // Google Gemini API (AI Studio key), streamGenerateContent over SSE.
-import type { ChatRequest, ModelInfo, ProviderConfig, ProviderStatus } from '../../shared/types';
+import type { ChatRequest, ModelInfo, ProviderConfig, ProviderStatus, TokenUsage } from '../../shared/types';
 import { withDefault } from './common';
 import { getJson, parseJson, request, sse } from './http';
 import type { Provider } from './provider';
@@ -51,26 +51,43 @@ async function* stream(req: ChatRequest, cfg: ProviderConfig): AsyncGenerator<st
     body: JSON.stringify(body),
   });
   let any = false;
-  for await (const ev of sse(res, req.signal)) {
-    const j = parseJson(ev.data);
-    if (!j) continue;
-    if (j.error) throw new Error(`${NAME}: ${String(j.error.message ?? 'stream error').toLowerCase()}`);
-    if (j.promptFeedback?.blockReason) {
-      throw new Error(`${NAME}: request blocked (${String(j.promptFeedback.blockReason).toLowerCase()})`);
-    }
-    const cand = j.candidates?.[0];
-    for (const p of cand?.content?.parts ?? []) {
-      if (p?.thought) continue;
-      if (typeof p?.text === 'string' && p.text) {
-        any = true;
-        yield p.text;
+  // usage meter: every chunk carries the running usageMetadata; the last one counts
+  let usage: TokenUsage | null = null;
+  try {
+    for await (const ev of sse(res, req.signal)) {
+      const j = parseJson(ev.data);
+      if (!j) continue;
+      if (j.usageMetadata) usage = geminiUsage(j.usageMetadata) ?? usage;
+      if (j.error) throw new Error(`${NAME}: ${String(j.error.message ?? 'stream error').toLowerCase()}`);
+      if (j.promptFeedback?.blockReason) {
+        throw new Error(`${NAME}: request blocked (${String(j.promptFeedback.blockReason).toLowerCase()})`);
+      }
+      const cand = j.candidates?.[0];
+      for (const p of cand?.content?.parts ?? []) {
+        if (p?.thought) continue;
+        if (typeof p?.text === 'string' && p.text) {
+          any = true;
+          yield p.text;
+        }
+      }
+      const fr = cand?.finishReason;
+      if (!any && fr && /SAFETY|RECITATION|PROHIBITED|BLOCKLIST/.test(fr)) {
+        throw new Error(`${NAME}: reply blocked (${String(fr).toLowerCase()})`);
       }
     }
-    const fr = cand?.finishReason;
-    if (!any && fr && /SAFETY|RECITATION|PROHIBITED|BLOCKLIST/.test(fr)) {
-      throw new Error(`${NAME}: reply blocked (${String(fr).toLowerCase()})`);
-    }
+  } finally {
+    if (usage) req.onUsage?.(usage);
   }
+}
+
+/** usageMetadata → TokenUsage: the prompt count includes cached tokens, the output includes thinking. */
+export function geminiUsage(m: any): TokenUsage | null {
+  if (!m || typeof m !== 'object') return null;
+  const n = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
+  const cached = n(m.cachedContentTokenCount);
+  const u: TokenUsage = { input: Math.max(0, n(m.promptTokenCount) - cached), output: n(m.candidatesTokenCount) + n(m.thoughtsTokenCount) };
+  if (cached) u.cacheRead = cached;
+  return u;
 }
 
 async function listModels(cfg: ProviderConfig): Promise<ModelInfo[]> {
