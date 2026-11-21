@@ -256,6 +256,8 @@ function buildConfig(win: BrowserWindow): OverlayConfig | null {
     preloadStt: display.id === screen.getPrimaryDisplay().id,
     // the natural on-device voice: loaded by the primary display's overlay (others load it on first use)
     preloadVoice: s.speech.tts.provider === 'kokoro' && display.id === screen.getPrimaryDisplay().id,
+    // private mode: the companion shows it quietly
+    privateUntil: s.privacy?.privateUntil ?? 0,
   };
 }
 

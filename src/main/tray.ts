@@ -9,6 +9,7 @@ import { getSettings, updateSettings } from './settings-store';
 import { hotkeyLabel } from './hotkey';
 import { getUpdateState, installUpdate } from './updater';
 import { isNewer } from './update-core';
+import { togglePrivate } from './privacy';
 
 export interface TrayActions {
   /** section: scroll settings there (e.g. 'clickys') */
@@ -142,6 +143,13 @@ function buildMenu(a: TrayActions): Menu {
       click: () => a.setPaused(!a.isPaused()),
     },
     {
+      // settings › privacy: no screen capture for a while (the companion shows it quietly)
+      label: privateLabel(s.privacy?.privateUntil ?? 0),
+      type: 'checkbox',
+      checked: (s.privacy?.privateUntil ?? 0) > Date.now(),
+      click: () => togglePrivate(10),
+    },
+    {
       label: 'appearance',
       submenu: (['system', 'light', 'dark'] as const).map((t) => ({
         label: t,
@@ -154,6 +162,13 @@ function buildMenu(a: TrayActions): Menu {
     { type: 'separator' },
     { label: 'quit', accelerator: isMac ? 'Command+Q' : undefined, click: () => a.quit() },
   ]);
+}
+
+/** "private for 10 min" / "private until 14:32" */
+function privateLabel(until: number): string {
+  if (until <= Date.now()) return 'private for 10 min';
+  const t = new Date(until).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  return `private until ${t.toLowerCase()}`;
 }
 
 export function createTray(a: TrayActions): Tray {

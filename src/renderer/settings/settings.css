@@ -480,3 +480,18 @@ section[data-page]:not([data-page=home]) { padding-top: 12px; }
 .ob-dots i.on { background: var(--ink); width: 18px; }
 .ob-choice { box-shadow: 0 0 0 1px transparent; transition: transform .3s var(--ease), box-shadow .3s var(--ease); }
 .ob-choice.on { box-shadow: 0 0 0 1px var(--ink); }
+
+/* settings › usage & cost: big quiet numbers, a 30-day row of thin ink bars, model rows on hairlines */
+.u-big { margin: 0 0 2px; font-family: var(--serif); font-style: italic; font-size: 30px; line-height: 1.1; color: var(--ink); font-variant-numeric: tabular-nums; }
+.u-spark { display: flex; align-items: flex-end; gap: 2px; height: 34px; margin: 10px 0 8px; max-width: 320px; border-bottom: 1px solid var(--line); }
+.u-spark i { flex: 1; min-width: 3px; border-radius: 2px 2px 0 0; background: var(--ink-muted); transition: background-color .3s var(--ease); }
+.u-spark i:hover { background: var(--ink); }
+.u-models { width: 100%; }
+.u-model { display: flex; justify-content: space-between; gap: 16px; padding: 9px 0; border-top: 1px solid var(--line); font-size: 14px; }
+.u-model:first-child { border-top: 0; padding-top: 0; }
+.u-who { color: var(--ink); }
+.u-what { color: var(--ink-muted); text-align: right; }
+.u-limit { display: inline-flex; align-items: center; gap: 8px; }
+#never-list { font-variant-numeric: tabular-nums; }
+#never-status { margin-top: 8px; }
+@media (max-width: 640px) { .u-model { flex-direction: column; gap: 2px; } .u-what { text-align: left; } }

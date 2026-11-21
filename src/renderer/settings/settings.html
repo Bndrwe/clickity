@@ -41,6 +41,8 @@
           <a href="#dictation" data-scroll="dictation" role="menuitem">dictation</a>
           <a href="#memory" data-scroll="memory" role="menuitem">memory</a>
           <a href="#routines" data-scroll="routines" role="menuitem">routines</a>
+          <a href="#privacy" data-scroll="privacy" role="menuitem">privacy</a>
+          <a href="#usage" data-scroll="usage" role="menuitem">usage &amp; cost</a>
           <a href="#permissions" data-scroll="permissions" role="menuitem">permissions</a>
           <a href="#about" data-scroll="about" role="menuitem">about &amp; diagnostics</a>
         </div>
@@ -176,6 +178,8 @@
       <button class="more-item" type="button" data-go="agent"><span class="mi-t">agent mode</span><span class="mi-d">let it click and type for you</span></button>
       <button class="more-item" type="button" data-go="dictation"><span class="mi-t">dictation</span><span class="mi-d">words, names and replacements</span></button>
       <p class="eyebrow group-eyebrow">system</p>
+      <button class="more-item" type="button" data-go="privacy"><span class="mi-t">privacy</span><span class="mi-d">apps it never looks at, blur, private for 10 min</span></button>
+      <button class="more-item" type="button" data-go="usage"><span class="mi-t">usage &amp; cost</span><span class="mi-d">tokens, estimated cost, a monthly limit</span></button>
       <button class="more-item" type="button" data-go="permissions"><span class="mi-t">permissions</span><span class="mi-d">microphone, screen, accessibility</span></button>
       <button class="more-item" type="button" data-go="about"><span class="mi-t">about &amp; diagnostics</span><span class="mi-d">version, updates, logs, welcome tour</span></button>
     </div>
@@ -509,6 +513,19 @@
         <label class="row-label" for="max-steps">max steps</label>
         <div class="row-value"><input id="max-steps" class="narrow tnum" type="number" min="1" max="20" step="1"></div>
       </div>
+      <div class="row" id="undo-row">
+        <span class="row-label" id="undo-label">undo key</span>
+        <div class="row-value">
+          <div>
+            <div class="seg" role="radiogroup" aria-labelledby="undo-label" id="undo-seg">
+              <button type="button" role="radio" data-undo="u" aria-checked="false">u</button>
+              <button type="button" role="radio" data-undo="chord" aria-checked="false" id="undo-chord">ctrl + alt + z</button>
+              <button type="button" role="radio" data-undo="off" aria-checked="false">off</button>
+            </div>
+            <p class="hint">after it acts, the bubble offers undo for 8 seconds; the key only works then (it asks before undoing). the chats window keeps an undo button. typed text is deleted again exactly; clicks and keys can't be replayed backwards, so it looks again and tries to reverse them, never sending or deleting anything.</p>
+          </div>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -598,6 +615,88 @@
       <div class="row">
         <span class="row-label"></span>
         <div class="row-value"><button class="btn" type="button" id="routine-add"><span>add a routine</span></button></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="privacy" data-page="privacy" aria-labelledby="privacy-h">
+    <header class="section-head">
+      <p class="eyebrow">privacy</p>
+      <h2 class="h3" id="privacy-h">What it never looks at.</h2>
+      <p class="muted">it only takes a screenshot when you ask something, and deletes it when the turn ends.</p>
+    </header>
+    <div class="sheet">
+      <div class="row">
+        <span class="row-label">private mode</span>
+        <div class="row-value">
+          <button class="btn" type="button" id="private-btn"><span>private for 10 min</span></button>
+          <p class="hint" id="private-hint">no screenshots at all for a while. also in the tray and the notch panel; the companion quietly shows “private”.</p>
+        </div>
+      </div>
+      <div class="row">
+        <label class="row-label" for="never-list">never look at</label>
+        <div class="row-value">
+          <textarea id="never-list" rows="6" spellcheck="false" placeholder="1password, bitwarden, keychain access"></textarea>
+          <p class="hint">apps or window titles, comma or one per line. while one is in front, or open on a screen, clickity answers without the screenshot and says so (“didn't look — 1password is open”).</p>
+          <div class="pair-add">
+            <button class="btn" type="button" id="never-check"><span>check now</span></button>
+            <button class="text-btn" type="button" id="never-reset"><span>suggested list</span></button>
+          </div>
+          <p class="hint" id="never-status" aria-live="polite"></p>
+        </div>
+      </div>
+      <div class="row">
+        <span class="row-label" id="blur-label">blur before sending</span>
+        <div class="row-value">
+          <div>
+            <div class="seg" role="radiogroup" aria-labelledby="blur-label" id="blur-seg">
+              <button type="button" role="radio" data-blur="off" aria-checked="false">off</button>
+              <button type="button" role="radio" data-blur="cursor" aria-checked="false">except near the cursor</button>
+              <button type="button" role="radio" data-blur="all" aria-checked="false">everything</button>
+            </div>
+            <p class="hint" id="blur-hint"></p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="usage" data-page="usage" aria-labelledby="usage-h">
+    <header class="section-head">
+      <p class="eyebrow">usage &amp; cost</p>
+      <h2 class="h3" id="usage-h">What it costs.</h2>
+      <p class="muted">api keys are paid by the token. subscriptions and local models aren't.</p>
+    </header>
+    <div class="sheet">
+      <div class="row">
+        <span class="row-label">today</span>
+        <div class="row-value"><p class="u-big tnum" id="u-today">$0</p><p class="hint tnum" id="u-today-d"></p></div>
+      </div>
+      <div class="row">
+        <span class="row-label">this month</span>
+        <div class="row-value">
+          <p class="u-big tnum" id="u-month">$0</p>
+          <div class="u-spark" id="u-spark" role="img" aria-label="estimated cost per day, last 30 days"></div>
+          <p class="hint tnum" id="u-month-d"></p>
+        </div>
+      </div>
+      <div class="row">
+        <span class="row-label">by model</span>
+        <div class="row-value"><div class="u-models" id="u-models"></div></div>
+      </div>
+      <div class="row">
+        <label class="row-label" for="u-limit">monthly soft limit</label>
+        <div class="row-value">
+          <div class="u-limit"><span class="muted" aria-hidden="true">$</span><input id="u-limit" class="narrow tnum" type="number" min="0" step="1" placeholder="none"></div>
+          <p class="hint">clickity tells you once a month when the estimate passes it. it never stops working.</p>
+        </div>
+      </div>
+      <div class="row">
+        <span class="row-label">about the numbers</span>
+        <div class="row-value">
+          <p class="hint" id="u-note"></p>
+          <button class="text-btn" type="button" id="u-reset"><span>reset the meter</span></button>
+        </div>
       </div>
     </div>
   </section>

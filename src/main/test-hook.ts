@@ -10,6 +10,10 @@ import { fakeInputLog } from './agent-input';
 import { logPath } from './log';
 import { trayMenu } from './tray';
 import { testFeatures } from './features';
+import { requestUndo, undoState } from './undo';
+import { usageSummary } from './usage';
+import { setPrivateFor, screenVerdict } from './privacy';
+import { captureScreens } from './capture';
 
 export function installTestHook(): void {
   if (process.env.CLICKITY_TEST !== '1') return;
@@ -49,6 +53,13 @@ export function installTestHook(): void {
     trayMenu,
     /** dictation, hands-free, memory, routines, walkthrough (features.ts) */
     features: testFeatures(),
+    /** privacy, usage meter, undo (safety.ts) */
+    requestUndo,
+    undoState,
+    usageSummary,
+    setPrivateFor,
+    screenVerdict,
+    captureScreens,
     /** simulate the user blocking the microphone at the Chromium level */
     denyMedia(): void {
       session.defaultSession.setPermissionRequestHandler((_wc, _p, cb) => cb(false));

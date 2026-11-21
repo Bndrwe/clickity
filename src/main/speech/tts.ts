@@ -4,6 +4,19 @@
 // speak-stream.ts).
 import type { Settings, SpeakCommand } from '../../shared/types';
 
+/** The usage meter (src/main/usage.ts, wired by safety.ts): characters sent to a cloud voice. */
+let meter: ((provider: string, model: string, chars: number) => void) | null = null;
+export function setTtsMeter(fn: typeof meter): void {
+  meter = fn;
+}
+function metered(provider: string, model: string, chars: number): void {
+  try {
+    meter?.(provider, model, chars);
+  } catch {
+    /* never let the meter break speech */
+  }
+}
+
 /** Remove markdown-ish noise so it isn't read aloud. */
 export function cleanForSpeech(text: string): string {
   return text
@@ -95,6 +108,7 @@ export async function streamPcm(text: string, settings: Settings, signal: AbortS
     const d = await detail(res);
     throw new Error(`${name} speech failed (${res.status})${d ? ': ' + d : ''}`);
   }
+  metered(name, tts.model || (name === 'openai' ? 'gpt-4o-mini-tts' : 'eleven_flash_v2_5'), clean.length);
   let carry: Buffer | null = null;
   try {
     for await (const part of res.body as unknown as AsyncIterable<Uint8Array>) {
@@ -183,6 +197,7 @@ export async function synthesize(text: string, settings: Settings, signal?: Abor
         }),
         signal,
       });
+      metered('openai', tts.model || 'gpt-4o-mini-tts', clean.length);
       return { mode: 'audio', mime: 'audio/mpeg', data };
     }
     case 'elevenlabs': {
@@ -198,6 +213,7 @@ export async function synthesize(text: string, settings: Settings, signal?: Abor
         }),
         signal,
       });
+      metered('elevenlabs', tts.model || 'eleven_flash_v2_5', clean.length);
       return { mode: 'audio', mime: 'audio/mpeg', data };
     }
     default:

@@ -46,6 +46,7 @@ import { applySettingsTheme, openSettingsWindow, sendToSettings } from './settin
 import { log, logPath, logStartup } from './log';
 import { installTestHook } from './test-hook';
 import { featureHotkeyHandlers, initFeatures, registerFeatureIpc, stopFeatures } from './features';
+import { initSafety } from './safety';
 import { initClickys } from './clickys';
 import { initNotch } from './notch';
 import { agentInputStatus } from './agent-input';
@@ -312,6 +313,7 @@ async function bootstrap(): Promise<void> {
 
   registerIpc();
   registerFeatureIpc();
+  initSafety(); // privacy controls, usage meter, undo
   initConversation();
   initFeatures(); // dictation, hands-free, routines, dock
   initOverlays();

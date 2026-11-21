@@ -45,6 +45,22 @@ const choiceWrap = $('choice-wrap');
 const choiceOptsEl = $('choice-opts');
 const choiceHintEl = $('choice-hint');
 const replyBtn = $<HTMLButtonElement>('reply-btn');
+const undoBtn = $<HTMLButtonElement>('undo-btn');
+const undoHintEl = $('undo-hint');
+/** agent mode just acted: "u to undo" in the bubble until it times out (OverlayState.undo) */
+let undoOffer: { hint: string; ms: number } | null = null;
+let undoTimer = 0;
+/** private mode: screen capture off until (OverlayConfig.privateUntil) */
+let privateTimer = 0;
+function syncPrivate(until: number): void {
+  clearTimeout(privateTimer);
+  const left = until - Date.now();
+  stage.classList.toggle('is-private', left > 0);
+  if (left > 0) {
+    $('private-tag').setAttribute('title', `private: clickity doesn't look at your screen until ${new Date(until).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
+    privateTimer = window.setTimeout(() => syncPrivate(0), Math.min(left, 2 ** 31 - 1));
+  }
+}
 const typePos = $('typebox-pos');
 const typeForm = $<HTMLFormElement>('typebox');
 const typeInput = $<HTMLInputElement>('typebox-input');
@@ -672,7 +688,10 @@ function renderBubble(): void {
 
   renderChoice(wantChoice);
   // quick follow-up: "reply" under a finished (or speaking) answer, while nothing else is asked
-  const wantReplyBtn = wantReply && !wantChoice && !wantConfirm && !typeOpen && (phase === 'speaking' || lingering) && !isError;
+  const wantUndo = !!undoOffer && wantReply && !wantChoice && !wantConfirm && !typeOpen && !isError;
+  if (wantUndo) undoHintEl.textContent = undoOffer!.hint === 'undo' ? '' : undoOffer!.hint;
+  bubbleEl.classList.toggle('has-undo', wantUndo);
+  const wantReplyBtn = wantReply && !wantChoice && !wantConfirm && !typeOpen && (phase === 'speaking' || lingering) && !isError && !wantUndo;
   bubbleEl.classList.toggle('has-reply-btn', wantReplyBtn);
 
   if (wantStop && busy) {
@@ -760,9 +779,21 @@ function onState(s: OverlayState): void {
     }, 8000);
   } else errorText = '';
 
+  // agent mode just acted: offer undo for a few seconds (any other state withdraws it)
+  clearTimeout(undoTimer);
+  undoOffer = s.undo && phase === 'idle' && reply ? s.undo : null;
+  if (undoOffer) {
+    undoTimer = window.setTimeout(() => {
+      undoOffer = null;
+      renderBubble();
+    }, undoOffer.ms);
+  }
+
   clearTimeout(lingerTimer);
   if (phase === 'idle' && reply && s.hold) {
     startLinger(Infinity); // a lesson step: stays until "next", esc or the ×
+  } else if (undoOffer) {
+    startLinger(Math.max(lingerMs(), undoOffer.ms + 400));
   } else if (phase === 'idle' && prev !== 'idle' && reply) {
     startLinger();
   } else if (phase !== 'idle') lingering = false;
@@ -1337,6 +1368,7 @@ api.onConfig((c) => {
   if (ink) inkColors = null;
   schedulePreload();
   if (c.preloadVoice && kokoro.status.state === 'idle') window.setTimeout(() => kokoro.preload(), 3500);
+  syncPrivate(c.privateUntil ?? 0);
   renderBubble();
   kick();
 });
@@ -1405,6 +1437,12 @@ function dismissBubble(byClick: boolean): void {
   if (!typeOpen) setHoverInteractive(false);
 }
 continueBtn.addEventListener('click', () => api.resume());
+undoBtn.addEventListener('click', () => {
+  undoOffer = null;
+  clearTimeout(undoTimer);
+  api.undo();
+  renderBubble();
+});
 replyBtn.addEventListener('click', () => {
   replyBox = true;
   api.openReply();

@@ -57,6 +57,10 @@ const api: SettingsApi = {
   voicePreview: (provider, voice) => ipcRenderer.invoke(IPC.voicePreview, provider, voice),
   latency: () => ipcRenderer.invoke(IPC.latencyGet),
   runRoutine: (id) => ipcRenderer.invoke(IPC.routineRun, id),
+  usage: () => ipcRenderer.invoke(IPC.usageGet),
+  usageReset: () => ipcRenderer.invoke(IPC.usageReset),
+  privacyCheck: () => ipcRenderer.invoke(IPC.privacyCheck),
+  setPrivate: (minutes) => ipcRenderer.invoke(IPC.privacyPrivate, minutes),
 };
 
 contextBridge.exposeInMainWorld('clicky', api);

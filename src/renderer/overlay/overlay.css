@@ -695,6 +695,45 @@ body {
   display: none;
   margin-top: 6px;
 }
+/* agent mode just acted: "u to undo · undo" (a few seconds) */
+.undo-row {
+  display: none;
+  margin-top: 6px;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.bubble.has-undo .undo-row {
+  display: flex;
+}
+.undo-hint {
+  color: var(--ink-muted);
+  font: 400 12px/1.4 var(--sans);
+  text-transform: lowercase;
+}
+/* private mode: a quiet word under the companion */
+.private-tag {
+  position: absolute;
+  left: calc(4px * var(--s, 1));
+  top: calc(36px * var(--s, 1));
+  transform: translateX(-50%) translateY(4px);
+  padding: 1px 7px 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-elev) 88%, transparent);
+  box-shadow: 0 0 0 1px var(--line), 0 6px 14px -8px var(--shadow);
+  color: var(--ink-muted);
+  font: 500 10px/1.4 var(--sans);
+  letter-spacing: 0.01em;
+  text-transform: lowercase;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.5s var(--ease), transform 0.5s var(--ease);
+}
+.stage.is-private .private-tag {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
 .bubble.has-reply-btn .reply-row {
   display: flex;
   justify-content: flex-end;
@@ -921,14 +960,17 @@ html.dragging .visuals-pos .vcard { cursor: grabbing; }
 
 /* quiet controls: the reply / stop row stays soft until the bubble is hovered (a paused run is the exception) */
 .reply-row,
+.undo-row,
 .stop-row {
   transition: opacity 0.3s var(--ease);
 }
+.bubble.is-in .undo-row,
 .bubble.is-in .reply-row,
 .bubble.is-in:not(.is-paused) .stop-row {
   opacity: 0.62;
 }
 .bubble.is-in:hover .reply-row,
+.bubble.is-in:hover .undo-row,
 .bubble.is-in:hover .stop-row,
 .bubble.is-in .stop-row:focus-within {
   opacity: 1;

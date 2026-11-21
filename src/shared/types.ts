@@ -191,6 +191,21 @@ export interface ChatRequest {
   effort?: 'low' | 'medium' | 'high';
   /** called with provider-side notes for the latency log ("warm claude session") */
   onNote?: (note: string) => void;
+  /** api providers: token usage of this reply, from the stream (usage meter, src/main/usage.ts) */
+  onUsage?: (u: TokenUsage) => void;
+}
+
+/** Token counts one reply used, as the provider reported them (missing = not reported). */
+export interface TokenUsage {
+  /** prompt tokens billed at the normal input rate (cache reads / writes not included) */
+  input: number;
+  output: number;
+  /** prompt tokens read from the provider's cache (cheaper) */
+  cacheRead?: number;
+  /** prompt tokens written to the cache (anthropic: a bit dearer) */
+  cacheWrite?: number;
+  /** the provider's own price for this call in USD (openrouter reports it) */
+  costUsd?: number;
 }
 
 /* ───────────────────────── speech ───────────────────────── */
@@ -310,6 +325,11 @@ export interface HotkeySettings {
    * One key or a chord with one non-modifier key. default: ['Escape'].
    */
   stop: KeyName[];
+  /**
+   * undo the last agent-mode actions: grabbed only for a few seconds after a run ("u to undo"),
+   * so it never takes a key away from other apps for long. default ['KeyU']; [] = off.
+   */
+  undo?: KeyName[];
 }
 
 /* ───────────────────────── settings ───────────────────────── */
@@ -428,6 +448,53 @@ export interface Settings {
   clickys: Clicky[];
   /** id of the clicky voice / type / chats turns talk to */
   activeClicky: string;
+  /** what clickity never looks at, blur before sending, "private for 10 min" (src/main/privacy.ts) */
+  privacy: PrivacySettings;
+  /** cost & usage meter (src/main/usage.ts) */
+  usage: UsageSettings;
+}
+
+/** settings › privacy */
+export interface PrivacySettings {
+  /**
+   * apps (or window titles) that are never screenshotted: while one is focused, or one of its
+   * windows is on the captured screen (where that can be detected), turns go ahead without the
+   * screenshot. case-insensitive; matched against app / process names and window titles.
+   */
+  neverCapture: string[];
+  /**
+   * 'off' = send screenshots as they are · 'cursor' = heavily blurred except a box around the
+   * cursor (other screens fully blurred) · 'all' = everything heavily blurred (layout only)
+   */
+  blur: 'off' | 'cursor' | 'all';
+  /** "private for 10 min": no screen capture until this epoch ms (0 = off) */
+  privateUntil: number;
+}
+
+/** A sensible starting list (password managers, keychains, a few money apps); the user edits it. */
+export const DEFAULT_NEVER_CAPTURE: string[] = [
+  '1password',
+  'bitwarden',
+  'keepassxc',
+  'keepass',
+  'lastpass',
+  'dashlane',
+  'enpass',
+  'proton pass',
+  'keeper',
+  'keychain access',
+  'passwords',
+  'seahorse',
+  'authy',
+  'ledger live',
+  'paypal',
+  'online banking',
+];
+
+/** settings › usage */
+export interface UsageSettings {
+  /** soft monthly limit in USD for the estimated api cost (0 = none): clickity warns, never blocks */
+  monthlyLimit: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -460,6 +527,7 @@ export const DEFAULT_SETTINGS: Settings = {
     typeTap: ['DoubleTap', 'Control'],
     alwaysOn: ['TripleTap', 'Control'],
     stop: ['Escape'],
+    undo: ['KeyU'],
   },
   companion: { followCursor: true, show: 'always', offsetX: 18, offsetY: 20, scale: 1, color: '', showBubble: true, pointing: true, actions: 'ask', maxSteps: 8, captions: false, autoCopy: true, notch: 'off', hideReplies: 'auto' },
   theme: 'system',
@@ -475,6 +543,8 @@ export const DEFAULT_SETTINGS: Settings = {
   userName: '',
   clickys: [],
   activeClicky: 'clickity',
+  privacy: { neverCapture: [...DEFAULT_NEVER_CAPTURE], blur: 'off', privateUntil: 0 },
+  usage: { monthlyLimit: 0 },
 };
 
 /* ───────────────────────── clickys (named companions) ───────────────────────── */
@@ -548,6 +618,8 @@ export interface OverlayState {
   stopped?: boolean;
   /** idle with a reply: keep it up until the next turn / the × / esc (a lesson step waiting for "next") */
   hold?: boolean;
+  /** agent mode just acted: offer "undo" in the bubble for `ms` ("u to undo") */
+  undo?: { hint: string; ms: number };
 }
 
 /**
@@ -709,6 +781,8 @@ export interface OverlayConfig {
   preloadStt?: boolean;
   /** this overlay should load the on-device natural voice (Kokoro) in the background */
   preloadVoice?: boolean;
+  /** "private for 10 min": screen capture is off until this epoch ms (the companion shows it quietly) */
+  privateUntil?: number;
 }
 
 /* ───────────────────────── chat history ───────────────────────── */
@@ -744,6 +818,25 @@ export interface ChatTurn {
   visuals?: ChatVisual[];
   /** assistant turns: the user stopped it while it was being read out / acted on (stop key / button) */
   stopped?: boolean;
+  /** assistant turns: tokens and estimated cost of this reply (api providers; billing says how it's paid) */
+  usage?: TurnUsage;
+  /** user turns: why the screen wasn't shared ("didn't look — 1password is open") */
+  privacy?: string;
+}
+
+/** How a reply is paid for: api key (estimated cost), a subscription CLI (included), a local model (free). */
+export type Billing = 'api' | 'subscription' | 'local';
+
+/** Stored with an assistant turn: what the reply used (src/shared/usage-math.ts formats it). */
+export interface TurnUsage {
+  billing: Billing;
+  input?: number;
+  output?: number;
+  cached?: number;
+  /** estimated USD (api); undefined = unknown price */
+  cost?: number;
+  /** cost came from the provider itself (openrouter), not the price table */
+  exact?: boolean;
 }
 
 /** A choice question an assistant turn asked (2–5 short options). */
@@ -829,7 +922,9 @@ export type ChatEvent =
    * of them). Agent runs: mode 'pause' = acting (chats.pause), 'paused' = waiting for chats.resume
    * / enter (turnId = the assistant turn the paused row sits under).
    */
-  | { type: 'busy'; chatId: string; busy: boolean; mode?: 'stop' | 'pause' | 'paused'; turnId?: string };
+  | { type: 'busy'; chatId: string; busy: boolean; mode?: 'stop' | 'pause' | 'paused'; turnId?: string }
+  /** agent mode acted in this chat: offer "undo" under assistant turn `turnId` (available false = gone) */
+  | { type: 'undo'; chatId: string; turnId: string; available: boolean; note?: string };
 
 /* ───────────────────────── agent mode (input control) ───────────────────────── */
 

@@ -1,5 +1,5 @@
 // OpenAI Chat Completions (streaming) — shared by openai-api, openrouter and local.
-import type { ChatRequest, ModelInfo, ProviderConfig, ProviderStatus } from '../../shared/types';
+import type { ChatRequest, ModelInfo, ProviderConfig, ProviderStatus, TokenUsage } from '../../shared/types';
 import { withDefault } from './common';
 import { getJson, parseJson, request, sse, stripTrailingSlash, withTimeout } from './http';
 import type { Provider } from './provider';
@@ -11,6 +11,17 @@ interface CompatOptions {
   extraHeaders?: Record<string, string>;
   /** tweak the request body per backend */
   shapeBody?(body: Record<string, any>, model: string): void;
+}
+
+/** chat completions `usage` → TokenUsage (prompt_tokens includes cached ones; openrouter adds `cost` in USD). */
+export function compatUsage(u: any): TokenUsage | null {
+  if (!u || typeof u !== 'object') return null;
+  const n = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
+  const cached = n(u.prompt_tokens_details?.cached_tokens);
+  const out: TokenUsage = { input: Math.max(0, n(u.prompt_tokens) - cached), output: n(u.completion_tokens) };
+  if (cached) out.cacheRead = cached;
+  if (typeof u.cost === 'number' && Number.isFinite(u.cost) && u.cost >= 0) out.costUsd = u.cost;
+  return out;
 }
 
 function buildMessages(req: ChatRequest): any[] {
@@ -49,21 +60,28 @@ export async function* compatStream(o: CompatOptions, req: ChatRequest, cfg: Pro
     signal: req.signal,
     body: JSON.stringify(body),
   });
-  for await (const ev of sse(res, req.signal)) {
-    if (ev.data === '[DONE]') return;
-    const j = parseJson(ev.data);
-    if (!j) continue;
-    if (j.error) {
-      const msg = typeof j.error === 'string' ? j.error : j.error.message ?? 'stream error';
-      throw new Error(`${o.name}: ${String(msg).toLowerCase()}`);
+  // usage meter: openai / openrouter send it in a last chunk (stream_options.include_usage)
+  let usage: TokenUsage | null = null;
+  try {
+    for await (const ev of sse(res, req.signal)) {
+      if (ev.data === '[DONE]') return;
+      const j = parseJson(ev.data);
+      if (!j) continue;
+      if (j.usage) usage = compatUsage(j.usage) ?? usage;
+      if (j.error) {
+        const msg = typeof j.error === 'string' ? j.error : j.error.message ?? 'stream error';
+        throw new Error(`${o.name}: ${String(msg).toLowerCase()}`);
+      }
+      const choice = j.choices?.[0];
+      const delta = choice?.delta?.content;
+      if (typeof delta === 'string' && delta) yield delta;
+      else if (Array.isArray(delta)) {
+        for (const p of delta) if (typeof p?.text === 'string' && p.text) yield p.text;
+      }
+      if (choice?.finish_reason === 'error') throw new Error(`${o.name}: the model stopped with an error`);
     }
-    const choice = j.choices?.[0];
-    const delta = choice?.delta?.content;
-    if (typeof delta === 'string' && delta) yield delta;
-    else if (Array.isArray(delta)) {
-      for (const p of delta) if (typeof p?.text === 'string' && p.text) yield p.text;
-    }
-    if (choice?.finish_reason === 'error') throw new Error(`${o.name}: the model stopped with an error`);
+  } finally {
+    if (usage) req.onUsage?.(usage);
   }
 }
 
@@ -76,9 +94,10 @@ export async function compatModels(o: CompatOptions, cfg: ProviderConfig): Promi
 
 const OPENAI: CompatOptions = {
   name: 'openai api',
-  baseUrl: () => 'https://api.openai.com/v1',
+  baseUrl: () => (process.env.CLICKITY_OPENAI_CHAT_BASE || 'https://api.openai.com/v1'),
   keyRequired: true,
   shapeBody(body, model) {
+    body.stream_options = { include_usage: true }; // the usage meter
     const reasoning = /^(o\d|gpt-[5-9])/.test(model) && !/chat/.test(model);
     if (reasoning) {
       // reasoning tokens count against max_completion_tokens; keep effort low for snappy replies
@@ -132,6 +151,7 @@ const OPENROUTER: CompatOptions = {
   extraHeaders: { 'HTTP-Referer': 'https://github.com/Bndrwe/clickity', 'X-Title': 'clickity' },
   shapeBody(body) {
     body.max_tokens = 1024;
+    body.stream_options = { include_usage: true }; // the usage meter (openrouter adds usage.cost)
   },
 };
 

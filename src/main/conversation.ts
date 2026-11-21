@@ -77,6 +77,14 @@ import { extrasPromptParts } from './turn-extras';
 import { prewarmClaude } from './providers/claude-cli';
 import { preconnect } from './providers/http';
 import type { PttStartRequest, SpeakCommand, SpeechTiming, TurnTiming } from '../shared/types';
+// privacy, usage meter, undo (privacy.ts, usage.ts, undo.ts)
+import type { TokenUsage } from '../shared/types';
+import { recordReply, recordSpeech } from './usage';
+import { privacyOf, privacyScreens } from './capture';
+import { isPrivacySkip } from './privacy';
+import { privacyModelNote } from './privacy-match';
+import { journalAction, journalEnd, setUndoRunner } from './undo';
+import { undoUnsafe } from './undo-plan';
 
 /* ───────────────────────── tuning ───────────────────────── */
 
@@ -567,6 +575,7 @@ async function safeCapture(cursor: Point, annotate?: CaptureAnnotator): Promise<
     cleanupCaptures();
     return await captureScreens(cursor, annotate);
   } catch (err) {
+    if (isPrivacySkip(err)) return privacyScreens(err.privacy); // settings › privacy: the turn goes on without it
     console.warn('[conversation] screen capture failed:', err);
     return [];
   }
@@ -709,6 +718,8 @@ interface TurnInput {
   gestureNote?: string;
   /** voice turns: latency breakdown */
   timer?: TurnTimer;
+  /** an "undo what you just did" agent turn (undo.ts): few steps, never anything destructive */
+  undo?: boolean;
 }
 
 /** Voice / type "switch to <name>": switch the active clicky and let the new one say hi. */
@@ -746,6 +757,9 @@ async function runTurn(turn: Turn, input: TurnInput): Promise<void> {
   input.timer?.set('model', `${kind} / ${model}${pick.fast ? ' (fast)' : ''}`);
   const cfg = settings.providers[kind] ?? {};
   const { screens } = input;
+  // settings › privacy: screens left out (never-capture app, private mode) — said quietly, told to the model
+  const privacy = privacyOf(screens);
+  if (privacy) log('privacy', `${turn.id} ${privacy}`);
   const prior = chatContext(chatId, Math.max(0, settings.historyTurns));
   markAskAnswered(chatId, input.userText || input.attachments?.join(', ') || '');
   const userTurn = store.appendTurn(chatId, {
@@ -755,6 +769,7 @@ async function runTurn(turn: Turn, input: TurnInput): Promise<void> {
     screenshots: screens.length,
     attachments: input.attachments?.length ? input.attachments : undefined,
     gesture: input.gestureNote || undefined,
+    privacy: privacy || undefined,
     provider: kind,
     model,
   });
@@ -770,11 +785,11 @@ async function runTurn(turn: Turn, input: TurnInput): Promise<void> {
   }
   const userMsg: ChatMessage = {
     role: 'user',
-    text: [input.modelText ?? input.userText, ...pages].join('\n\n'),
+    text: [input.modelText ?? input.userText, ...pages, ...(privacy ? [privacyModelNote(screens.length > 0)] : [])].join('\n\n'),
     images: [...screens.map((s) => s.image), ...(input.images ?? [])],
   };
   const res = await askModel(turn, ctx, [...prior, userMsg], screens, {
-    thinking: { phase: 'thinking', transcript: input.userText || input.attachments?.join(', ') },
+    thinking: { phase: 'thinking', transcript: input.userText || input.attachments?.join(', '), note: privacy || undefined },
     imageNames: input.images?.map((i) => i.label),
   });
   if (!res || !isTurnCurrent(turn)) return;
@@ -870,10 +885,14 @@ async function askModel(
 
   let buffer = '';
   let recorded = false;
+  /** the usage meter: tokens the provider reported for this reply (api providers) */
+  let tokens: TokenUsage | null = null;
   const record = (text: string, points: ParsedPoint[], error?: string, ask?: ParsedAsk | null, visuals?: ChatVisual[]): void => {
     if (recorded) return;
     recorded = true;
+    const usage = recordReply(kind, model, tokens);
     const stored = store.appendTurn(chatId, {
+      usage,
       id: assistantId,
       role: 'assistant',
       text,
@@ -912,6 +931,9 @@ async function askModel(
         input.timer?.note(n);
         log('turn', `${turn.id} ${n}`);
       },
+      onUsage: (u) => {
+        tokens = u;
+      },
     };
     // speak-as-you-go: sentences go to the voice while the reply is still streaming
     const speech = input.speak && turn.overlay && settings.speech.tts.provider !== 'off' ? newSpeech(turn, settings) : null;
@@ -931,7 +953,7 @@ async function askModel(
       lastSent = visible;
       lastSentAt = now;
       if (visible) turn.lastReply = visible;
-      show(visible ? { phase: 'speaking', reply: visible, step: opts.step } : opts.thinking);
+      show(visible ? { phase: 'speaking', reply: visible, step: opts.step, note: opts.thinking.note } : opts.thinking);
       emitChat({ type: 'delta', chatId, turnId: assistantId, text: visible });
     };
 
@@ -1099,6 +1121,8 @@ interface AgentState {
   lastReply: string;
   /** a keyboard action that would press the stop key is running: the stop-key grab is released */
   typingStopKey: boolean;
+  /** an undo run: its own actions aren't journaled for undo */
+  noJournal?: boolean;
 }
 
 function newAgentState(): AgentState {
@@ -1277,6 +1301,7 @@ async function performPlanned(turn: Turn, planned: PlannedAction[], step: string
     try {
       await performActions([p.input], signal);
       done++;
+      if (!turn.agent?.noJournal) journalAction(turn.id, turn.chatId, turn.agent?.lastTurnId ?? null, p.parsed, p.input);
     } finally {
       if (keyboard) setAgentKeysSuspended(false);
       if (ownStop && turn.agent) {
@@ -1301,7 +1326,9 @@ async function runAgent(
 ): Promise<void> {
   const { settings, input, chatId } = ctx;
   const signal = turn.controller.signal;
-  const maxSteps = agentMaxSteps(settings);
+  const maxSteps = input.undo ? Math.min(4, agentMaxSteps(settings)) : agentMaxSteps(settings);
+  /** the run ended with its final words in the bubble (undo is offered there) */
+  let endedWith: string | null = null;
   let history = start.history;
   let userMsg = start.userMsg;
   let screens = start.screens;
@@ -1311,7 +1338,8 @@ async function runAgent(
   const agent = (turn.agent ??= newAgentState());
   agent.lastTurnId = res.assistantId;
   agent.lastReply = res.reply;
-  log('agent', `${turn.id} agent run (${settings.companion.actions}, max ${maxSteps} steps)`);
+  agent.noJournal = !!input.undo;
+  log('agent', `${turn.id} agent run (${settings.companion.actions}, max ${maxSteps} steps${input.undo ? ', undo' : ''})`);
 
   const status = await agentInputStatus();
   if (!status.ok) {
@@ -1323,6 +1351,7 @@ async function runAgent(
   /** Final words. `spoken`: the text was already said as the step's plan, so just let it be read. */
   const end = async (text: string, step?: string, spoken = false, offer?: AskOffer | null): Promise<void> => {
     agent.running = false; // from here the stop key just stops the final words
+    endedWith = offer ? null : text;
     syncBusy();
     await speech;
     emitChat({ type: 'acting', chatId, turnId: agent.lastTurnId ?? res.assistantId, step: null });
@@ -1357,7 +1386,7 @@ async function runAgent(
       const fresh = await safeCapture(screen.getCursorScreenPoint());
       if (!isTurnCurrent(turn)) return null;
       if (agent.pause.pending) continue; // pressed while capturing
-      if (!fresh.length) throw userError("couldn't see the screen after acting — stopped");
+      if (!fresh.length) throw userError(privacyOf(fresh) ? `stopped: ${privacyOf(fresh)}` : "couldn't see the screen after acting — stopped");
       screens = fresh;
       // only the newest message carries screenshots
       userMsg = { role: 'user', text, images: screens.map((s) => s.image) };
@@ -1393,6 +1422,15 @@ async function runAgent(
       if (!res.actions.length) {
         // finished: "[DONE] saved it" or just an answer
         await end(res.reply || 'done.', steps ? `${steps} step${steps === 1 ? '' : 's'}` : undefined, false, askOffer(ctx, res));
+        return;
+      }
+      // undoing: never chain a send / delete / pay — stop and let the user decide by hand
+      const unsafe = input.undo ? undoUnsafe(res.actions) : null;
+      if (unsafe) {
+        log('agent', `${turn.id} undo stopped before an unsafe step: ${unsafe}`);
+        const updated = store.updateTurn(chatId, res.assistantId, { error: 'not done: not safe while undoing' });
+        if (updated) emitChat({ type: 'done', chatId, turn: updated });
+        await end(`i stopped: undoing that would mean “${unsafe}”, which i won't do on my own. please undo it by hand.`);
         return;
       }
       const planned = planActions(res.actions, screens);
@@ -1481,6 +1519,8 @@ async function runAgent(
     setAgentKeysSuspended(false);
     emitChat({ type: 'acting', chatId, turnId: agent.lastTurnId ?? res.assistantId, step: null });
     syncBusy();
+    // what it did can be undone: "u to undo" in the bubble for a moment, "undo" in the chats window
+    journalEnd(turn.id, turn.overlay, endedWith);
   }
 }
 
@@ -2041,6 +2081,8 @@ async function processVoiceTurn(turn: Turn, preset?: PttResult): Promise<void> {
   }
   if (!isTurnCurrent(turn)) return;
   timer?.mark('transcript');
+  // usage meter: seconds of audio a cloud transcription was paid for (on-device / local are free)
+  if (text && result.text === undefined) recordSpeech('stt', stt.provider, stt.model, result.durationMs / 1000);
   if (!text || isNoise(text)) throw userError(emptyTranscriptMessage(result));
 
   sendState(overlay, { phase: 'thinking', transcript: text });
@@ -2074,6 +2116,7 @@ async function voiceScreens(turn: Turn, cursor: Point, annotate?: CaptureAnnotat
     } else grab = await grabScreens();
     return await encodeScreens(grab, cursor, annotate);
   } catch (err) {
+    if (isPrivacySkip(err)) return privacyScreens(err.privacy);
     console.warn('[conversation] screen capture failed:', err);
     return [];
   }
@@ -2231,6 +2274,28 @@ function onTextSubmit(senderId: number, text: string): void {
   }
   const turn = beginTurn(win, 'processing', 'type');
   void processTypedTurn(turn, trimmed).catch((err) => failTurn(turn, err));
+}
+
+/**
+ * "undo what you just did" (undo.ts): an agent turn in that chat with a fresh screenshot. It
+ * follows the normal ask / automatic confirm; runAgent caps it at 4 steps and stops before
+ * anything destructive.
+ */
+async function runUndoTurn(chatId: string, modelText: string, userText: string): Promise<void> {
+  closeTyping();
+  const cursor = screen.getCursorScreenPoint();
+  const turn = beginTurn(overlayForPoint(cursor), 'processing', 'type');
+  turn.chatId = store.getSummary(chatId) ? chatId : null;
+  if (turn.chatId) activate(turn.chatId);
+  try {
+    sendState(turn.overlay, { phase: 'thinking', transcript: userText });
+    const screens = await safeCapture(cursor);
+    if (!isTurnCurrent(turn)) return;
+    if (!screens.length) throw userError(privacyOf(screens) ? `can't undo without looking: ${privacyOf(screens)}` : "couldn't see the screen to undo — undo it by hand");
+    await runTurn(turn, { source: 'type', userText, modelText, screens, speak: false, point: true, undo: true });
+  } catch (err) {
+    failTurn(turn, err);
+  }
 }
 
 /** A typed turn on the overlay under the cursor, as if sent from the type box (test hook). */
@@ -2902,6 +2967,7 @@ export async function runRoutineTurn(r: Routine): Promise<RoutineResult> {
 export function initConversation(): void {
   if (initialized) return;
   initialized = true;
+  setUndoRunner(runUndoTurn, companionBusy); // undo.ts: the model reverses what it can't by itself
   // Pick up where we left off if the last chat is recent; otherwise a new one starts lazily.
   const clicky = getSettings().activeClicky;
   const latest = store.listChats().find((c) => chatClickyId(c) === clicky);
