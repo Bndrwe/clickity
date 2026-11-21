@@ -1,9 +1,11 @@
-// Renders a ChatVisual (a 2D card or a draggable 3D model) as an Opal-styled floating card.
+// Renders a ChatVisual (a 2D card, a draggable 3D model or a chart) as an Opal-styled floating card.
 // Shared by the overlay (floating by the bubble) and the chats window (under the message).
 // Styles: visuals.css (copied next to each window's own css by scripts/build.mjs).
 import * as THREE from 'three';
 import { MODEL3D_KINDS, type ChatVisual, type Model3DVisual } from '../../shared/visuals';
 import { buildModel, disposeTree, type Palette } from './models3d';
+import { prettyMath, renderChartBody } from './charts';
+import { sanitizeChart } from '../../shared/charts';
 
 export interface VisualOptions {
   /** edge length of a 3D model's canvas in css px (default 220) */
@@ -58,6 +60,18 @@ function renderCard(v: Extract<ChatVisual, { type: 'card' }>, opts: VisualOption
   for (const line of v.lines) list.append(el('li', '', line));
   root.append(list);
   if (opts.onClose) root.append(closeButton(opts.onClose));
+  return { el: root, dispose() {} };
+}
+
+function renderChart(v: Extract<ChatVisual, { type: 'chart' }>, opts: VisualOptions): VisualHandle {
+  const root = el('div', 'vcard vcard-chart');
+  root.dataset.visual = 'chart';
+  root.dataset.kind = v.kind;
+  root.append(el('h4', 'vcard-title', prettyMath(v.title)));
+  root.append(renderChartBody(v));
+  if (opts.onClose) root.append(closeButton(opts.onClose));
+  // hovering / reading the chart counts as touching it (the overlay keeps it after the bubble goes)
+  root.addEventListener('pointerdown', () => opts.onInteract?.(), { once: true });
   return { el: root, dispose() {} };
 }
 
@@ -197,6 +211,10 @@ function render3D(v: Model3DVisual, opts: VisualOptions): VisualHandle {
 
 export function renderVisual(v: ChatVisual, opts: VisualOptions = {}): VisualHandle {
   // stored chats come from disk: never trust the shape
+  if (v && v.type === 'chart') {
+    const chart = sanitizeChart(v);
+    return chart ? renderChart(chart, opts) : { el: document.createElement('span'), dispose() {} };
+  }
   const ok = v && (v.type === 'card' ? typeof v.title === 'string' && Array.isArray(v.lines) : v.type === 'model3d' && (MODEL3D_KINDS as readonly string[]).includes(v.kind));
   if (!ok) return { el: document.createElement('span'), dispose() {} };
   return v.type === 'card' ? renderCard(v, opts) : render3D(v, opts);

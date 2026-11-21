@@ -1,18 +1,20 @@
-// [CARD:title|line|line…] and [MODEL3D:kind|label] tags: a 2D card or a draggable 3D model shown
-// next to the reply (see ARCHITECTURE.md "Cards and 3D models"). Pure, unit tested.
+// [CARD:title|line|line…], [MODEL3D:kind|label] and [CHART:kind|title|…] tags: a 2D card, a
+// draggable 3D model or a chart / function plot shown next to the reply (see ARCHITECTURE.md
+// "Cards and 3D models"; chart fields: src/shared/charts.ts). Pure, unit tested.
 //
 //   [CARD:water|two hydrogens, one oxygen|bent at 104.5 degrees|boils at 100 C]
 //   [MODEL3D:molecule-h2o|a water molecule]
 //
 // Fields are separated by '|'; a literal '|' is written '\|', ']' as '\]', '\' as '\\'.
 import { MODEL3D_KINDS, type ChatVisual, type Model3DKind } from '../shared/visuals.ts';
+import { chartSummary, parseChartFields } from '../shared/charts.ts';
 
 export const MAX_CARD_LINES = 6;
 export const MAX_VISUALS = 3;
 const MAX_TITLE = 48;
 const MAX_LINE = 90;
 const MAX_LABEL = 40;
-const HEADS = ['CARD', 'MODEL3D'] as const;
+const HEADS = ['CARD', 'MODEL3D', 'CHART'] as const;
 
 interface RawTag {
   head: (typeof HEADS)[number];
@@ -68,7 +70,7 @@ function scan(text: string): RawTag[] {
   return out;
 }
 
-/** "[", "[C", "[CAR", "[MODEL" … at the very end while streaming. */
+/** "[", "[C", "[CAR", "[MODEL", "[CHA" … at the very end while streaming. */
 function partialHeadAt(text: string): number {
   const open = text.lastIndexOf('[');
   if (open < 0) return -1;
@@ -77,7 +79,7 @@ function partialHeadAt(text: string): number {
 }
 
 /**
- * Remove [CARD:…] / [MODEL3D:…] tags. With `streaming`, also hide a trailing unclosed tag and a
+ * Remove [CARD:…] / [MODEL3D:…] / [CHART:…] tags. With `streaming`, also hide a trailing unclosed tag and a
  * partial head like "[MOD". A finished reply drops an unclosed tag too.
  */
 export function stripVisualTags(text: string, streaming = false): string {
@@ -150,12 +152,14 @@ export function parseVisualTags(text: string): ChatVisual[] {
       const lines = rest.map((l) => clean(l, MAX_LINE)).filter(Boolean).slice(0, MAX_CARD_LINES);
       const ttl = clean(title, MAX_TITLE);
       if (ttl && lines.length) v = { type: 'card', title: ttl, lines };
+    } else if (t.head === 'CHART') {
+      v = parseChartFields(t.fields);
     } else {
       const kind = normalizeKind(t.fields[0] ?? '');
       if (kind) v = { type: 'model3d', kind, label: clean(t.fields.slice(1).join(' '), MAX_LABEL) || kind.replace(/-/g, ' ') };
     }
     if (!v) continue;
-    const key = v.type === 'card' ? `c:${v.title.toLowerCase()}` : `m:${v.kind}`;
+    const key = v.type === 'card' ? `c:${v.title.toLowerCase()}` : v.type === 'chart' ? `g:${JSON.stringify(v.series)}` : `m:${v.kind}`;
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(v);
@@ -172,7 +176,7 @@ export function hasVisualTag(text: string): boolean {
 /** Note for the model's context: what the user was shown (so "that molecule" makes sense later). */
 export function visualContextNote(visuals: ChatVisual[]): string {
   if (!visuals.length) return '';
-  const parts = visuals.map((v) => (v.type === 'card' ? `card "${v.title}"` : `3d ${v.kind.replace(/-/g, ' ')}`));
+  const parts = visuals.map((v) => (v.type === 'card' ? `card "${v.title}"` : v.type === 'chart' ? chartSummary(v) : `3d ${v.kind.replace(/-/g, ' ')}`));
   return ` (showed ${parts.join(', ')})`;
 }
 
@@ -189,5 +193,18 @@ Sometimes a picture in the air explains better than words. You can attach a smal
 - If nothing in the list fits, use a card instead of inventing a kind.
 Example:
 user: explain a water molecule
-you: two hydrogens bonded to one oxygen, bent at about 104 degrees, which makes water polar. [MODEL3D:molecule-h2o|a water molecule]`;
+you: two hydrogens bonded to one oxygen, bent at about 104 degrees, which makes water polar. [MODEL3D:molecule-h2o|a water molecule]
+
+CHARTS AND GRAPHS
+When numbers or a function are easier to see than to hear, draw a small chart: when the user asks to graph / plot / chart something ("graph y = 2x + 3", "chart my spending", "compare these"), when you explain a function, slope, growth or a trend (also in lessons and quizzes), or when you compare a few numbers. One chart per reply, at the end. Fields are separated by '|'; keep labels short and lowercase.
+[CHART:plot|title|y = expression|x: from..to] - a function graph. Use x as the variable, ^ for powers, * optional (2x), functions sin cos tan sqrt abs ln log exp, constants pi and e. Up to 3 functions, each its own "y = …" field. Optional "y: from..to".
+[CHART:line|title|x: axis label|y: axis label|labels: a, b, c|series name: 1, 2, 3|another: 2, 3, 4] - values over steps or time. Up to 4 series, same order as labels.
+[CHART:bar|title|labels: a, b, c|series name: 1, 2, 3] - comparing amounts. Same fields as line.
+[CHART:scatter|title|x: axis label|y: axis label|points: (1, 2) (2, 3.5) (3, 3)] - pairs of numbers.
+[CHART:pie|title|slice: 40|slice: 35|slice: 25] - parts of a whole, up to 8 slices.
+- Plain numbers only (no units inside the numbers; put units in the axis labels). Never invent data the user didn't give or that you don't know; use a card or words instead.
+- Say what the chart shows in a sentence ("here's the line: it crosses y at 3 and rises 2 for every step right"); never describe the tag.
+Example:
+user: graph y = x^2 - 3
+you: it's a parabola opening upward, lowest at (0, -3), crossing the x axis near ±1.7. [CHART:plot|a parabola|y = x^2 - 3|x: -4..4]`;
 }

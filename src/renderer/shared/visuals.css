@@ -104,3 +104,109 @@
 }
 .vcard-close:hover { background: var(--v-sunken); color: var(--v-ink); }
 .vcard-close:focus-visible { outline: 1px solid var(--v-muted); outline-offset: 1px; }
+
+/* Charts and function plots (src/renderer/shared/charts.ts): ink only. The first series is the
+   one accent (full ink); the others step down the ink ladder and change dash, never hue. */
+.vcard-chart {
+  width: 320px;
+  padding: 15px 16px 12px;
+}
+.vcard-chart .vcard-title { margin-bottom: 10px; }
+.vchart { position: relative; }
+.vchart-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  font-variant-numeric: tabular-nums;
+}
+.vchart-svg text {
+  font: 400 9.5px/1 var(--sans, 'Inter', system-ui, sans-serif);
+  fill: var(--v-muted);
+  letter-spacing: 0.01em;
+}
+.vchart-svg .ch-axis-label { fill: var(--v-muted); font-size: 10px; }
+.vchart-svg .ch-center {
+  font: italic 400 24px/1 var(--serif, 'Instrument Serif', Georgia, serif);
+  fill: var(--v-ink);
+  letter-spacing: -0.01em;
+}
+.ch-grid { stroke: var(--v-line); stroke-width: 1; shape-rendering: crispEdges; }
+.ch-axis { stroke: var(--v-faint); stroke-width: 1; shape-rendering: crispEdges; }
+.ch-cursor { stroke: var(--v-faint); stroke-width: 1; stroke-dasharray: 2 3; shape-rendering: crispEdges; }
+.ch-hit { fill: transparent; }
+.ch-line { fill: none; stroke-width: 1.4; stroke-linejoin: round; stroke-linecap: round; }
+.ch-line.ch-s0 { stroke: var(--v-ink); stroke-width: 1.7; }
+.ch-line.ch-s1 { stroke: var(--v-muted); }
+.ch-line.ch-s2 { stroke: var(--v-muted); stroke-dasharray: 4 3; }
+.ch-line.ch-s3 { stroke: var(--v-muted); stroke-dasharray: 1 3; }
+.ch-dot { stroke: var(--v-bg); stroke-width: 1.2; }
+.ch-dot.ch-s0 { fill: var(--v-ink); }
+.ch-dot.ch-s1, .ch-dot.ch-s2, .ch-dot.ch-s3 { fill: var(--v-muted); }
+.ch-scatter.ch-s1, .ch-scatter.ch-s2, .ch-scatter.ch-s3 { fill: var(--v-bg); stroke: var(--v-muted); }
+.ch-ride { pointer-events: none; }
+.ch-bar.ch-s0 { fill: var(--v-ink); fill-opacity: 0.86; }
+.ch-bar.ch-s1 { fill: var(--v-muted); }
+.ch-bar.ch-s2 { fill: var(--v-muted); fill-opacity: 0.5; }
+.ch-bar.ch-s3 { fill: var(--v-muted); fill-opacity: 0.28; }
+.ch-k0 { --k: 1; }
+.ch-k1 { --k: 0.68; }
+.ch-k2 { --k: 0.48; }
+.ch-k3 { --k: 0.34; }
+.ch-k4 { --k: 0.24; }
+.ch-k5 { --k: 0.17; }
+.ch-k6 { --k: 0.12; }
+.ch-k7 { --k: 0.08; }
+.ch-slice { stroke: var(--v-bg); stroke-width: 1.5; fill: var(--v-ink); fill-opacity: var(--k, 1); }
+.vchart-legend {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font: 400 11px/1.3 var(--sans, 'Inter', system-ui, sans-serif);
+  color: var(--v-muted);
+}
+.vchart-legend li { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.vchart-swatch { flex: none; width: 8px; height: 8px; border-radius: 2px; background: var(--v-ink); opacity: var(--k, 1); }
+.vchart-swatch-bar.ch-s0 { opacity: 0.86; }
+.vchart-swatch-bar.ch-s1 { background: var(--v-muted); }
+.vchart-swatch-bar.ch-s2 { background: var(--v-muted); opacity: 0.5; }
+.vchart-swatch-bar.ch-s3 { background: var(--v-muted); opacity: 0.28; }
+.vchart-swatch-line { width: 14px; height: 0; border-radius: 0; background: none; border-top: 1.7px solid var(--v-ink); }
+.vchart-swatch-line.ch-s1 { border-top: 1.4px solid var(--v-muted); }
+.vchart-swatch-line.ch-s2 { border-top: 1.4px dashed var(--v-muted); }
+.vchart-swatch-line.ch-s3 { border-top: 1.4px dotted var(--v-muted); }
+.vchart-legend-pie {
+  position: absolute;
+  top: 50%;
+  left: 54%;
+  right: 0;
+  margin: 0;
+  transform: translateY(-50%);
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 5px;
+}
+.vchart-legend-pie li { width: 100%; }
+.vchart-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--v-ink-2); }
+.vchart-val { margin-left: auto; padding-left: 8px; font-variant-numeric: tabular-nums; color: var(--v-muted); }
+.vchart-readout {
+  position: absolute;
+  top: -1px;
+  right: 0;
+  margin: 0;
+  max-width: 70%;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  font: 400 11px/14px var(--sans, 'Inter', system-ui, sans-serif);
+  font-variant-numeric: tabular-nums;
+  color: var(--v-muted);
+  opacity: 0;
+  transition: opacity 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.vchart-readout.is-on { opacity: 1; }
