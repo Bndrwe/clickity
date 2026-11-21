@@ -53,6 +53,12 @@ import { checkForUpdate, dismissUpdateNote, getUpdateState, initUpdater, install
 
 const isMac = process.platform === 'darwin';
 
+// On-device whisper and the Kokoro voice run onnxruntime-web (wasm) in the overlay's workers.
+// Multi-threaded wasm needs SharedArrayBuffer, which file:// pages only get with this feature
+// (they can't be cross-origin isolated): 2–4× faster transcription and speech on CPUs.
+// Our renderers only load our own bundled code.
+app.commandLine.appendSwitch('enable-features', 'SharedArrayBuffer');
+
 /* ───────────────────────── single instance ───────────────────────── */
 
 if (!app.requestSingleInstanceLock()) {

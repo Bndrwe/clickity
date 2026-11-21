@@ -154,7 +154,12 @@ function stopCaptions(): void {
   captionTimers = [];
   captionEl.classList.remove('is-in');
 }
+let captionUtt: string | undefined;
 function startCaptions(cmd: SpeakCommand): void {
+  // a streamed reply arrives sentence by sentence: caption it once, from its first piece
+  if (cmd.mode === 'end') return;
+  if (cmd.utt && cmd.utt === captionUtt) return;
+  captionUtt = cmd.utt;
   stopCaptions();
   const c = config?.companion;
   if (!c?.captions || c.showBubble || !onDisplay) return;

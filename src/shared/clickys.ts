@@ -12,7 +12,7 @@ export const CLICKY_PERSONA_MAX = 1200;
 export const CLICKY_COLORS = ['', '#2f6bff', '#7c4dff', '#ff4f9a', '#ff8a00', '#1fbf5b', '#14b8b0', '#ff3b30', '#ffcc00', '#ffffff'];
 
 const PROVIDERS: ProviderKind[] = ['claude-subscription', 'chatgpt-subscription', 'gemini-subscription', 'anthropic-api', 'openai-api', 'gemini-api', 'openrouter', 'local'];
-const TTS: TtsProvider[] = ['system', 'openai', 'elevenlabs', 'off'];
+const TTS: TtsProvider[] = ['kokoro', 'system', 'openai', 'elevenlabs', 'off'];
 
 const str = (v: unknown, max: number): string => (typeof v === 'string' ? v.slice(0, max) : '');
 const isColor = (v: unknown): v is string => typeof v === 'string' && (v === '' || /^#[0-9a-f]{6}$/i.test(v));

@@ -57,7 +57,8 @@ import {
 import { log } from './log';
 // features beside the core turn (memory, highlights, walkthroughs, routines, web pages, pdfs, drafts…)
 import { capturedSince, deleteCaptureFiles } from './capture';
-import { alwaysAllow, clearHighlights, completionCue, countdown, destructiveReason, extrasPrompt, handleReplyExtras, offerRoutines, routineEscape, runWalkthrough, stripExtras, type ReplyExtras } from './turn-extras';
+import { alwaysAllow, clearHighlights, completionCue, countdown, destructiveReason, handleReplyExtras, offerRoutines, routineEscape, runWalkthrough, stripExtras, type ReplyExtras } from './turn-extras';
+import type { ParsedLesson } from './extra-tags';
 import { pagesForMessage } from './web-fetch';
 import { extractPdfText } from './pdf-text';
 import { dictationBusy, draftEscape, isDictating, isDraftRequest, runDraft } from './dictation';
@@ -66,6 +67,16 @@ import { grabKeys, releaseKeys } from './hotkey';
 import type { HandsFreeUtterance, Routine } from '../shared/types';
 import type { RoutineResult } from './routines';
 import { ensureMicrophoneAccess, microphoneStatus, type MicAccess } from './permissions';
+// latency: per-stage timing, streaming transcription, speak-as-you-go, warm model sessions
+import { TurnTimer, timingLine } from './turn-timing';
+import { createSttStream, streamKind, type SttStream } from './speech/stt-stream';
+import { SpeechStream } from './speech/speak-stream';
+import { encodeScreens, grabScreens, screensChanged, type ScreenGrab } from './capture';
+import { pickVoiceModel } from './fast-model';
+import { extrasPromptParts } from './turn-extras';
+import { prewarmClaude } from './providers/claude-cli';
+import { preconnect } from './providers/http';
+import type { PttStartRequest, SpeakCommand, SpeechTiming, TurnTiming } from '../shared/types';
 
 /* ───────────────────────── tuning ───────────────────────── */
 
@@ -111,10 +122,22 @@ interface Turn {
   replyId?: string;
   /** the latest visible reply text (the bubble keeps it when stopped) */
   lastReply?: string;
+  /** voice turns: per-stage latency, measured from key up */
+  timer?: TurnTimer;
+  /** voice turns: streaming transcription fed by IPC.pttAudio while the key is held */
+  stt?: SttStream | null;
+  /** voice turns: the screens grabbed at talk down (encoded at key up, re-grabbed if they changed) */
+  grab?: Promise<ScreenGrab | null>;
+  /** the latest reply being spoken as it streams (speak() finishes it) */
+  speech?: SpeechStream;
 }
 
 /** The turn is over: drop its screenshot temp files now (the 2-minute sweep is only a backstop) and fade highlights. */
 function releaseTurnResources(turn: Turn): void {
+  turn.stt?.abort();
+  turn.stt = null;
+  turn.speech?.cancel();
+  turn.speech = undefined;
   deleteCaptureFiles(capturedSince(turn.startedAt));
   clearHighlights();
 }
@@ -136,12 +159,14 @@ interface Waiter {
   channel: string;
   senderId: number;
   resolve(payload: unknown): void;
+  /** only payloads this accepts resolve the waiter (e.g. the utterance id of speechDone) */
+  match?(payload: unknown): boolean;
 }
 const waiters = new Set<Waiter>();
 
 function resolveWaiters(channel: string, senderId: number, payload: unknown): void {
   for (const w of [...waiters]) {
-    if (w.channel === channel && w.senderId === senderId) {
+    if (w.channel === channel && w.senderId === senderId && (!w.match || w.match(payload))) {
       waiters.delete(w);
       w.resolve(payload);
     }
@@ -158,6 +183,7 @@ function waitForOverlay<T>(
   signal: AbortSignal,
   timeoutMs: number,
   onTimeout?: T,
+  match?: (payload: unknown) => boolean,
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     if (win.isDestroyed()) return reject(new Error('overlay closed'));
@@ -176,6 +202,7 @@ function waitForOverlay<T>(
     const waiter: Waiter = {
       channel,
       senderId: win.webContents.id,
+      match,
       resolve: (p) => {
         cleanup();
         resolve(p as T);
@@ -319,6 +346,8 @@ export interface PromptOptions {
   imageNames?: string[];
   /** where the user's cursor is / what they circled with it this turn (gesture.ts summary) */
   cursorNote?: string;
+  /** fast voice reply (nothing to do on screen): leave out the agent-mode section */
+  fast?: boolean;
 }
 
 /** The agent-mode section of the system prompt ('' when actions are off). */
@@ -390,6 +419,15 @@ you: there are a few on your desktop. [ASK:which file should i open?|budget.xlsx
 
 /** Clickity persona (heyclicky-style) + pointing protocol + this turn's screen list + custom instructions. */
 export function buildSystemPrompt(settings: Settings, screens: CapturedScreen[], opts: PromptOptions = {}): string {
+  const p = buildSystemParts(settings, screens, opts);
+  return p.stable + p.dynamic;
+}
+
+/**
+ * The system prompt in two parts: `stable` stays the same from turn to turn (prompt caching,
+ * warm Claude Code sessions), `dynamic` is this turn's screens and cursor note.
+ */
+export function buildSystemParts(settings: Settings, screens: CapturedScreen[], opts: PromptOptions = {}): { stable: string; dynamic: string } {
   const fromWindow = opts.source === 'window';
   const screenLines = screens.length
     ? screens
@@ -424,18 +462,18 @@ You can fly over and point at things on the user's screen. When it would help th
 Pointing is turned off: never output [POINT:...] tags.`;
 
   const custom = settings.customInstructions.trim();
-  const agent = agentPrompt(settings, screens);
+  const agent = opts.fast ? '' : agentPrompt(settings, screens);
   const cursor = screens.length && !fromWindow
     ? `
 
 THE USER'S CURSOR
-While they talk, the user may circle, underline or point at things with their mouse cursor to show you what they mean. Their stroke is drawn as a thin ink line in the screenshot (it is their gesture, not part of the app on screen). When they say "this", "that", "here" or "it" without naming anything, they mean what they circled or pointed at, or what is under their cursor. Explain or point at that.${opts.cursorNote ? `\nThis turn: ${opts.cursorNote}` : ''}`
+While they talk, the user may circle, underline or point at things with their mouse cursor to show you what they mean. Their stroke is drawn as a thin ink line in the screenshot (it is their gesture, not part of the app on screen). When they say "this", "that", "here" or "it" without naming anything, they mean what they circled or pointed at, or what is under their cursor. Explain or point at that.`
     : '';
 
   // named companions: settingsForClicky() sets activeClicky to the clicky this turn talks to
   const who = clickyIdentity(clickyById(settings, settings.activeClicky));
   const persona = who.persona ? `\n\nWHO YOU ARE\nYour name is ${who.name}. Stay in this role (it shapes your focus and tone; the reply rules below still apply):\n${who.persona}` : '';
-  return `You are ${who.name}, a friendly little AI companion that lives next to the user's mouse cursor on their ${platformName()} computer. The user holds a key, talks to you, and you can see their screen(s) through the screenshots attached to their latest message.${persona}
+  const stable = `You are ${who.name}, a friendly little AI companion that lives next to the user's mouse cursor on their ${platformName()} computer. The user holds a key, talks to you, and you can see their screen(s) through the screenshots attached to their latest message.${persona}
 
 HOW TO REPLY
 - Your reply is read aloud by a voice and shown in a small speech bubble, so keep it short: one to three sentences unless the user asks for more detail.
@@ -444,10 +482,13 @@ HOW TO REPLY
 - Answer about what's actually on the screen when that's relevant; be specific ("the blue share button in the top right") instead of generic.
 - The user's words come from speech-to-text and may contain mistakes; infer what they meant. If the request is truly unclear, ask one short question (with choices, see below, when there are a few likely answers).
 - Earlier turns in the conversation are text only; only the newest message has screenshots, so trust the current screenshots over memory.
-${pointing}${ASK_PROMPT}${visualPromptSection()}${agent}${cursor}${channel}
+${pointing}${ASK_PROMPT}${visualPromptSection()}${agent}${cursor}${channel}${custom ? `\n\nADDITIONAL INSTRUCTIONS FROM THE USER\n${custom}` : ''}`;
+  const cursorNow = screens.length && !fromWindow && opts.cursorNote ? `\n\nTHE USER'S CURSOR THIS TURN\n${opts.cursorNote}` : '';
+  const dynamic = `
 
 SCREENS THIS TURN
-${screenLines}${attachedLines}${custom ? `\n\nADDITIONAL INSTRUCTIONS FROM THE USER\n${custom}` : ''}`;
+${screenLines}${attachedLines}${cursorNow}`;
+  return { stable, dynamic };
 }
 
 /* ───────────────────────── turn lifecycle ───────────────────────── */
@@ -465,6 +506,7 @@ function cancelCurrent(opts: { stopped?: boolean; reply?: string } = {}): void {
   const turn = current;
   if (!turn) return;
   current = null;
+  finishTiming(turn, opts.stopped ? 'stopped' : 'cancelled');
   turn.controller.abort();
   turn.agent?.waiting?.(false, 'cancelled');
   clearInk(turn);
@@ -483,6 +525,7 @@ function beginTurn(overlay: BrowserWindow | null, stage: Turn['stage'], kind: Tu
   clearErrorTimer();
   // a new turn while a choice is pending is the answer (runTurn marks it): stop offering it
   clearChoice('new turn');
+  clearLesson(null);
   const turn: Turn = {
     id: ++turnSeq,
     controller: new AbortController(),
@@ -501,6 +544,7 @@ function beginTurn(overlay: BrowserWindow | null, stage: Turn['stage'], kind: Tu
 function endTurn(turn: Turn, finalState: OverlayState | null = { phase: 'idle' }): void {
   if (current !== turn) return;
   current = null;
+  finishTiming(turn, 'done');
   clearInk(turn);
   recallPoints(turn);
   if (finalState) sendState(turn.overlay, finalState);
@@ -511,6 +555,7 @@ function endTurn(turn: Turn, finalState: OverlayState | null = { phase: 'idle' }
 function failTurn(turn: Turn, err: unknown): void {
   if (turn.controller.signal.aborted || current !== turn) return; // cancelled: stay quiet
   const message = errorMessage(err);
+  turn.timer?.note(`failed: ${message.slice(0, 60)}`);
   console.warn(`[conversation] turn ${turn.id} failed:`, err);
   log('turn', `${turn.id} failed:`, err instanceof Error && !(err as { quiet?: boolean }).quiet ? err : message);
   endTurn(turn, null);
@@ -662,6 +707,8 @@ interface TurnInput {
   cursorNote?: string;
   /** tiny note stored with the user turn ("circled an area on screen 1") */
   gestureNote?: string;
+  /** voice turns: latency breakdown */
+  timer?: TurnTimer;
 }
 
 /** Voice / type "switch to <name>": switch the active clicky and let the new one say hi. */
@@ -688,7 +735,15 @@ async function runTurn(turn: Turn, input: TurnInput): Promise<void> {
   // the chat's clicky: its name / persona in the prompt, its brain and voice overrides
   const settings = settingsForClicky(getSettings(), chatClickyId(store.getSummary(chatId) ?? {}));
   const kind = input.provider ?? settings.provider;
-  const model = input.model || settings.models[kind] || PROVIDER_META[kind].defaultModel;
+  const chosen = input.model || settings.models[kind] || PROVIDER_META[kind].defaultModel;
+  // fast replies: plain voice questions go to the provider's fastest model
+  const pick =
+    input.source === 'voice' && lessonChatId !== chatId // mid-lesson: keep the model that's teaching
+      ? pickVoiceModel(kind, chosen, input.userText, { enabled: settings.speech.fastReplies !== false, agent: settings.companion.actions !== 'off' && input.screens.length > 0, pinned: !!input.model })
+      : { model: chosen, fast: false, reason: '' };
+  const model = pick.model;
+  if (input.source === 'voice') log('turn', `${turn.id} model: ${kind} / ${model}${pick.fast ? ` (fast reply; chosen ${chosen})` : ''} — ${pick.reason}`);
+  input.timer?.set('model', `${kind} / ${model}${pick.fast ? ' (fast)' : ''}`);
   const cfg = settings.providers[kind] ?? {};
   const { screens } = input;
   const prior = chatContext(chatId, Math.max(0, settings.historyTurns));
@@ -705,7 +760,7 @@ async function runTurn(turn: Turn, input: TurnInput): Promise<void> {
   });
   if (userTurn) emitChat({ type: 'user', chatId, turn: userTurn });
 
-  const ctx: ModelCtx = { settings, kind, model, cfg, chatId, input };
+  const ctx: ModelCtx = { settings, kind, model, cfg, chatId, input, fast: pick.fast, effort: input.source === 'voice' ? 'low' : undefined };
   // links in the message: read the pages (public http(s) only) and pass them along as untrusted context
   let pages: string[] = [];
   if (/https?:\/\//i.test(input.userText)) {
@@ -766,6 +821,9 @@ interface ModelCtx {
   cfg: Settings['providers'][ProviderKind];
   chatId: string;
   input: TurnInput;
+  /** fast voice reply: the provider's fastest model, no agent section in the prompt */
+  fast?: boolean;
+  effort?: 'low';
 }
 
 interface ModelReply {
@@ -837,15 +895,28 @@ async function askModel(
   try {
     sendToOverlay(turn.overlay, IPC.overlayVisuals, null);
     show(opts.thinking);
+    // the cursor note describes this turn's own screenshots, not an agent step's fresh ones
+    const parts = buildSystemParts(settings, screens, { source: input.source, imageNames: opts.imageNames, cursorNote: screens === input.screens ? input.cursorNote : undefined, fast: ctx.fast });
+    const extras = await extrasPromptParts(settings, screens);
+    const systemStable = parts.stable + extras.stable;
     const req: ChatRequest = {
-      // the cursor note describes this turn's own screenshots, not an agent step's fresh ones
-      system:
-        buildSystemPrompt(settings, screens, { source: input.source, imageNames: opts.imageNames, cursorNote: screens === input.screens ? input.cursorNote : undefined }) +
-        (await extrasPrompt(settings, screens)),
+      system: systemStable + parts.dynamic + extras.dynamic,
+      systemStable,
       messages,
       model,
       signal,
+      effort: ctx.effort,
+      // one warm claude code process per clicky (claude-subscription; others ignore it)
+      sessionKey: sessionKeyFor(settings),
+      onNote: (n) => {
+        input.timer?.note(n);
+        log('turn', `${turn.id} ${n}`);
+      },
     };
+    // speak-as-you-go: sentences go to the voice while the reply is still streaming
+    const speech = input.speak && turn.overlay && settings.speech.tts.provider !== 'off' ? newSpeech(turn, settings) : null;
+    if (turn.speech && turn.speech !== speech) void turn.speech.finish(); // an earlier reply in this turn says the rest
+    turn.speech = speech ?? undefined;
 
     if (process.env.CLICKY_DEBUG) console.log(`[clicky] system prompt: ${req.system}`);
 
@@ -867,17 +938,24 @@ async function askModel(
     const t0 = Date.now();
     let firstAt = 0;
     const last = messages[messages.length - 1];
-    log('turn', `${turn.id} ${input.source}${opts.step ? ` (agent, after ${opts.step})` : ''} → ${kind} / ${model}: ${screens.length} screenshot(s), ${messages.length - 1} context message(s), ${last?.text.length ?? 0} chars`);
+    log('turn', `${turn.id} ${input.source}${opts.step ? ` (agent, after ${opts.step})` : ''} → ${kind} / ${model}: ${screens.length} screenshot(s), ${messages.length - 1} context message(s), ${last?.text.length ?? 0} chars, system prompt ${req.system.length} chars (~${Math.round(req.system.length / 4)} tokens, ${systemStable.length} stable)`);
+    input.timer?.mark('request');
     if (!signal.aborted) {
       for await (const delta of getProvider(kind).stream(req, cfg)) {
         if (signal.aborted) break;
-        if (!firstAt) firstAt = Date.now();
+        if (!firstAt) {
+          firstAt = Date.now();
+          input.timer?.mark('firstToken', firstAt);
+        }
         buffer += delta;
         pushVisible(false);
+        speech?.update(visibleText(buffer, true));
       }
     }
     if (signal.aborted) {
       const paused = pausedCall();
+      speech?.cancel();
+      if (paused) sendToOverlay(turn.overlay, IPC.overlayStopSpeaking);
       log('turn', `${turn.id} ${paused ? 'paused' : 'stopped'} after ${Date.now() - t0}ms`);
       record(visibleText(buffer, false), [], paused ? 'paused' : 'stopped');
       return null;
@@ -903,6 +981,12 @@ async function askModel(
     if (isTurnCurrent(turn)) sendToOverlay(turn.overlay, IPC.overlayVisuals, visuals.length ? visuals : null);
     return { assistantId, raw: buffer, reply, points, actions: parsed.actions, done: parsed.done, ask };
   } catch (err) {
+    if (turn.speech) {
+      // the reply failed half-way: don't keep talking over the error
+      turn.speech.cancel();
+      turn.speech = undefined;
+      if (!turn.controller.signal.aborted) sendToOverlay(turn.overlay, IPC.overlayStopSpeaking);
+    }
     if (pausedCall()) {
       record(visibleText(buffer, false), [], 'paused');
       return null;
@@ -924,6 +1008,15 @@ async function finishReply(turn: Turn, input: TurnInput, settings: Settings, rep
     copyText(reply);
     sendToOverlay(turn.overlay, IPC.overlayCue, { text: 'copied', kind: 'done', ttl: 1600 });
   }
+  // a lesson step: enter = next step (even while it's still being read), esc = end the lesson
+  const lessonStep = extras?.lesson && !offer && turn.chatId ? extras.lesson : null;
+  if (lessonStep && lessonStep.n < lessonStep.total) {
+    offerLesson(turn, input, lessonStep, screens);
+    step = lessonHint(lessonStep);
+  } else if (lessonStep) {
+    lessonChatId = null; // the last step
+    log('lesson', `finished (${lessonStep.total} steps)`);
+  } else if (turn.chatId && turn.chatId === lessonChatId) lessonChatId = null; // moved on
   if (extras?.steps.length && !offer) {
     // guided walkthrough: the intro, then step by step (enter / bubble click = next, esc = end)
     sendState(turn.overlay, { phase: 'speaking', reply, step });
@@ -960,6 +1053,10 @@ async function finishReply(turn: Turn, input: TurnInput, settings: Settings, rep
   if (extras?.routines.length) await offerRoutines(extras.routines, turn.overlay, signal).catch(() => 0);
   if (!isTurnCurrent(turn)) return;
   log('turn', `${turn.id} done (${points.length} point(s))`);
+  if (lessonStep && pendingLesson?.turnId === turn.id) {
+    endTurn(turn, { phase: 'idle', reply, step, hold: true });
+    return;
+  }
   endTurn(turn);
 }
 
@@ -1647,26 +1744,41 @@ function speechTimeout(text: string, rate: number): number {
   return Math.min(180_000, Math.round(seconds * 1000));
 }
 
-/** Synthesize and play the reply on the turn's overlay; without TTS, linger long enough to read. */
+let uttSeq = 0;
+
+/** A speak-as-you-go stream for this turn's overlay (utterance ids start with the turn id). */
+function newSpeech(turn: Turn, settings: Settings): SpeechStream {
+  return new SpeechStream({
+    settings,
+    utt: `t${turn.id}-${++uttSeq}`,
+    signal: turn.controller.signal,
+    send: (cmd: SpeakCommand) => {
+      if (isTurnCurrent(turn)) sendToOverlay(turn.overlay, IPC.overlaySpeak, cmd);
+    },
+    log: (m) => log('speech', `turn ${turn.id}: ${m}`),
+  });
+}
+
+/**
+ * Say `text` on the turn's overlay and wait until it has been spoken. A reply that was already
+ * being spoken while it streamed (askModel) is finished instead of started again: only what
+ * wasn't said yet (e.g. a choice question's options) is added. Without TTS, linger long enough
+ * to read.
+ */
 async function speak(turn: Turn, text: string, settings: Settings): Promise<void> {
   const signal = turn.controller.signal;
   if (!text || !turn.overlay) return;
-  let cmd: Awaited<ReturnType<typeof synthesize>> = null;
-  try {
-    cmd = await synthesize(text, settings, signal);
-  } catch (err) {
-    if (signal.aborted) throw err;
-    // A broken voice shouldn't lose the answer: keep the bubble up and mention it in the log.
-    console.warn('[conversation] tts failed:', err);
-  }
-  if (!isTurnCurrent(turn)) return;
-  if (!cmd) {
+  let sp = turn.speech;
+  turn.speech = undefined;
+  if (!sp || sp.finished) sp = newSpeech(turn, settings);
+  if (!sp.enabled) {
     const readMs = Math.min(12_000, Math.max(3000, text.length * 55));
     await delay(readMs, signal);
     return;
   }
-  const done = waitForOverlay<void>(turn.overlay, IPC.speechDone, signal, speechTimeout(text, settings.speech.tts.rate));
-  sendToOverlay(turn.overlay, IPC.overlaySpeak, cmd);
+  const utt = sp.utt;
+  const done = waitForOverlay<void>(turn.overlay, IPC.speechDone, signal, speechTimeout(text, settings.speech.tts.rate), undefined, (p) => p === undefined || p === utt);
+  await sp.finish(text);
   await done.catch((err: unknown) => {
     if (signal.aborted) throw err;
     // timed out: stop whatever is still playing and move on
@@ -1700,11 +1812,31 @@ export function onTalkDown(): void {
   sendState(turn.overlay, { phase: 'listening' });
   startGesture(turn, cursor);
 
+  // streaming transcription (cloud): the overlay streams the audio here while the key is held;
+  // on-device: the overlay transcribes finished chunks during the hold
+  const sk = streamKind(settings);
+  const startReq: PttStartRequest = sk ? { stream: true } : settings.speech.stt.provider === 'on-device' ? { incremental: true, stt: settings.speech.stt } : {};
+  if (sk) {
+    turn.stt = createSttStream(settings);
+    if (turn.stt) log('voice', `turn ${turn.id}: streaming audio to ${turn.stt.label}`);
+  }
   const startRecording = (): boolean => {
     if (!isTurnCurrent(turn) || turn.stage !== 'recording') return false;
-    sendToOverlay(turn.overlay, IPC.overlayPttStart);
+    sendToOverlay(turn.overlay, IPC.overlayPttStart, startReq);
     return true;
   };
+  // screens now, while the user talks (not after transcription); key up only checks they didn't change
+  const grabStart = Date.now();
+  turn.grab = grabScreens()
+    .then((g) => {
+      log('voice', `turn ${turn.id}: screens grabbed at talk down in ${g.ms}ms`);
+      return g;
+    })
+    .catch((err: unknown) => {
+      log('voice', `turn ${turn.id}: screen grab at talk down failed after ${Date.now() - grabStart}ms: ${errorMessage(err)}`);
+      return null;
+    });
+  warmUp(settings);
 
   if (micStatus === 'granted' || micStatus === 'unknown') {
     // hot path: no await between the key and the mic
@@ -1727,8 +1859,11 @@ export function onTalkUp(): void {
   if (!turn || turn.stage !== 'recording') return;
   turn.stage = 'processing';
   stopGesture(turn);
-  const held = Date.now() - turn.startedAt;
+  const keyUp = Date.now();
+  const held = keyUp - turn.startedAt;
   log('voice', `talk up: turn ${turn.id}, held ${held}ms`);
+  const s = getSettings();
+  turn.timer = new TurnTimer(turn.id, keyUp, held, { stt: turn.stt?.label ?? `on-device ${s.speech.stt.model.split('/').pop()}`, tts: s.speech.tts.provider });
   if (held < MIN_PRESS_MS) {
     // Accidental tap: don't send anything, but say how push-to-talk works.
     sendToOverlay(turn.overlay, IPC.overlayPttCancel);
@@ -1852,11 +1987,18 @@ async function processVoiceTurn(turn: Turn, preset?: PttResult): Promise<void> {
   // on screen and is also drawn into the screenshots; it fades once they're taken.
   const path = stopGesture(turn);
   const cursor = screen.getCursorScreenPoint();
-  const capturesP = safeCapture(cursor, gestureAnnotator(path, settings)).finally(() => clearInk(turn));
+  const timer = turn.timer;
+  const capturesP = voiceScreens(turn, cursor, gestureAnnotator(path, settings))
+    .then((sc) => {
+      timer?.mark('screenshot');
+      return sc;
+    })
+    .finally(() => clearInk(turn));
 
   const t0 = Date.now();
   const result = await resultP;
   if (!isTurnCurrent(turn)) return;
+  timer?.mark('audioReady');
   log(
     'voice',
     `ptt result: turn ${turn.id}, ${result.durationMs}ms recorded, peak ${result.peak?.toFixed(4) ?? '?'}` +
@@ -1869,7 +2011,23 @@ async function processVoiceTurn(turn: Turn, preset?: PttResult): Promise<void> {
   if (result.durationMs < MIN_PRESS_MS) throw userError("didn't catch that — hold the keys while you talk");
 
   let text = result.text?.trim() ?? '';
-  if (!text && result.wav && result.wav.byteLength > 44) {
+  if (result.text !== undefined && stt.provider === 'on-device') {
+    // transcribed on-device in the overlay
+    timer?.set('stt', `on-device ${stt.model.split('/').pop()}${result.sttDevice ? ` (${result.sttDevice})` : ''}${result.chunks ? `, ${result.chunks} chunk(s) during the hold, tail ${result.tailMs ?? 0}ms` : ''}`);
+  }
+  if (!text && result.streamed && turn.stt) {
+    const t1 = Date.now();
+    const timeoutSignal = AbortSignal.any([signal, AbortSignal.timeout(REMOTE_STT_TIMEOUT_MS)]);
+    try {
+      text = (await turn.stt.finish(timeoutSignal)).trim();
+    } catch (err) {
+      if (signal.aborted) throw err;
+      const reason = timeoutSignal.aborted ? `${stt.provider} took too long` : errorMessage(err);
+      throw userError(reason.includes('transcription') ? reason : `transcription failed: ${reason}`);
+    }
+    for (const n of turn.stt.notes) timer?.note(n);
+    log('voice', `stt ${turn.stt.label}: ${Date.now() - t1}ms after the recording ended → ${text.length} chars${turn.stt.notes.length ? ` (${turn.stt.notes.join('; ')})` : ''}`);
+  } else if (!text && result.wav && result.wav.byteLength > 44) {
     const t1 = Date.now();
     const timeoutSignal = AbortSignal.any([signal, AbortSignal.timeout(REMOTE_STT_TIMEOUT_MS)]);
     try {
@@ -1882,6 +2040,7 @@ async function processVoiceTurn(turn: Turn, preset?: PttResult): Promise<void> {
     log('voice', `stt ${stt.provider}${stt.model ? ` (${stt.model})` : ''}: ${Date.now() - t1}ms → ${text.length} chars`);
   }
   if (!isTurnCurrent(turn)) return;
+  timer?.mark('transcript');
   if (!text || isNoise(text)) throw userError(emptyTranscriptMessage(result));
 
   sendState(overlay, { phase: 'thinking', transcript: text });
@@ -1897,7 +2056,122 @@ async function processVoiceTurn(turn: Turn, preset?: PttResult): Promise<void> {
   }
   const gesture = summarizeGesture(path, cursor, screens);
   if (gesture.parts.length) log('voice', `gesture: ${gesture.parts.map((p) => `${p.kind} on screen ${p.screen} (${p.box.minX},${p.box.minY})–(${p.box.maxX},${p.box.maxY})`).join(', ')}`);
-  await runTurn(turn, { source: 'voice', userText: text, screens, speak: true, point: true, cursorNote: gesture.text, gestureNote: gesture.note });
+  await runTurn(turn, { source: 'voice', userText: text, screens, speak: true, point: true, cursorNote: gesture.text, gestureNote: gesture.note, timer: timer ?? undefined });
+}
+
+/** Key up: the screens grabbed at talk down (re-grabbed if they visibly changed), encoded with the ink stroke. */
+async function voiceScreens(turn: Turn, cursor: Point, annotate?: CaptureAnnotator): Promise<CapturedScreen[]> {
+  try {
+    cleanupCaptures();
+    let grab = await (turn.grab ?? Promise.resolve(null));
+    if (grab) {
+      const t = Date.now();
+      if (await screensChanged(grab)) {
+        grab = await grabScreens();
+        turn.timer?.note('screen changed while talking: re-captured');
+      }
+      log('voice', `turn ${turn.id}: screen change check ${Date.now() - t}ms`);
+    } else grab = await grabScreens();
+    return await encodeScreens(grab, cursor, annotate);
+  } catch (err) {
+    console.warn('[conversation] screen capture failed:', err);
+    return [];
+  }
+}
+
+/** One warm process per clicky for claude-subscription (other providers ignore the key). */
+function sessionKeyFor(settings: Settings): string {
+  return `clicky:${settings.activeClicky}`;
+}
+
+/** host of each api provider, for preconnect */
+const API_HOSTS: Partial<Record<ProviderKind, string>> = {
+  'anthropic-api': process.env.CLICKITY_ANTHROPIC_BASE || 'https://api.anthropic.com',
+  'openai-api': 'https://api.openai.com',
+  'gemini-api': 'https://generativelanguage.googleapis.com',
+  openrouter: 'https://openrouter.ai',
+};
+
+/**
+ * Talk key down: warm up what the turn will need while the user is still talking — TLS
+ * connections to the model / speech hosts, and (claude-subscription) this clicky's Claude Code
+ * process with the prompt a fast voice reply will use.
+ */
+function warmUp(base: Settings): void {
+  try {
+    const chat = activeChatId ? store.getSummary(activeChatId) : null;
+    const settings = settingsForClicky(base, chat ? chatClickyId(chat) : base.activeClicky);
+    const kind = settings.provider;
+    const host = kind === 'local' ? settings.providers.local?.baseUrl : API_HOSTS[kind];
+    if (host && !process.env.CLICKITY_TEST) preconnect(host);
+    const stt = settings.speech.stt.provider;
+    if (stt === 'groq' && !process.env.CLICKITY_GROQ_BASE) preconnect('https://api.groq.com');
+    const tts = settings.speech.tts.provider;
+    if ((tts === 'openai' || (stt === 'openai' && settings.speech.stt.streaming === false)) && !process.env.CLICKITY_OPENAI_BASE) preconnect('https://api.openai.com');
+    if (tts === 'elevenlabs' && !process.env.CLICKITY_ELEVENLABS_BASE) preconnect('https://api.elevenlabs.io');
+    if (kind === 'claude-subscription') {
+      const chosen = settings.models[kind] || PROVIDER_META[kind].defaultModel;
+      // most voice turns are plain questions: warm the process a fast reply uses
+      const pick = pickVoiceModel(kind, chosen, 'what is this', { enabled: settings.speech.fastReplies !== false, agent: false });
+      void (async () => {
+        const placeholder = [{ index: 1, displayId: 0, isCursorScreen: true, bounds: { x: 0, y: 0, width: 1, height: 1 }, scaleFactor: 1, image: { mime: 'image/jpeg', base64: '', label: '', width: 1, height: 1 } }] as CapturedScreen[];
+        const parts = buildSystemParts(settings, placeholder, { source: 'voice', fast: pick.fast });
+        const extras = await extrasPromptParts(settings, placeholder);
+        await prewarmClaude(settings.providers[kind] ?? {}, sessionKeyFor(settings), pick.model, parts.stable + extras.stable, 'low');
+      })().catch((err: unknown) => log('voice', `claude code warm-up failed: ${errorMessage(err)}`));
+    }
+  } catch (err) {
+    log('voice', `warm-up failed: ${errorMessage(err)}`);
+  }
+}
+
+/** Streamed recording from the overlay (PttStartRequest.stream). */
+function onPttAudio(senderId: number, pcm: unknown): void {
+  const turn = current;
+  if (!turn?.stt || !turn.overlay || turn.overlay.webContents.id !== senderId) return;
+  if (!(pcm instanceof ArrayBuffer) && !ArrayBuffer.isView(pcm)) return;
+  const buf = pcm instanceof ArrayBuffer ? pcm : (pcm as ArrayBufferView).buffer;
+  turn.stt.push(new Int16Array(buf.slice(0, buf.byteLength - (buf.byteLength % 2))));
+}
+
+/** natural voice (Kokoro) status as the overlay last reported it */
+let kokoroNote = '';
+let lastTiming: TurnTiming | null = null;
+
+function onSpeechTiming(t: SpeechTiming): void {
+  if (!t || typeof t !== 'object') return;
+  if (t.kind === 'kokoro') {
+    if (t.note && t.note !== kokoroNote) {
+      const pct = /^downloading (\d+)%/.exec(t.note);
+      const quarter = pct ? Math.floor(Number(pct[1]) / 25) : -1;
+      const prevPct = /^downloading (\d+)%/.exec(kokoroNote);
+      const loggable = !pct || !prevPct || quarter !== Math.floor(Number(prevPct[1]) / 25);
+      if (!/^kokoro \d/.test(t.note)) kokoroNote = t.note;
+      if (loggable) log('speech', `natural voice: ${t.note}`);
+    }
+    return;
+  }
+  if (t.kind === 'first-audio') {
+    const turn = current;
+    if (turn?.timer && t.utt?.startsWith(`t${turn.id}-`) && !turn.timer.has('firstAudio')) {
+      turn.timer.mark('firstAudio');
+      log('latency', `turn ${turn.id}: first words ${turn.timer.timing.firstAudio}ms after key up`);
+    }
+  }
+}
+
+/** The turn is over: log its latency breakdown and keep it for settings › about. */
+function finishTiming(turn: Turn, how: string): void {
+  const timer = turn.timer;
+  if (!timer || timer.has('done')) return;
+  timer.mark('done');
+  if (how !== 'done') timer.note(how);
+  lastTiming = timer.snapshot();
+  log('latency', timingLine(lastTiming));
+}
+
+export function latencySnapshot(): { last: TurnTiming | null; kokoro: string } {
+  return { last: lastTiming, kokoro: kokoroNote };
 }
 
 /** Whisper hallucinations on silence, e.g. "[BLANK_AUDIO]", "(music)", "you". */
@@ -1965,6 +2239,119 @@ export function submitTypedText(text: string): void {
   if (win) onTextSubmit(win.webContents.id, text);
 }
 
+/* ───────────────────────── lessons ([LESSON:n/m]) ───────────────────────── */
+
+/** a lesson step waits this long for "next" */
+const LESSON_TIMEOUT_MS = 20 * 60_000;
+/** what the user sends with enter: shown in the chat / sent to the model */
+const LESSON_NEXT_TEXT = 'next step';
+const LESSON_NEXT_MODEL =
+  "next step. (here's my screen now. if the last step had me do something on screen, check it. if it asked a question I haven't answered, give the answer in a few words. then teach the next step — don't hold me back.)";
+
+interface PendingLesson {
+  /** the turn that taught this step (still reading it out, or done) */
+  turnId: number;
+  chatId: string;
+  overlay: BrowserWindow | null;
+  /** the next step runs like this one: same source, voice, pointing, screenshots */
+  source: NonNullable<ChatTurn['source']>;
+  speak: boolean;
+  point: boolean;
+  capture: boolean;
+  n: number;
+  total: number;
+  timer: NodeJS.Timeout;
+  keys: boolean;
+}
+
+let pendingLesson: PendingLesson | null = null;
+/** the chat a lesson is running in (survives questions asked mid-lesson); null = none */
+let lessonChatId: string | null = null;
+
+function lessonHint(l: ParsedLesson): string {
+  return `step ${l.n} of ${l.total} · enter for next · esc to end · or just ask`;
+}
+
+function offerLesson(turn: Turn, input: TurnInput, lesson: ParsedLesson, screens: CapturedScreen[]): void {
+  clearLesson(null);
+  lessonChatId = turn.chatId;
+  pendingLesson = {
+    turnId: turn.id,
+    chatId: turn.chatId!,
+    overlay: turn.overlay,
+    source: input.source,
+    speak: input.speak,
+    point: input.point,
+    capture: input.source !== 'window' || screens.length > 0,
+    n: lesson.n,
+    total: lesson.total,
+    timer: setTimeout(() => clearLesson('timeout'), LESSON_TIMEOUT_MS),
+    keys: false,
+  };
+  log('lesson', `${turn.id} step ${lesson.n} of ${lesson.total} (${input.source}) — waiting for next`);
+  syncLessonKeys();
+}
+
+/** Enter = next step while a lesson waits, except while the type box / chats window has the keyboard. */
+function syncLessonKeys(): void {
+  const p = pendingLesson;
+  if (!p) return;
+  const chats = getChatsWindow();
+  const focused = BrowserWindow.getFocusedWindow();
+  const overlayFocused = !!focused && isOverlayWindow(focused);
+  const want = !typingOverlay && !overlayFocused && !(chats && chats.isFocused()) && p.source !== 'window';
+  if (want === p.keys) return;
+  p.keys = want;
+  if (want) grabKeys('lesson', { Return: () => lessonNext('enter') });
+  else releaseKeys('lesson');
+}
+
+function clearLesson(reason: 'timeout' | 'escape' | 'next' | null): void {
+  const p = pendingLesson;
+  if (!p) return;
+  pendingLesson = null;
+  clearTimeout(p.timer);
+  releaseKeys('lesson');
+  if (reason === 'escape' || reason === 'timeout') lessonChatId = null;
+  if (reason === 'timeout') sendState(p.overlay, { phase: 'idle' });
+  if (reason) log('lesson', `cleared (${reason})`);
+}
+
+/** Enter (grab or chord-engine backup) while a lesson step waits: run the next step. */
+export function lessonEnter(): boolean {
+  if (!pendingLesson) return false;
+  lessonNext('enter');
+  return true;
+}
+
+export function lessonActive(): boolean {
+  return !!pendingLesson;
+}
+
+let lessonNextAt = 0;
+function lessonNext(how: string): void {
+  const p = pendingLesson;
+  if (!p || Date.now() - lessonNextAt < 400) return; // the grab and the hook can both see one press
+  lessonNextAt = Date.now();
+  log('lesson', `next (${how}) after step ${p.n} of ${p.total}`);
+  clearLesson('next');
+  const cursor = screen.getCursorScreenPoint();
+  const win = p.overlay && !p.overlay.isDestroyed() ? p.overlay : overlayForPoint(cursor);
+  const turn = beginTurn(win, 'processing', p.source === 'window' ? 'window' : 'type');
+  if (store.hasChat(p.chatId)) {
+    turn.chatId = p.chatId;
+    activate(p.chatId);
+  }
+  void (async () => {
+    sendState(turn.overlay, { phase: 'thinking', transcript: `${LESSON_NEXT_TEXT} (${Math.min(p.n + 1, p.total)} of ${p.total})` });
+    const shot = screen.getCursorScreenPoint();
+    const screens = p.capture ? await safeCapture(shot) : [];
+    if (!isTurnCurrent(turn)) return;
+    const cursorNote = p.source !== 'window' && screens.length ? summarizeGesture(null, shot, screens).text : undefined;
+    await runTurn(turn, { source: p.source, userText: LESSON_NEXT_TEXT, modelText: LESSON_NEXT_MODEL, screens, speak: p.speak, point: p.point, cursorNote });
+  })().catch((err) => failTurn(turn, err));
+}
+
 /* ───────────────────────── choices ([ASK:…]) ───────────────────────── */
 
 /** a choice question stays answerable this long, then it becomes a normal reply */
@@ -2023,6 +2410,7 @@ function offerChoice(turn: Turn, input: TurnInput, offer: AskOffer, reply: strin
  * Tells the overlay (pills + whether "press 1–N" works).
  */
 function syncChoiceKeys(): void {
+  syncLessonKeys();
   const p = pendingChoice;
   if (!p) {
     setChoiceKeys(null);
@@ -2200,6 +2588,16 @@ function escapePrompts(): boolean {
     return true;
   }
   if (routineEscape()) return true;
+  if (pendingLesson) {
+    log('lesson', 'ended (escape)');
+    const win = pendingLesson.overlay;
+    const reading = current && current.id === pendingLesson.turnId ? current : null;
+    clearLesson('escape');
+    if (reading) cancelCurrent(); // still reading the step out: stop
+    sendState(win, { phase: 'idle' });
+    clearErrorTimer();
+    return true;
+  }
   return wasTyping;
 }
 
@@ -2430,12 +2828,12 @@ export function clearHistory(): void {
 }
 
 /** Companion says a short line with the current voice settings (settings → "test voice"). */
-export async function testSpeak(): Promise<void> {
-  const settings = settingsForClicky(getSettings());
+export async function testSpeak(override?: Settings, text?: string): Promise<void> {
+  const settings = override ?? settingsForClicky(getSettings());
   const cursor = screen.getCursorScreenPoint();
   const turn = beginTurn(overlayForPoint(cursor), 'processing', 'test');
   const label = hotkeyLabel(settings.hotkeys.talk, process.platform);
-  const line = `hi! i'm ${clickyIdentity(activeClicky(settings)).name.toLowerCase()}, your companion. hold ${label} and ask me anything.`;
+  const line = text ?? `hi! i'm ${clickyIdentity(activeClicky(settings)).name.toLowerCase()}, your companion. hold ${label} and ask me anything.`;
   try {
     if (settings.speech.tts.provider === 'off') {
       sendState(turn.overlay, { phase: 'speaking', reply: 'voice is off — turn it on to hear me.' });
@@ -2513,7 +2911,9 @@ export function initConversation(): void {
   }
   ipcMain.on(IPC.pttResult, (e, r: PttResult) => resolveWaiters(IPC.pttResult, e.sender.id, r ?? { durationMs: 0 }));
   ipcMain.on(IPC.pttProgress, (e, note: unknown) => onPttProgress(e.sender.id, note));
-  ipcMain.on(IPC.speechDone, (e) => resolveWaiters(IPC.speechDone, e.sender.id, undefined));
+  ipcMain.on(IPC.speechDone, (e, utt: unknown) => resolveWaiters(IPC.speechDone, e.sender.id, typeof utt === 'string' ? utt : undefined));
+  ipcMain.on(IPC.speechTiming, (_e, t: SpeechTiming) => onSpeechTiming(t));
+  ipcMain.on(IPC.pttAudio, (e, pcm: unknown) => onPttAudio(e.sender.id, pcm));
   ipcMain.on(IPC.textSubmit, (e, text: string) => onTextSubmit(e.sender.id, text));
   ipcMain.on(IPC.textCancel, (e) => {
     if (typingOverlay && typingOverlay.webContents.id === e.sender.id) closeTyping();
@@ -2531,6 +2931,12 @@ export function initConversation(): void {
   ipcMain.on(IPC.overlayBubble, (e, on: unknown) => {
     if (on === true) bubbleShown.add(e.sender.id);
     else bubbleShown.delete(e.sender.id);
+    // the × on a lesson step's bubble ends the lesson (enter stops being "next")
+    const lw = pendingLesson?.overlay;
+    if (on !== true && lw && !lw.isDestroyed() && lw.webContents.id === e.sender.id) {
+      log('lesson', 'ended (bubble closed)');
+      clearLesson('escape');
+    }
     syncBusy();
   });
   ipcMain.on(IPC.overlayContinue, () => void resumeAgent());

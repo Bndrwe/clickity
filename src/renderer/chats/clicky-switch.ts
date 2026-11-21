@@ -96,7 +96,7 @@ export function initClickySwitch(opts: {
     const active = s ? (s.clickys.find((c) => c.id === s.activeClicky) ?? s.clickys[0]) : null;
     name.textContent = active?.name ?? 'clickity';
     mark.style.color = markColor(active?.color);
-    btn.setAttribute('aria-label', `talking to ${active?.name ?? 'clickity'} — switch clicky`);
+    btn.setAttribute('aria-label', `talking to ${active?.name ?? 'clickity'}, switch clicky`);
     scope.hidden = !all;
   }
 

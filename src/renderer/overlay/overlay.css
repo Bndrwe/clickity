@@ -17,6 +17,11 @@
   --ease-soft: cubic-bezier(0.2, 0.8, 0.2, 1);
   --spring: cubic-bezier(0.34, 1.36, 0.5, 1);
   --s: 1; /* companion scale */
+  /* one floating-object shadow for every surface (bubble, type box, pills, cards) */
+  --float: 0 1px 2px rgba(0, 0, 0, 0.04), 0 18px 40px -16px var(--shadow), 0 0 0 1px var(--line);
+  --radius: 16px;
+  /* reply column: about 34ch of Inter 15px (REPLY_MAX_W in overlay.ts) */
+  --reply-w: 300px;
 }
 .dark {
   --bg: #0b0b0b;
@@ -30,6 +35,7 @@
   --shadow: rgba(0, 0, 0, 0.7);
   --float-shadow: rgba(0, 0, 0, 0.62);
   --danger: #ff6b5e;
+  --float: 0 1px 2px rgba(0, 0, 0, 0.3), 0 18px 40px -16px var(--shadow), 0 0 0 1px var(--line);
 }
 
 html,
@@ -77,7 +83,6 @@ body {
   width: 0;
   height: 0;
   transform-origin: 0 0;
-  will-change: transform;
 }
 .arrow {
   position: absolute;
@@ -87,11 +92,77 @@ body {
   top: calc(-2.625px * var(--s));
   overflow: visible;
   transform-origin: 50% 60%;
-  will-change: transform;
+  shape-rendering: geometricPrecision;
+  /* a whisper of contact shadow keeps it crisp on any background */
+  filter: drop-shadow(0 calc(0.6px * var(--s)) calc(0.8px * var(--s)) rgba(0, 0, 0, 0.16));
+}
+.dark .arrow {
+  filter: drop-shadow(0 calc(0.6px * var(--s)) calc(1px * var(--s)) rgba(0, 0, 0, 0.5));
 }
 .arrow path {
   stroke-linejoin: round;
   stroke-linecap: round;
+}
+
+/* click ticks: hidden at rest; steady while listening, a slow chase while thinking, a flick on a click */
+.ticks path {
+  fill: none;
+  stroke-linecap: round;
+}
+.tick-halo {
+  stroke: var(--bg-elev);
+  stroke-width: 4.2;
+  opacity: 0;
+  transition: opacity 0.35s var(--ease);
+}
+.tick {
+  stroke: var(--buddy, var(--ink));
+  stroke-width: 1.9;
+  opacity: 0;
+  transform-box: view-box;
+  transform-origin: 16px 3px;
+  transform: scale(0.55);
+  transition: opacity 0.35s var(--ease), transform 0.45s var(--ease);
+}
+[data-phase='listening'] .tick,
+[data-phase='transcribing'] .tick,
+[data-phase='thinking'] .tick {
+  opacity: 1;
+  transform: none;
+}
+[data-phase='listening'] .tick-halo,
+[data-phase='transcribing'] .tick-halo,
+[data-phase='thinking'] .tick-halo {
+  opacity: 0.85;
+}
+[data-phase='listening'] .tick {
+  animation: tick-listen 1.8s var(--ease-soft) infinite;
+}
+[data-phase='listening'] .t2 { animation-delay: 0.12s; }
+[data-phase='listening'] .t3 { animation-delay: 0.24s; }
+@keyframes tick-listen {
+  0%, 100% { transform: none; opacity: 1; }
+  50% { transform: scale(1.12); opacity: 0.55; }
+}
+[data-phase='transcribing'] .tick,
+[data-phase='thinking'] .tick {
+  animation: tick-think 1.2s linear infinite;
+}
+[data-phase='transcribing'] .t2, [data-phase='thinking'] .t2 { animation-delay: 0.2s; }
+[data-phase='transcribing'] .t3, [data-phase='thinking'] .t3 { animation-delay: 0.4s; }
+@keyframes tick-think {
+  0%, 100% { opacity: 0.22; }
+  25% { opacity: 1; }
+  60% { opacity: 0.22; }
+}
+.companion.tick .tick {
+  animation: tick-flick 0.55s var(--ease) both;
+}
+.companion.tick .tick-halo { opacity: 0.85; }
+@keyframes tick-flick {
+  from { opacity: 1; transform: scale(0.5); }
+  45% { opacity: 1; transform: scale(1.1); }
+  to { opacity: 0; transform: scale(1.25); }
 }
 .arrow .halo {
   fill: var(--bg-elev);
@@ -133,11 +204,7 @@ body {
   transform: scale(0.7);
   transition: opacity 0.5s var(--ease), transform 0.5s var(--ease);
 }
-[data-phase='listening'] .ring {
-  opacity: 0.55;
-  transform: scale(1);
-  animation: breathe 2.4s var(--ease-soft) 0.5s infinite alternate;
-}
+/* the ring stays retired: the click ticks show listening now */
 @keyframes breathe {
   from {
     transform: scale(1);
@@ -152,9 +219,9 @@ body {
 /* aux slot beside the buddy: live waveform / thinking dots */
 .aux {
   position: absolute;
-  left: calc(24px * var(--s));
-  top: calc(4px * var(--s));
-  height: calc(16px * var(--s));
+  left: calc(26px * var(--s));
+  top: calc(3px * var(--s));
+  height: calc(22px * var(--s));
   display: grid;
   align-items: center;
 }
@@ -164,48 +231,54 @@ body {
   display: flex;
   align-items: center;
   gap: calc(2.5px * var(--s));
-  padding: calc(4px * var(--s)) calc(7px * var(--s));
+  padding: calc(5px * var(--s)) calc(9px * var(--s));
   border-radius: 999px;
   background: var(--bg-elev);
-  box-shadow: 0 8px 18px -8px var(--shadow), 0 0 0 1px var(--line);
+  box-shadow: var(--float);
   opacity: 0;
-  transform: translateY(4px);
-  transition: opacity 0.45s var(--ease), transform 0.45s var(--ease);
+  transform: translateX(calc(-4px * var(--s))) scale(0.92);
+  transform-origin: 0 50%;
+  transition: opacity 0.4s var(--ease), transform 0.5s var(--ease);
 }
 .wave i {
   display: block;
-  width: calc(2px * var(--s));
-  height: calc(12px * var(--s));
-  border-radius: 2px;
+  width: calc(2.25px * var(--s));
+  height: calc(14px * var(--s));
+  border-radius: 999px;
   background: var(--buddy, var(--ink));
-  transform: scaleY(0.2);
+  transform: scaleY(0.24);
   will-change: transform;
 }
 .dots i {
   display: block;
-  width: calc(3.5px * var(--s));
-  height: calc(3.5px * var(--s));
+  width: calc(4px * var(--s));
+  height: calc(4px * var(--s));
   border-radius: 50%;
-  background: var(--ink-muted);
-  animation: dot 1.5s var(--ease-soft) infinite;
+  background: var(--ink-2);
+  animation: dot 1.2s var(--ease-soft) infinite;
 }
 .dots i:nth-child(2) {
-  animation-delay: 0.2s;
+  animation-delay: 0.15s;
 }
 .dots i:nth-child(3) {
-  animation-delay: 0.4s;
+  animation-delay: 0.3s;
 }
 @keyframes dot {
   0%,
+  70%,
   100% {
     opacity: 0.25;
+    transform: none;
   }
-  40% {
+  30% {
     opacity: 1;
+    transform: translateY(calc(-1.5px * var(--s)));
   }
 }
+/* thinking shows on the arrow's ticks; the dots stand in when there is no arrow */
 [data-phase='listening'] .wave,
-.show-dots .dots {
+[data-show='never'] .show-dots .dots,
+[data-show='active']:not(.buddy-on) .show-dots .dots {
   opacity: 1;
   transform: none;
 }
@@ -267,7 +340,7 @@ body {
   background: var(--bg-elev);
   padding: 7px 11px 8px;
   border-radius: 999px;
-  box-shadow: 0 12px 24px -10px var(--shadow), 0 0 0 1px var(--line);
+  box-shadow: var(--float);
   opacity: 0;
   transform: translateY(6px);
   transition: opacity 0.5s var(--ease), transform 0.5s var(--ease);
@@ -280,25 +353,31 @@ body {
 /* ───────── reply bubble ───────── */
 .bubble {
   width: max-content;
-  max-width: 320px;
+  max-width: calc(var(--reply-w) + 34px);
   min-width: 48px;
-  padding: 12px 16px 13px;
-  border-radius: 16px;
+  padding: 13px 17px 14px;
+  border-radius: var(--radius);
   background: var(--bg-elev);
   color: var(--ink-2);
-  font: 400 14px/1.5 var(--sans);
-  box-shadow: 0 24px 48px -16px var(--shadow), 0 0 0 1px var(--line);
+  font: 400 15px/1.5 var(--sans);
+  letter-spacing: -0.006em;
+  box-shadow: var(--float);
+  /* leaving: a quicker, quieter fade that sinks a little */
   opacity: 0;
   visibility: hidden;
-  transform: translateY(10px) scale(0.98);
+  transform: translateY(6px) scale(0.985);
   transform-origin: 0 0;
-  transition: opacity 0.55s var(--ease), transform 0.55s var(--ease), visibility 0s linear 0.55s;
+  transition: opacity 0.32s var(--ease-soft), transform 0.4s var(--ease-soft), visibility 0s linear 0.4s;
 }
 .bubble.is-in {
+  /* arriving: rise and fade in on the long ease */
   opacity: 1;
   visibility: visible;
   transform: none;
-  transition: opacity 0.55s var(--ease), transform 0.55s var(--ease), visibility 0s;
+  transition: opacity 0.5s var(--ease), transform 0.65s var(--ease), visibility 0s;
+}
+.bubble:not(.is-in) {
+  pointer-events: none !important;
 }
 .bubble.flip-x {
   transform-origin: 100% 0;
@@ -320,7 +399,7 @@ body {
 }
 .transcript {
   margin: 0;
-  font: italic 400 16px/1.3 var(--serif);
+  font: italic 400 17px/1.3 var(--serif);
   color: var(--ink-muted);
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -328,12 +407,31 @@ body {
   overflow: hidden;
 }
 .has-reply .transcript-wrap.is-open > div {
-  padding-bottom: 6px;
+  padding-bottom: 8px;
 }
 
 .reply {
-  max-height: calc(14px * 1.5 * 6);
+  max-height: calc(15px * 1.5 * 6);
   overflow: hidden;
+  /* the height is set per line by overlay.ts (sizeReply) and eases, so new lines never jump */
+  transition: height 0.35s var(--ease);
+}
+.bubble:not(.has-reply) .reply {
+  display: none;
+}
+.reply-text {
+  transition: width 0.3s var(--ease);
+}
+/* off-screen twin of .reply-text used to measure wrapped height before showing it */
+.reply-measure {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  visibility: hidden;
+  font: 400 15px/1.5 var(--sans);
+  letter-spacing: -0.006em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .reply.is-clipped {
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 22px);
@@ -344,7 +442,7 @@ body {
   overflow-wrap: anywhere;
 }
 .reply-text span {
-  animation: text-in 0.6s var(--ease-soft) both;
+  animation: text-in 0.45s var(--ease-soft) both;
 }
 @keyframes text-in {
   from {
@@ -493,12 +591,12 @@ body {
   border: 0;
   outline: none;
   margin: 0;
-  padding: 11px 15px;
-  border-radius: 14px;
-  background: var(--bg-sunken);
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  background: var(--bg-elev);
   color: var(--ink);
-  font: 400 14px/1.4 var(--sans);
-  box-shadow: 0 24px 48px -16px var(--shadow), 0 0 0 1px var(--line);
+  font: 400 15px/1.4 var(--sans);
+  box-shadow: var(--float);
   transition: box-shadow 0.3s var(--ease);
 }
 .typebox input::placeholder {
@@ -506,7 +604,7 @@ body {
   opacity: 0.8;
 }
 .typebox input:focus {
-  box-shadow: 0 24px 48px -16px var(--shadow), 0 0 0 1px var(--ink);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 18px 40px -16px var(--shadow), 0 0 0 1px var(--ink);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -629,17 +727,18 @@ body {
 }
 .close-btn {
   position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 20px;
-  height: 20px;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  width: 22px;
+  height: 22px;
   padding: 0;
   border: 0;
   border-radius: 999px;
-  background: transparent;
+  display: grid;
+  place-items: center;
+  background: var(--bg-elev);
   color: var(--ink-muted);
-  font: 400 15px/20px var(--sans);
-  text-align: center;
   cursor: pointer;
   pointer-events: auto;
   opacity: 0;
@@ -649,9 +748,17 @@ body {
 .close-btn:focus-visible {
   opacity: 1;
 }
+.close-btn svg {
+  width: 10px;
+  height: 10px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
 .close-btn:hover {
   color: var(--ink);
-  box-shadow: 0 0 0 1px var(--line);
+  background: var(--bg-sunken);
 }
 .close-btn:focus-visible {
   outline: none;
@@ -811,3 +918,21 @@ html.dragging .visuals-pos .vcard { cursor: grabbing; }
 .bubble.confirm-always .confirm-hint .ca-once { display: none; }
 /* the reply text is selectable while the bubble is hovered (drag the bubble by its edge) */
 .bubble.is-in .reply-text, .bubble.is-in .reply-text * { user-select: text; cursor: text; pointer-events: auto; }
+
+/* quiet controls: the reply / stop row stays soft until the bubble is hovered (a paused run is the exception) */
+.reply-row,
+.stop-row {
+  transition: opacity 0.3s var(--ease);
+}
+.bubble.is-in .reply-row,
+.bubble.is-in:not(.is-paused) .stop-row {
+  opacity: 0.62;
+}
+.bubble.is-in:hover .reply-row,
+.bubble.is-in:hover .stop-row,
+.bubble.is-in .stop-row:focus-within {
+  opacity: 1;
+}
+.stop-row {
+  margin-top: 8px;
+}

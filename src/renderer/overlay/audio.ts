@@ -98,6 +98,8 @@ export class MicRecorder {
   private info: MicInfo | null = null;
   /** settings › voice › microphone (deviceId); '' = system default */
   private deviceId = '';
+  /** every captured block, as it arrives (streaming transcription); set before start() */
+  onChunk: ((pcm: Float32Array, sampleRate: number) => void) | null = null;
 
   /** Use this input device from the next start (falls back to the default when it's gone). */
   setDevice(id: string | undefined): void {
@@ -204,7 +206,7 @@ export class MicRecorder {
         if (my !== this.gen) return;
         const w = new AudioWorkletNode(ctx, 'clicky-capture', { numberOfInputs: 1, numberOfOutputs: 1, channelCount: 1 });
         w.port.onmessage = (e: MessageEvent) => {
-          if (e.data instanceof Float32Array) this.chunks.push(e.data);
+          if (e.data instanceof Float32Array) this.take(e.data);
         };
         this.worklet = w;
         node = w;
@@ -215,7 +217,7 @@ export class MicRecorder {
     if (!node) {
       const sp = ctx.createScriptProcessor(4096, 1, 1);
       sp.onaudioprocess = (e) => {
-        this.chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+        this.take(new Float32Array(e.inputBuffer.getChannelData(0)));
       };
       node = sp;
     }
@@ -229,6 +231,17 @@ export class MicRecorder {
       contextState: ctx.state,
       capture: this.worklet ? 'worklet' : 'script',
     };
+  }
+
+  private take(block: Float32Array): void {
+    this.chunks.push(block);
+    if (this.onChunk) {
+      try {
+        this.onChunk(block, this.sampleRate);
+      } catch (e) {
+        console.warn('[audio] chunk listener failed', e);
+      }
+    }
   }
 
   /** Fills `out` with 0..1 levels for a few voice-range bands. */
@@ -316,6 +329,48 @@ export class MicRecorder {
     void this.ctx?.close().catch(() => undefined);
     this.ctx = null;
   }
+}
+
+/**
+ * Streaming downsampler to 16 kHz (box filter over each output sample's input span: cheap and
+ * good enough for speech recognition). Feed blocks in order; each call returns the new samples.
+ */
+export class Resampler16k {
+  private ratio: number;
+  private pos = 0; // fractional input position of the next output sample, relative to `carry` start
+  private carry = new Float32Array(0);
+  constructor(rate: number) {
+    this.ratio = rate / 16000;
+  }
+  push(block: Float32Array): Float32Array {
+    if (this.ratio === 1) return block.slice();
+    const input = this.carry.length ? concat([this.carry, block]) : block;
+    const r = this.ratio;
+    const n = Math.max(0, Math.floor((input.length - this.pos) / r) - 1);
+    const out = new Float32Array(n);
+    let p = this.pos;
+    for (let i = 0; i < n; i++, p += r) {
+      const a = Math.floor(p);
+      const b = Math.max(a + 1, Math.floor(p + r));
+      let sum = 0;
+      for (let j = a; j < b; j++) sum += input[j]!;
+      out[i] = sum / (b - a);
+    }
+    const keep = Math.floor(p);
+    this.carry = input.slice(keep);
+    this.pos = p - keep;
+    return out;
+  }
+}
+
+/** float -1..1 → int16 */
+export function toInt16(pcm: Float32Array): Int16Array {
+  const out = new Int16Array(pcm.length);
+  for (let i = 0; i < pcm.length; i++) {
+    const s = Math.max(-1, Math.min(1, pcm[i]!));
+    out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  return out;
 }
 
 function concat(chunks: Float32Array[]): Float32Array {

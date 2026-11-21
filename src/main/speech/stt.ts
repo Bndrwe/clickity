@@ -1,6 +1,9 @@
 // Speech-to-text over HTTPS. 'on-device' runs in the overlay renderer, never here.
 import type { Settings } from '../../shared/types';
 
+/** test / e2e fakes: CLICKITY_OPENAI_BASE, CLICKITY_GROQ_BASE, CLICKITY_DEEPGRAM_BASE */
+const base = (name: string, real: string): string => (process.env[name] || real).replace(/\/+$/, '');
+
 const MISSING = (name: string) => new Error(`${name} transcription: missing api key — add one in settings › voice`);
 
 async function errorDetail(res: Response): Promise<string> {
@@ -66,12 +69,12 @@ export async function transcribe(wav: Buffer, settings: Settings, signal?: Abort
     case 'openai': {
       const key = stt.apiKey || settings.providers['openai-api']?.apiKey;
       if (!key) throw MISSING('openai');
-      return openaiStyle('openai', 'https://api.openai.com/v1/audio/transcriptions', key,
+      return openaiStyle('openai', `${base('CLICKITY_OPENAI_BASE', 'https://api.openai.com/v1')}/audio/transcriptions`, key,
         stt.model || 'gpt-transcribe', lang, wav, signal, prompt);
     }
     case 'groq': {
       if (!stt.apiKey) throw MISSING('groq');
-      return openaiStyle('groq', 'https://api.groq.com/openai/v1/audio/transcriptions', stt.apiKey,
+      return openaiStyle('groq', `${base('CLICKITY_GROQ_BASE', 'https://api.groq.com/openai/v1')}/audio/transcriptions`, stt.apiKey,
         stt.model || 'whisper-large-v3-turbo', lang, wav, signal, prompt);
     }
     case 'local': {
@@ -95,6 +98,20 @@ export async function transcribe(wav: Buffer, settings: Settings, signal?: Abort
       if (!res.ok) await fail('gemini', res);
       const j = await parseJson<{ candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> }>('gemini', res);
       return (j.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? '').join('').trim();
+    }
+    case 'deepgram': {
+      if (!stt.apiKey) throw MISSING('deepgram');
+      const q = new URLSearchParams({ model: stt.model && /^nova|^base|^enhanced/.test(stt.model) ? stt.model : 'nova-3', smart_format: 'true', punctuate: 'true' });
+      if (lang) q.set('language', lang);
+      const res = await postFetch('deepgram', `${base('CLICKITY_DEEPGRAM_BASE', 'https://api.deepgram.com/v1')}/listen?${q}`, {
+        method: 'POST',
+        headers: { Authorization: `Token ${stt.apiKey}`, 'content-type': 'audio/wav' },
+        body: new Uint8Array(wav),
+        signal,
+      });
+      if (!res.ok) await fail('deepgram', res);
+      const j = await parseJson<{ results?: { channels?: Array<{ alternatives?: Array<{ transcript?: string }> }> } }>('deepgram', res);
+      return (j.results?.channels?.[0]?.alternatives?.[0]?.transcript ?? '').trim();
     }
     case 'on-device':
       throw new Error('on-device transcription runs in the overlay');

@@ -17,6 +17,8 @@ export interface ExtrasCtx {
   openTour(): void;
 }
 
+import { initSpeed } from './speed';
+
 const api = window.clicky;
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
 const focused = (el: Element): boolean => document.activeElement === el;
@@ -30,6 +32,7 @@ export function initExtras(ctx: ExtrasCtx): void {
   initMemory(ctx);
   initRoutines(ctx);
   initAbout(ctx);
+  initSpeed(ctx);
 }
 
 function switchRow(ctx: ExtrasCtx, id: string, get: (s: Settings) => boolean, patch: (v: boolean) => DeepPartial<Settings>): void {
@@ -106,6 +109,16 @@ function initMic(ctx: ExtrasCtx): void {
   void fill();
 }
 
+/** Kokoro-82M's best english voices (the overlay plays the preview next to the cursor) */
+export const KOKORO_VOICES = [
+  { id: 'af_heart', label: 'heart (warm, female)' },
+  { id: 'af_bella', label: 'bella (bright, female)' },
+  { id: 'af_nicole', label: 'nicole (soft, female)' },
+  { id: 'am_michael', label: 'michael (calm, male)' },
+  { id: 'am_fenrir', label: 'fenrir (deep, male)' },
+  { id: 'bf_emma', label: 'emma (british, female)' },
+  { id: 'bm_george', label: 'george (british, male)' },
+];
 const OPENAI_VOICES = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer', 'verse'];
 let previewAudio: HTMLAudioElement | null = null;
 
@@ -121,6 +134,7 @@ async function play(cmd: SpeakCommand | null): Promise<void> {
     speechSynthesis.speak(u);
     return;
   }
+  if (cmd.mode !== 'audio') return; // pcm / kokoro previews play in the overlay
   const url = URL.createObjectURL(new Blob([cmd.data], { type: cmd.mime }));
   previewAudio = new Audio(url);
   previewAudio.onended = () => URL.revokeObjectURL(url);
@@ -133,9 +147,9 @@ function initVoicePreviews(ctx: ExtrasCtx): void {
   const render = (): void => {
     const s = ctx.get();
     const p = s.speech.tts.provider;
-    row.hidden = p !== 'system' && p !== 'openai';
+    row.hidden = p !== 'system' && p !== 'openai' && p !== 'kokoro';
     if (row.hidden) return;
-    const names = p === 'openai' ? OPENAI_VOICES : ['', ...('speechSynthesis' in window ? speechSynthesis.getVoices().map((v) => v.name) : [])].slice(0, 40);
+    const names = p === 'kokoro' ? KOKORO_VOICES.map((v) => v.id) : p === 'openai' ? OPENAI_VOICES : ['', ...('speechSynthesis' in window ? speechSynthesis.getVoices().map((v) => v.name) : [])].slice(0, 40);
     const key = `${p}|${names.join(',')}|${s.speech.tts.voice}`;
     if (box.dataset.key === key) return;
     box.dataset.key = key;
@@ -164,7 +178,7 @@ function initSwitches(ctx: ExtrasCtx): void {
   switchRow(ctx, 'sw-handsfree', (s) => !!s.handsFree?.enabled, (v) => ({ handsFree: { enabled: v } }));
   const st = $('handsfree-state');
   ctx.sync(() => {
-    st.textContent = ctx.get().handsFree?.enabled ? 'always listening — just talk' : 'always listening is off';
+    st.textContent = ctx.get().handsFree?.enabled ? 'always listening: just talk' : 'always listening is off';
     const mac = ctx.platform() === 'darwin';
     $('draft-mod').textContent = mac ? 'option' : 'alt';
   });
@@ -336,7 +350,7 @@ function initRoutines(ctx: ExtrasCtx): void {
         const del = ctx.h('button', { class: 'text-btn', type: 'button' }, ctx.h('span', { text: 'delete' }));
         del.addEventListener('click', () => void ctx.save({ routines: ctx.get().routines.filter((x) => x.id !== r.id) }));
         const status = r.paused
-          ? `paused after 3 failed runs${r.lastError ? `: ${r.lastError}` : ''} — switch it back on to retry`
+          ? `paused after 3 failed runs${r.lastError ? `: ${r.lastError}` : ''}, switch it back on to retry`
           : r.lastError
             ? `last run failed: ${r.lastError}`
             : r.lastRun

@@ -251,7 +251,13 @@ export function loadSettings(): Settings {
   }
 
   const merged = merge(asObj(platformDefaults()), stored);
-  const migrated = migrateHotkeyDefaults(merged, stored);
+  let migrated = migrateHotkeyDefaults(merged, stored);
+  // settings from before the speech upgrade: let fixEnums → upgradeSpeech move untouched defaults once
+  const storedSpeech = stored.speech as Obj | undefined;
+  if (Object.keys(stored).length > 0 && !(isObj(storedSpeech) && typeof storedSpeech.upgraded === 'number')) {
+    (merged.speech as Obj).upgraded = 0;
+    migrated = true;
+  }
   let upgradePlaintext = false;
   forEachSecret(merged, (h) => {
     if (typeof h.apiKey !== 'string') {

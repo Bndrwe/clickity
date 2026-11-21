@@ -57,28 +57,40 @@ export type CaptureAnnotator = (
   bitmap: Buffer,
 ) => boolean;
 
-/** Captures every display. The cursor's display comes first, then the rest left to right. */
-export async function captureScreens(cursor: Point, annotate?: CaptureAnnotator): Promise<CapturedScreen[]> {
-  cleanupCaptures();
+/** Raw thumbnails of every display, taken as early as possible (talk key down); encoded later. */
+export interface ScreenGrab {
+  at: number;
+  ms: number;
+  items: Array<{ display: Display; thumb: NativeImage }>;
+  /** tiny grey thumbnails per display id, for screensChanged() */
+  sig: Map<number, Buffer>;
+}
 
+const PERMISSION_MSG = 'screen recording permission needed — open settings › permissions';
+const SIG_WIDTH = 96;
+
+/** Tiny greyscale signature of a thumbnail (for a cheap "did the screen change?" check). */
+function signature(img: NativeImage): Buffer {
+  try {
+    const bmp = img.resize({ width: SIG_WIDTH, quality: 'good' }).toBitmap(); // BGRA
+    const out = Buffer.alloc(bmp.length / 4);
+    for (let i = 0, o = 0; i + 3 < bmp.length; i += 4, o++) out[o] = (bmp[i]! + 2 * bmp[i + 1]! + bmp[i + 2]!) >> 2;
+    return out;
+  } catch {
+    return Buffer.alloc(0);
+  }
+}
+
+/** Grab every display's pixels now (no resize / encode yet). Throws the permission message. */
+export async function grabScreens(): Promise<ScreenGrab> {
+  const t0 = Date.now();
   const displays = screen.getAllDisplays();
-  const cursorDisplay = screen.getDisplayNearestPoint(cursor);
   const thumbnailSize = {
     width: Math.max(...displays.map((d) => Math.round(d.bounds.width * d.scaleFactor))),
     height: Math.max(...displays.map((d) => Math.round(d.bounds.height * d.scaleFactor))),
   };
   const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize, fetchWindowIcons: false });
   const pairs = matchSources(displays, sources);
-
-  const ordered = displays
-    .filter((d) => pairs.has(d))
-    .sort((a, b) => {
-      if (a.id === cursorDisplay.id) return -1;
-      if (b.id === cursorDisplay.id) return 1;
-      return a.bounds.x - b.bounds.x;
-    });
-
-  const PERMISSION_MSG = 'screen recording permission needed — open settings › permissions';
   // macOS 14/15 without screen-recording permission (or with a stale grant for an older
   // ad-hoc build) still returns thumbnails, just wallpaper-only or black ones. Sending those
   // makes the model describe/point at a desktop that isn't there, so treat it as "no capture".
@@ -93,11 +105,50 @@ export async function captureScreens(cursor: Point, annotate?: CaptureAnnotator)
     if (st === 'denied' || st === 'restricted') throw new Error(PERMISSION_MSG);
   }
   // Empty (older macOS without permission) and, on mac, all-black thumbnails are unusable.
-  const usable = ordered
+  const items = displays
+    .filter((d) => pairs.has(d))
     .map((d) => ({ display: d, thumb: pairs.get(d)!.thumbnail }))
     .filter(({ thumb }) => !thumb.isEmpty() && !(process.platform === 'darwin' && isBlack(thumb)));
-  if (usable.length === 0) throw new Error(PERMISSION_MSG);
+  if (items.length === 0) throw new Error(PERMISSION_MSG);
+  const sig = new Map<number, Buffer>();
+  for (const it of items) sig.set(it.display.id, signature(it.thumb));
+  return { at: t0, ms: Date.now() - t0, items, sig };
+}
 
+/**
+ * Has anything on screen visibly changed since the grab? Compares tiny thumbnails: a window
+ * opening or a page scrolling changes many blocks; the companion and the ink trail don't.
+ */
+export async function screensChanged(grab: ScreenGrab): Promise<boolean> {
+  const displays = screen.getAllDisplays();
+  if (displays.length !== grab.items.length || displays.some((d) => !grab.sig.has(d.id))) return true;
+  const maxW = Math.max(...displays.map((d) => Math.round(d.bounds.width * d.scaleFactor)));
+  const maxH = Math.max(...displays.map((d) => Math.round(d.bounds.height * d.scaleFactor)));
+  // ask for roughly the signature size directly (the os scales it down)
+  const scale = (SIG_WIDTH * 2) / maxW;
+  const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: Math.round(maxW * scale), height: Math.round(maxH * scale) }, fetchWindowIcons: false });
+  const pairs = matchSources(displays, sources);
+  for (const d of displays) {
+    const before = grab.sig.get(d.id)!;
+    const src = pairs.get(d);
+    if (!src || src.thumbnail.isEmpty()) return true;
+    const now = signature(src.thumbnail);
+    if (now.length !== before.length || !now.length) return true;
+    let changed = 0;
+    for (let i = 0; i < now.length; i++) if (Math.abs(now[i]! - before[i]!) > 24) changed++;
+    if (changed / now.length > 0.03) return true;
+  }
+  return false;
+}
+
+/** Downscale, annotate (ink stroke) and JPEG-encode a grab. The cursor's display comes first. */
+export async function encodeScreens(grab: ScreenGrab, cursor: Point, annotate?: CaptureAnnotator): Promise<CapturedScreen[]> {
+  const cursorDisplay = screen.getDisplayNearestPoint(cursor);
+  const usable = [...grab.items].sort((a, b) => {
+    if (a.display.id === cursorDisplay.id) return -1;
+    if (b.display.id === cursorDisplay.id) return 1;
+    return a.display.bounds.x - b.display.bounds.x;
+  });
   await fs.promises.mkdir(TEMP_DIR, { recursive: true });
   const screens: CapturedScreen[] = [];
   for (const [i, { display, thumb }] of usable.entries()) {
@@ -146,6 +197,12 @@ export async function captureScreens(cursor: Point, annotate?: CaptureAnnotator)
     });
   }
   return screens;
+}
+
+/** Captures every display. The cursor's display comes first, then the rest left to right. */
+export async function captureScreens(cursor: Point, annotate?: CaptureAnnotator): Promise<CapturedScreen[]> {
+  cleanupCaptures();
+  return encodeScreens(await grabScreens(), cursor, annotate);
 }
 
 /** Maps a point in the screenshot's pixel space to global DIP, clamped inside the display. */

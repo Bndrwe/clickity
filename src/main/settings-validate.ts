@@ -5,8 +5,8 @@ import { DEFAULT_STOP, stopKeyProblem } from './stop-logic.ts';
 
 const THEMES = ['system', 'light', 'dark'];
 const MODES = ['hold', 'toggle'];
-const STT = ['on-device', 'openai', 'groq', 'gemini', 'local'];
-const TTS = ['system', 'openai', 'elevenlabs', 'off'];
+const STT = ['on-device', 'openai', 'deepgram', 'groq', 'gemini', 'local'];
+const TTS = ['kokoro', 'system', 'openai', 'elevenlabs', 'off'];
 const ACTIONS = ['off', 'ask', 'auto'];
 const SHOW = ['always', 'active', 'never'];
 const HIDE_REPLIES = ['auto', 'keep', '10s', '30s', '1m'];
@@ -44,6 +44,31 @@ export function fixEnums(s: Settings, d: Settings, platform: string): Settings {
   // be grabbed as a shortcut (fn, taps, plain letters…) falls back to esc
   if (stopKeyProblem(s.hotkeys.stop, platform)) s.hotkeys.stop = [...(d.hotkeys.stop ?? DEFAULT_STOP)];
   fixFeatures(s, d);
+  upgradeSpeech(s, d);
+  return s;
+}
+
+/** on-device whisper defaults of older versions (users who never picked a model); base.en is
+ * still the default: measured in the worker it's as quick as tiny.en and mishears far less */
+const OLD_LOCAL_DEFAULTS: string[] = [];
+
+/**
+ * One-time speech upgrade (speech.upgraded === 0, set by settings-store for older files): users still on the untouched defaults get the
+ * natural on-device voice instead of the robotic system default, and the faster on-device
+ * whisper. Anything they picked themselves (a named system voice, a cloud voice, another model)
+ * is kept. Fast replies default on.
+ */
+export function upgradeSpeech(s: Settings, d: Settings): Settings {
+  const sp = s.speech;
+  if ((sp.upgraded ?? 1) >= 1) return s; // settings-store marks pre-upgrade files with 0
+  if (sp.tts.provider === 'system' && !sp.tts.voice) {
+    sp.tts.provider = 'kokoro';
+    sp.tts.voice = d.speech.tts.voice;
+  }
+  if (sp.stt.provider === 'on-device' && OLD_LOCAL_DEFAULTS.includes(sp.stt.model)) sp.stt.model = d.speech.stt.model;
+  if (typeof sp.fastReplies !== 'boolean') sp.fastReplies = true;
+  if (typeof sp.stt.streaming !== 'boolean') sp.stt.streaming = true;
+  sp.upgraded = 1;
   return s;
 }
 

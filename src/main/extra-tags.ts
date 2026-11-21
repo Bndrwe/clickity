@@ -1,14 +1,14 @@
 // [REMEMBER:fact], [HIGHLIGHT:x1,y1,x2,y2:label:screenN], [STEP:n:x,y:label:instruction:screenN]
-// and [ROUTINE:days|HH:MM|prompt] tags. Pure, unit tested. Like POINT tags they are never shown
+// [LESSON:n/m] and [ROUTINE:days|HH:MM|prompt] tags. Pure, unit tested. Like POINT tags they are never shown
 // or spoken; conversation.ts strips them from the visible reply.
 
 export const MAX_STEPS = 15;
 export const MAX_HIGHLIGHTS = 8;
 export const MAX_REMEMBER_CHARS = 300;
 
-const TAG_RE = /\[(REMEMBER|HIGHLIGHT|STEP|ROUTINE):((?:\\.|[^\]\\\n])*)\]/gi;
+const TAG_RE = /\[(REMEMBER|HIGHLIGHT|STEP|ROUTINE|LESSON):((?:\\.|[^\]\\\n])*)\]/gi;
 /** A trailing tag that has started streaming but isn't closed yet. */
-const PARTIAL_RE = /\[(?:R(?:E(?:M(?:E(?:M(?:B(?:E(?:R)?)?)?)?)?)?|O(?:U(?:T(?:I(?:N(?:E)?)?)?)?)?)?|H(?:I(?:G(?:H(?:L(?:I(?:G(?:H(?:T)?)?)?)?)?)?)?)?|S(?:T(?:E(?:P)?)?)?)(?::[^\]\n]*)?$/i;
+const PARTIAL_RE = /\[(?:R(?:E(?:M(?:E(?:M(?:B(?:E(?:R)?)?)?)?)?)?|O(?:U(?:T(?:I(?:N(?:E)?)?)?)?)?)?|H(?:I(?:G(?:H(?:L(?:I(?:G(?:H(?:T)?)?)?)?)?)?)?)?|S(?:T(?:E(?:P)?)?)?|L(?:E(?:S(?:S(?:O(?:N)?)?)?)?)?)(?::[^\]\n]*)?$/i;
 
 export interface ParsedHighlight {
   x1: number;
@@ -39,6 +39,21 @@ export interface ExtraTags {
   highlights: ParsedHighlight[];
   steps: ParsedStep[];
   routines: ParsedRoutine[];
+  /** [LESSON:n/m]: this reply is step n of an m-step lesson taught one step per reply */
+  lesson: ParsedLesson | null;
+}
+
+export interface ParsedLesson {
+  n: number;
+  total: number;
+}
+
+/** "2/5", "2 of 5", "step 2/5" → {n, total}; total is at least n. */
+export function parseLesson(inner: string): ParsedLesson | null {
+  const m = /^\s*(?:step\s*)?(\d{1,3})\s*(?:\/|of)\s*(\d{1,3})\s*$/i.exec(inner);
+  if (!m) return null;
+  const n = Math.max(1, Number(m[1]));
+  return { n, total: Math.max(n, Number(m[2])) };
 }
 
 const unescape = (s: string): string => s.replace(/\\(.)/g, '$1');
@@ -68,7 +83,7 @@ function popScreen(parts: string[]): number | undefined {
 const NUM = '(-?\\d+(?:\\.\\d+)?)';
 
 export function parseExtraTags(text: string): ExtraTags {
-  const out: ExtraTags = { remember: [], highlights: [], steps: [], routines: [] };
+  const out: ExtraTags = { remember: [], highlights: [], steps: [], routines: [], lesson: null };
   for (const m of text.matchAll(TAG_RE)) {
     const kind = m[1].toUpperCase();
     const inner = m[2];
@@ -93,6 +108,8 @@ export function parseExtraTags(text: string): ExtraTags {
       const label = parts[2] ?? '';
       const instruction = parts.slice(3).join(': ').trim() || label;
       out.steps.push({ n, x: Number(c[1]), y: Number(c[2]), label: label || 'here', instruction, screen });
+    } else if (kind === 'LESSON') {
+      out.lesson = parseLesson(inner) ?? out.lesson; // the last one wins
     } else if (kind === 'ROUTINE') {
       const r = parseRoutineTag(unescape(inner));
       if (r) out.routines.push(r);

@@ -35,7 +35,7 @@ export function clickyMark(color: string, size = 18): HTMLElement {
   return span;
 }
 
-const TTS_LABEL: Record<TtsProvider, string> = { system: 'system voice', openai: 'openai', elevenlabs: 'elevenlabs', off: 'no voice' };
+const TTS_LABEL: Record<TtsProvider, string> = { kokoro: 'natural voice', system: 'system voice', openai: 'openai', elevenlabs: 'elevenlabs', off: 'no voice' };
 const isFocused = (el: Element): boolean => document.activeElement === el;
 
 function firstSentence(t: string): string {
@@ -411,7 +411,7 @@ function initSuggest(ctx: ClickysCtx, added: (c: Clicky) => void): void {
         );
       }),
     );
-    if (!made.length) body.append(h('p', { class: 'result err', text: 'you already have the most clickys allowed — remove one first' }));
+    if (!made.length) body.append(h('p', { class: 'result err', text: 'you already have the most clickys allowed. remove one first' }));
     for (const c of made) added(c);
     void description;
   }

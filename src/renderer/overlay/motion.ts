@@ -47,13 +47,21 @@ export const ease = cubicBezier(0.22, 1, 0.36, 1);
 /** DESIGN.md --spring: reserved for the companion's flight to a point. */
 export const spring = cubicBezier(0.34, 1.36, 0.5, 1);
 
-/** 2D critically damped spring (exact integration, stable for any dt). */
+/**
+ * 2D damped spring, integrated exactly (stable for any dt).
+ * zeta = 1 is critically damped; slightly under 1 (e.g. 0.85) gives a tiny, lively overshoot (~1%).
+ */
 export class Spring2D {
   x = 0;
   y = 0;
   vx = 0;
   vy = 0;
-  constructor(public omega: number) {}
+  omega: number;
+  zeta: number;
+  constructor(omega: number, zeta = 1) {
+    this.omega = omega;
+    this.zeta = zeta;
+  }
 
   snap(x: number, y: number): void {
     this.x = x;
@@ -63,16 +71,31 @@ export class Spring2D {
   }
 
   step(tx: number, ty: number, dt: number): void {
+    const [x, vx] = this.axis(this.x - tx, this.vx, dt);
+    const [y, vy] = this.axis(this.y - ty, this.vy, dt);
+    this.x = tx + x;
+    this.y = ty + y;
+    this.vx = vx;
+    this.vy = vy;
+  }
+
+  /** one axis: displacement d and velocity v after dt (closed form) */
+  private axis(d: number, v: number, dt: number): [number, number] {
     const w = this.omega;
-    const e = Math.exp(-w * dt);
-    const dx = this.x - tx;
-    const dy = this.y - ty;
-    const kx = this.vx + w * dx;
-    const ky = this.vy + w * dy;
-    this.x = tx + (dx + kx * dt) * e;
-    this.y = ty + (dy + ky * dt) * e;
-    this.vx = (this.vx - w * kx * dt) * e;
-    this.vy = (this.vy - w * ky * dt) * e;
+    const z = this.zeta;
+    if (z >= 1) {
+      const e = Math.exp(-w * dt);
+      const k = v + w * d;
+      return [(d + k * dt) * e, (v - w * k * dt) * e];
+    }
+    const wd = w * Math.sqrt(1 - z * z);
+    const e = Math.exp(-z * w * dt);
+    const c = Math.cos(wd * dt);
+    const s = Math.sin(wd * dt);
+    const b = (v + z * w * d) / wd;
+    const nd = e * (d * c + b * s);
+    const nv = e * ((b * wd - z * w * d) * c - (d * wd + z * w * b) * s);
+    return [nd, nv];
   }
 
   settled(tx: number, ty: number): boolean {

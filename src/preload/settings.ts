@@ -55,6 +55,7 @@ const api: SettingsApi = {
     ipcRenderer.on(IPC.memoryChanged, (_e: IpcRendererEvent, facts: string[]) => cb(facts));
   },
   voicePreview: (provider, voice) => ipcRenderer.invoke(IPC.voicePreview, provider, voice),
+  latency: () => ipcRenderer.invoke(IPC.latencyGet),
   runRoutine: (id) => ipcRenderer.invoke(IPC.routineRun, id),
 };
 

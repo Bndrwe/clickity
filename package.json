@@ -29,6 +29,7 @@
     "electron": "^45.2.2",
     "electron-builder": "^26.0.12",
     "esbuild": "^0.28.2",
+    "kokoro-js": "^1.2.1",
     "pdfjs-dist": "^6.5.438",
     "three": "^0.187.0",
     "typescript": "^5.7.2"
@@ -40,5 +41,10 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/Bndrwe/clickity.git"
+  },
+  "overrides": {
+    "kokoro-js": {
+      "@huggingface/transformers": "$@huggingface/transformers"
+    }
   }
 }

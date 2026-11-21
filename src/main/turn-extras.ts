@@ -7,7 +7,7 @@ import { IPC } from '../shared/ipc';
 import type { OverlayHighlight, OverlayPoint, OverlayState, Routine, Settings } from '../shared/types';
 import { screenshotToGlobal, type CapturedScreen } from './capture';
 import { pickPointScreen } from './point-tags';
-import { MAX_STEPS, parseExtraTags, stripExtraTags, type ParsedHighlight, type ParsedRoutine, type ParsedStep } from './extra-tags';
+import { MAX_STEPS, parseExtraTags, stripExtraTags, type ParsedHighlight, type ParsedLesson, type ParsedRoutine, type ParsedStep } from './extra-tags';
 import { memoryPrompt, rememberFacts } from './memory';
 import { liveContextPrompt, selfHelpPrompt } from './live-context';
 import { broadcastToOverlays, overlayDisplay, overlayForDisplay, overlayForPoint, sendToOverlay } from './overlay';
@@ -28,11 +28,29 @@ HIGHLIGHTING AND WALKTHROUGHS
 - When the user asks how to do something that takes several clicks ("walk me through…", "show me how to…"), give a guided walkthrough instead of POINT tags: one tag per step, in order, up to ${MAX_STEPS}: [STEP:n:x,y:label:instruction:screenN]. n starts at 1, x,y is where that step happens (screenshot pixels, like POINT), label is 1-4 words, instruction is one short sentence the user reads ("click the gear icon to open settings"). The companion goes to step 1 and the user presses enter for the next one. Only include steps you can see on the current screen; if later steps depend on screens you can't see yet, describe them in the last instruction.
 - Your sentence before the tags should briefly say what you'll walk them through; never mention the tags.`);
   }
+  parts.push(lessonPrompt(screens.length > 0 && settings.companion.pointing));
   parts.push(`
 
 ROUTINES
 If the user asks you to do something on a schedule ("every weekday at 9, summarise my screen"), add [ROUTINE:days|HH:MM|what to do] (days: daily, weekdays, weekends or e.g. mon,wed,fri; time in 24h). The user confirms it before it's saved; say you'll set it up once they confirm.`);
   return parts.join('');
+}
+
+/**
+ * Teaching mode: "teach me step by step…" is taught one step per reply. Each step ends with
+ * [LESSON:n/m]; the user presses enter (or says "next") and the next turn sees a fresh screenshot,
+ * so lessons can span screens the model hasn't seen yet and it can check the user's work.
+ */
+export function lessonPrompt(canPoint: boolean): string {
+  return `
+
+TEACHING STEP BY STEP
+- When the user asks you to teach them something step by step, tutor them, or go through something one step at a time (a concept, a homework problem, a skill, or how to do something in an app), teach ONE step per reply and end the reply with [LESSON:n/m]: n is this step's number, m your best guess at the total (you may change m later).
+- Step 1 says in a few words what you'll cover, then gives the first step. Keep every step short: one idea or one thing to do, two or three sentences. Use plain words; give a tiny example when it helps.${canPoint ? ' If the step happens on screen, POINT at (or HIGHLIGHT) where it happens.' : ''}
+- Make them do it: when it fits, end the step with a quick thing to try or a small question, and don't give the answer away in the same step.
+- The user moves on by pressing enter or saying "next" — that always means move on: if the last step's question went unanswered, give the answer in a few words and teach the next step. Each new message comes with a fresh screenshot: when the step was something to do on screen, glance at it to check it worked. If they answer (said or typed) and get it wrong, gently correct it and help with that step again (same n); if right, say so in a few words and go on. If they ask a question mid-lesson, answer it briefly and keep the lesson tag with the same n.
+- The last step uses n = m: wrap up in a sentence or two (what they learned, what to try next). Stop adding the tag once the lesson is over or they change the subject.
+- Never mention the tag; never use [STEP] tags in a lesson.`;
 }
 
 /** Everything this module adds to the system prompt (async: live context probes the desktop). */
@@ -54,6 +72,29 @@ export async function extrasPrompt(settings: Settings, screens: CapturedScreen[]
   );
 }
 
+/**
+ * extrasPrompt split for caching / warm sessions: `stable` (memory, tag protocols, self-help)
+ * changes rarely; `dynamic` (date / time, focused app, window titles) changes every turn.
+ */
+export async function extrasPromptParts(settings: Settings, screens: CapturedScreen[]): Promise<{ stable: string; dynamic: string }> {
+  const h = settings.hotkeys;
+  const p = process.platform;
+  const live = await liveContextPrompt().catch(() => '');
+  return {
+    stable:
+      memoryPrompt(settings.memory?.enabled !== false, settings.activeClicky) +
+      protocolPrompt(settings, screens) +
+      selfHelpPrompt({
+        talk: hotkeyLabel(h.talk, p),
+        type: hotkeyLabel(h.type, p),
+        dictate: hotkeyLabel(h.dictate ?? [], p),
+        typeTap: hotkeyLabel(h.typeTap ?? [], p),
+        alwaysOn: hotkeyLabel(h.alwaysOn ?? [], p),
+      }),
+    dynamic: live,
+  };
+}
+
 /** Visible text: also hide this module's tags. */
 export function stripExtras(text: string, streaming: boolean): string {
   return stripExtraTags(text, streaming);
@@ -63,6 +104,8 @@ export function stripExtras(text: string, streaming: boolean): string {
 
 export interface ReplyExtras {
   steps: ParsedStep[];
+  /** [LESSON:n/m]: step n of a lesson taught one step per reply */
+  lesson: ParsedLesson | null;
   routines: ParsedRoutine[];
   highlights: number;
 }
@@ -73,7 +116,7 @@ export function handleReplyExtras(raw: string, screens: CapturedScreen[], settin
   if (tags.remember.length && settings.memory?.enabled !== false) rememberFacts(tags.remember, settings.activeClicky);
   let drawn = 0;
   if (tags.highlights.length && screens.length && settings.companion.pointing) drawn = drawHighlights(tags.highlights, screens);
-  return { steps: screens.length ? tags.steps : [], routines: tags.routines, highlights: drawn };
+  return { steps: screens.length && !tags.lesson ? tags.steps : [], lesson: tags.lesson, routines: tags.routines, highlights: drawn };
 }
 
 function localRect(h: ParsedHighlight, screens: CapturedScreen[]): { win: BrowserWindow; rect: OverlayHighlight } | null {

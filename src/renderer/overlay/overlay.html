@@ -29,12 +29,19 @@
         <div id="body" class="body">
           <div class="ring"></div>
           <svg id="arrow" class="arrow" viewBox="0 0 32 32" aria-hidden="true">
+            <!-- the mark's three click ticks: they light up while it listens / thinks and flick on a click -->
+            <g class="ticks">
+              <path class="tick-halo" d="M12.61 0.35 L9.07 -2.42 M16.00 -1.30 L16.00 -5.80 M19.39 0.35 L22.93 -2.42" />
+              <path class="tick t1" d="M12.61 0.35 L9.07 -2.42" />
+              <path class="tick t2" d="M16.00 -1.30 L16.00 -5.80" />
+              <path class="tick t3" d="M19.39 0.35 L22.93 -2.42" />
+            </g>
             <path class="halo" d="M16 3 L26 27 L16 21.5 L6 27 Z" />
             <path class="fill" d="M16 3 L26 27 L16 21.5 L6 27 Z" />
           </svg>
         </div>
         <div class="aux">
-          <div id="wave" class="wave"><i></i><i></i><i></i><i></i><i></i></div>
+          <div id="wave" class="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
           <div class="dots"><i></i><i></i><i></i></div>
         </div>
       </div>
@@ -42,7 +49,7 @@
       <div id="bubble-pos" class="pos">
         <div id="bubble" class="bubble" role="status" aria-live="polite">
           <!-- quick way to get rid of the bubble (a running turn stops too) -->
-          <button id="close-btn" class="close-btn" type="button" tabindex="-1" aria-label="close" title="close">×</button>
+          <button id="close-btn" class="close-btn" type="button" tabindex="-1" aria-label="close" title="close"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6" /></svg></button>
           <p id="step" class="step"></p>
           <div class="collapse transcript-wrap"><div><p id="transcript" class="transcript"></p></div></div>
           <div id="reply" class="reply"><div id="reply-text" class="reply-text"></div></div>
@@ -60,12 +67,12 @@
             </div>
           </div></div>
           <!-- quick follow-up: continue the same chat in the type box under the bubble -->
-          <div id="reply-row" class="reply-row"><button id="reply-btn" class="reply-btn" type="button" tabindex="-1">reply</button></div>
+          <div id="reply-row" class="reply-row"><button id="reply-btn" class="reply-btn" type="button" tabindex="-1" title="reply">reply</button></div>
           <!-- busy: "esc to stop" / "esc to pause" + stop; a paused agent run: continue / stop -->
           <div id="stop-row" class="stop-row">
             <p id="stop-hint" class="stop-hint"></p>
-            <button id="continue-btn" class="stop-btn go" type="button" tabindex="-1">continue</button>
-            <button id="stop-btn" class="stop-btn" type="button" tabindex="-1"><span class="sq" aria-hidden="true"></span><span id="stop-btn-t">stop</span></button>
+            <button id="continue-btn" class="stop-btn go" type="button" tabindex="-1" title="continue">continue</button>
+            <button id="stop-btn" class="stop-btn" type="button" tabindex="-1" title="stop"><span class="sq" aria-hidden="true"></span><span id="stop-btn-t">stop</span></button>
           </div>
         </div>
       </div>

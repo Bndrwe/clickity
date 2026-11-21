@@ -297,7 +297,7 @@ function render(): void {
   el.pill.style.setProperty('--mark', markColor(s.clicky.color));
   el.whoMark.innerHTML = markSvg();
   el.whoName.textContent = name;
-  el.who.setAttribute('aria-label', s.clickys.length > 1 ? `${name} — switch clicky` : name);
+  el.who.setAttribute('aria-label', s.clickys.length > 1 ? `${name}, switch clicky` : name);
   el.who.setAttribute('aria-expanded', String(switching));
   el.ask.placeholder = `ask ${name}…`;
   el.pill.dataset.phase = s.phase;

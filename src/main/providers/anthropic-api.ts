@@ -5,7 +5,7 @@ import { getJson, parseJson, request, sse } from './http';
 import type { Provider } from './provider';
 
 const NAME = 'anthropic api';
-const BASE = 'https://api.anthropic.com/v1';
+const BASE = (process.env.CLICKITY_ANTHROPIC_BASE || 'https://api.anthropic.com/v1').replace(/\/+$/, '');
 
 const FALLBACK: ModelInfo[] = [
   { id: 'claude-sonnet-5-5', label: 'claude sonnet 5.5' },
@@ -40,6 +40,23 @@ function buildMessages(req: ChatRequest): any[] {
   return out;
 }
 
+/**
+ * System prompt as blocks: the stable part (persona, protocols, memory) is marked for prompt
+ * caching, so follow-up turns skip re-reading it (faster first token, cheaper); this turn's
+ * context (screens, cursor, time) follows uncached.
+ */
+export function systemBlocks(req: ChatRequest): any[] | undefined {
+  if (!req.system) return undefined;
+  const st = req.systemStable;
+  if (st && req.system.startsWith(st) && st.trim()) {
+    const rest = req.system.slice(st.length).trim();
+    const blocks: any[] = [{ type: 'text', text: st, cache_control: { type: 'ephemeral' } }];
+    if (rest) blocks.push({ type: 'text', text: rest });
+    return blocks;
+  }
+  return [{ type: 'text', text: req.system, cache_control: { type: 'ephemeral' } }];
+}
+
 async function* stream(req: ChatRequest, cfg: ProviderConfig): AsyncGenerator<string> {
   const res = await request(NAME, `${BASE}/messages`, {
     method: 'POST',
@@ -50,8 +67,8 @@ async function* stream(req: ChatRequest, cfg: ProviderConfig): AsyncGenerator<st
       // 5.x models think adaptively; leave room for thinking + a short reply,
       // and ask for low effort so the companion answers quickly.
       max_tokens: 16000,
-      ...(/^claude-(fable|opus|sonnet|haiku)-5/.test(req.model) ? { output_config: { effort: 'low' } } : {}),
-      system: req.system || undefined,
+      ...(/^claude-(fable|opus|sonnet|haiku)-5/.test(req.model) ? { output_config: { effort: req.effort ?? 'low' } } : {}),
+      system: systemBlocks(req),
       messages: buildMessages(req),
       stream: true,
     }),

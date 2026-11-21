@@ -254,6 +254,8 @@ function buildConfig(win: BrowserWindow): OverlayConfig | null {
     stt: s.speech.stt,
     // one overlay warms up the on-device model (they share the browser cache)
     preloadStt: display.id === screen.getPrimaryDisplay().id,
+    // the natural on-device voice: loaded by the primary display's overlay (others load it on first use)
+    preloadVoice: s.speech.tts.provider === 'kokoro' && display.id === screen.getPrimaryDisplay().id,
   };
 }
 

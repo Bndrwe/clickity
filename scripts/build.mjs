@@ -8,6 +8,9 @@ const common = { bundle: true, sourcemap: true, logLevel: 'info', target: 'es202
 
 // The chats renderer is optional while it's being written: only bundle it when present.
 const rendererEntries = { 'overlay/overlay': 'src/renderer/overlay/overlay.ts', 'settings/settings': 'src/renderer/settings/settings.ts' };
+// overlay web workers: on-device whisper and the Kokoro voice run off the UI thread
+rendererEntries['overlay/stt-worker'] = 'src/renderer/overlay/stt-worker.ts';
+if (existsSync('src/renderer/overlay/tts-worker.ts')) rendererEntries['overlay/tts-worker'] = 'src/renderer/overlay/tts-worker.ts';
 if (existsSync('src/renderer/chats/chats.ts')) rendererEntries['chats/chats'] = 'src/renderer/chats/chats.ts';
 if (existsSync('src/renderer/notch/notch.ts')) rendererEntries['notch/notch'] = 'src/renderer/notch/notch.ts';
 

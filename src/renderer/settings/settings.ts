@@ -20,7 +20,7 @@ import type { HotkeyStatus, KeyRecordEvent, UpdateState } from '../../shared/ipc
 import { canonicalCode, chordLabel, orderChord, sameBinding, validateChord } from './keys';
 import { stopKeyProblem } from '../../main/stop-logic';
 import { initClickys, initNotchSetting } from './clickys';
-import { initExtras } from './extras';
+import { KOKORO_VOICES, initExtras } from './extras';
 
 const api = window.clicky;
 let settings: Settings = structuredClone(DEFAULT_SETTINGS);
@@ -281,9 +281,298 @@ function initChrome(): void {
   } else reveals.forEach((r) => r.classList.add('is-in'));
 }
 
+/** Go to any section or element: shows the page it lives on, then scrolls to it. */
 function scrollToId(id: string): void {
-  if (id === 'top') window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
-  else document.getElementById(id)?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+  if (id === 'top' || id === 'home') return showPage('home');
+  const el = document.getElementById(id);
+  if (!el) return;
+  const page = el.closest<HTMLElement>('[data-page]')?.dataset.page ?? 'home';
+  showPage(page);
+  if (el.matches('section[data-page]')) return;
+  requestAnimationFrame(() => {
+    el.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
+    spotlight(el.closest<HTMLElement>('.row, .prow') ?? el);
+  });
+}
+
+/* ───────────── pages: essentials first, everything else one step away ───────────── */
+
+let currentPage = 'home';
+const PAGE_NAMES: Record<string, string> = {
+  home: 'essentials',
+  model: 'brain',
+  clickys: 'clickys',
+  voice: 'voice & listening',
+  keys: 'shortcuts',
+  companion: 'companion',
+  agent: 'agent mode',
+  dictation: 'dictation',
+  memory: 'memory',
+  routines: 'routines',
+  permissions: 'permissions',
+  about: 'about & diagnostics',
+};
+
+function showPage(page: string): void {
+  if (!(page in PAGE_NAMES)) page = 'home';
+  const changed = page !== currentPage;
+  currentPage = page;
+  document.body.dataset.page = page;
+  for (const sec of document.querySelectorAll<HTMLElement>('[data-page]')) {
+    const on = sec.dataset.page === page;
+    sec.hidden = !on;
+    if (on && changed && !reduceMotion) {
+      sec.classList.remove('page-in');
+      void sec.offsetWidth;
+      sec.classList.add('page-in');
+    }
+  }
+  for (const a of document.querySelectorAll<HTMLAnchorElement>('.nav-menu a[data-scroll]')) {
+    const target = a.dataset.scroll === 'top' ? 'home' : a.dataset.scroll;
+    a.classList.toggle('on', target === page);
+    if (target === page) a.setAttribute('aria-current', 'page');
+    else a.removeAttribute('aria-current');
+  }
+  if (changed) window.scrollTo({ top: 0, behavior: 'auto' });
+}
+
+/** a brief soft highlight on the row you were sent to */
+function spotlight(el: HTMLElement): void {
+  el.classList.remove('spot');
+  void el.offsetWidth;
+  el.classList.add('spot');
+  window.setTimeout(() => el.classList.remove('spot'), 1800);
+}
+
+function initPages(): void {
+  // every secondary page gets a quiet way back to the essentials
+  for (const sec of document.querySelectorAll<HTMLElement>('section[data-page]')) {
+    if (sec.dataset.page === 'home') continue;
+    const back = h('button', { class: 'back-btn', type: 'button', title: 'back to essentials' }, h('span', { 'aria-hidden': 'true', text: '←' }), h('span', { text: 'essentials' }));
+    back.addEventListener('click', () => showPage('home'));
+    sec.prepend(back);
+  }
+  document.querySelectorAll<HTMLButtonElement>('[data-go]').forEach((b) => b.addEventListener('click', () => showPage(b.dataset.go!)));
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || currentPage === 'home' || document.querySelector('dialog[open]') || recording) return;
+    if ((document.getElementById('nav-more') as HTMLDetailsElement | null)?.open) return;
+    const t = e.target as HTMLElement | null;
+    if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+    showPage('home');
+  });
+  initFind();
+  showPage('home');
+  (window as any).__showPage = showPage;
+  (window as any).__pages = () => Object.keys(PAGE_NAMES).filter((p) => p !== 'home');
+}
+
+/* find a setting: every row label (and its hints) across all pages */
+function initFind(): void {
+  const input = $<HTMLInputElement>('find');
+  const out = $('find-results');
+  const list = $('more-list');
+  type Entry = { label: string; extra: string; page: string; el: HTMLElement };
+  const index = (): Entry[] => {
+    const entries: Entry[] = [];
+    for (const [page, name] of Object.entries(PAGE_NAMES)) {
+      if (page === 'home') continue;
+      const sec = document.getElementById(page);
+      if (sec) entries.push({ label: name, extra: sec.querySelector('.section-head')?.textContent ?? '', page, el: sec });
+    }
+    for (const row of document.querySelectorAll<HTMLElement>('section[data-page] .row, section[data-page] .prow')) {
+      const labelEl = row.querySelector('.row-label');
+      const label = (labelEl?.textContent ?? '').trim();
+      if (!label) continue;
+      const page = row.closest<HTMLElement>('section[data-page]')!.dataset.page!;
+      const extra = [...row.querySelectorAll('.hint, .prow-detail, .seg button, option')].map((n) => n.textContent).join(' ');
+      entries.push({ label, extra, page, el: row });
+    }
+    return entries;
+  };
+  const go = (e: Entry) => {
+    input.value = '';
+    render();
+    if (e.el.matches('section')) return showPage(e.page);
+    showPage(e.page);
+    requestAnimationFrame(() => {
+      e.el.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
+      spotlight(e.el);
+    });
+  };
+  const render = () => {
+    const q = input.value.trim().toLowerCase();
+    out.replaceChildren();
+    out.hidden = !q;
+    list.hidden = !!q;
+    if (!q) return;
+    const words = q.split(/\s+/);
+    const hits = index()
+      .map((e) => {
+        const l = e.label.toLowerCase();
+        const x = e.extra.toLowerCase();
+        if (!words.every((w) => l.includes(w) || x.includes(w))) return null;
+        return { e, score: (l.startsWith(q) ? 0 : l.includes(q) ? 1 : 2) + (e.el.matches('section') ? 0 : 0.5) };
+      })
+      .filter((x): x is { e: Entry; score: number } => !!x)
+      .sort((a, b) => a.score - b.score)
+      .slice(0, 8);
+    if (!hits.length) {
+      out.append(h('p', { class: 'find-empty muted', text: `nothing called “${input.value.trim()}”. try another word.` }));
+      return;
+    }
+    for (const { e } of hits) {
+      const where = e.el.matches('section') ? 'page' : PAGE_NAMES[e.page] ?? e.page;
+      const b = h('button', { class: 'more-item', type: 'button', role: 'listitem' }, h('span', { class: 'mi-t', text: e.label }), h('span', { class: 'mi-d', text: where }));
+      b.addEventListener('click', () => go(e));
+      out.append(b);
+    }
+  };
+  input.addEventListener('input', render);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') (out.querySelector('button') as HTMLButtonElement | null)?.click();
+    if (e.key === 'Escape' && input.value) {
+      e.stopPropagation();
+      input.value = '';
+      render();
+    }
+  });
+}
+
+/* ───────────── essentials: brain, voice, talk key, look ───────────── */
+
+let lastVoiceProvider: TtsProvider = 'system';
+function initEssentials(): void {
+  const prov = $<HTMLSelectElement>('ess-provider');
+  const model = $<HTMLSelectElement>('ess-model');
+  const status = $('ess-brain-status');
+  for (const g of GROUPS) {
+    const og = h('optgroup', { label: g.title });
+    for (const kind of PROVIDER_KINDS.filter((k) => PROVIDER_META[k].group === g.group)) {
+      const m = PROVIDER_META[kind];
+      og.append(h('option', { value: kind, text: m.group === 'subscription' ? `${m.label} subscription` : m.label }));
+    }
+    prov.append(og);
+  }
+  const models = new Map<ProviderKind, ModelInfo[]>();
+  let shownFor = '';
+  const fillModels = () => {
+    const kind = settings.provider;
+    const cur = settings.models[kind] || PROVIDER_META[kind].defaultModel;
+    const list = models.get(kind) ?? [];
+    const key = `${kind}|${cur}|${list.length}`;
+    if (key === shownFor && !isFocused(model)) return;
+    shownFor = key;
+    model.replaceChildren();
+    if (!list.some((m) => m.id === cur)) model.append(h('option', { value: cur, text: cur }));
+    for (const m of list) model.append(h('option', { value: m.id, text: m.label && m.label !== m.id ? m.label : m.id }));
+    if (!isFocused(model)) model.value = cur;
+  };
+  const loadModels = async (kind: ProviderKind) => {
+    if (models.has(kind)) return fillModels();
+    try {
+      models.set(kind, (await api.providerModels(kind)) ?? []);
+    } catch {
+      models.set(kind, []);
+    }
+    fillModels();
+  };
+  let statusFor = '';
+  const refreshStatus = async () => {
+    const kind = settings.provider;
+    statusFor = kind;
+    status.textContent = 'checking…';
+    status.classList.remove('err');
+    try {
+      const st = await api.providerStatus(kind);
+      if (statusFor !== kind) return;
+      status.textContent = st.ok ? `ready · ${st.detail}` : `not ready · ${st.detail}`;
+      status.classList.toggle('err', !st.ok);
+    } catch {
+      if (statusFor === kind) status.textContent = '';
+    }
+  };
+  prov.addEventListener('change', () => {
+    const kind = prov.value as ProviderKind;
+    settings = { ...settings, provider: kind };
+    syncAll();
+    void save({ provider: kind });
+  });
+  model.addEventListener('change', () => {
+    const kind = settings.provider;
+    settings = { ...settings, models: { ...settings.models, [kind]: model.value } };
+    void save({ models: { [kind]: model.value } } as DeepPartial<Settings>);
+  });
+  $('ess-brain-more').addEventListener('click', () => {
+    showPage('model');
+    const r = rowApi.get(settings.provider);
+    r?.open();
+    requestAnimationFrame(() => r?.el.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' }));
+  });
+  let lastProvider = '';
+  syncers.push(() => {
+    if (!isFocused(prov)) prov.value = settings.provider;
+    fillModels();
+    if (settings.provider !== lastProvider) {
+      lastProvider = settings.provider;
+      void loadModels(settings.provider);
+      void refreshStatus();
+    }
+  });
+  window.addEventListener('focus', () => void refreshStatus());
+
+  /* voice: on / off + which voice (mirrors voice & listening) */
+  const on = $('ess-voice-on');
+  const voice = $<HTMLSelectElement>('ess-voice');
+  const voiceRow = $('ess-voice-row');
+  const voiceHint = $('ess-voice-hint');
+  const full = $<HTMLSelectElement>('tts-voice-select');
+  try {
+    const saved = localStorage.getItem('lastVoiceProvider') as TtsProvider | null;
+    if (saved && saved !== 'off') lastVoiceProvider = saved;
+  } catch {}
+  on.addEventListener('click', () => {
+    const tts = settings.speech.tts;
+    const next: TtsProvider = tts.provider === 'off' ? lastVoiceProvider : 'off';
+    settings = { ...settings, speech: { ...settings.speech, tts: { ...tts, provider: next } } };
+    syncAll();
+    void save({ speech: { tts: { provider: next } } });
+  });
+  voice.addEventListener('change', () => {
+    settings = { ...settings, speech: { ...settings.speech, tts: { ...settings.speech.tts, voice: voice.value } } };
+    syncAll();
+    void save({ speech: { tts: { voice: voice.value } } });
+  });
+  $('ess-voice-test').addEventListener('click', async () => {
+    await flushPending();
+    let label = 'speaking…';
+    try {
+      await api.testSpeak();
+    } catch {
+      label = 'could not speak';
+    }
+    flash($('ess-voice-test'), label);
+  });
+  const syncVoice = () => {
+    const p = settings.speech.tts.provider;
+    if (p !== 'off') {
+      lastVoiceProvider = p;
+      try {
+        localStorage.setItem('lastVoiceProvider', p);
+      } catch {}
+    }
+    on.setAttribute('aria-checked', String(p !== 'off'));
+    voiceRow.hidden = p === 'off';
+    const listed = p === 'system' || p === 'openai' || p === 'kokoro';
+    voice.hidden = !listed;
+    voiceHint.hidden = listed;
+    if (!listed) voiceHint.textContent = `${p} voice: ${settings.speech.tts.voice || 'not set'} · change it in voice & listening`;
+    if (listed && !isFocused(voice)) {
+      voice.replaceChildren(...[...full.options].map((o) => h('option', { value: o.value, text: o.text })));
+      voice.value = full.value;
+    }
+  };
+  syncers.push(syncVoice);
+  if ('speechSynthesis' in window) speechSynthesis.addEventListener('voiceschanged', () => setTimeout(syncVoice, 0));
 }
 
 function initFloat(): void {
@@ -471,7 +760,7 @@ function buildProviderRow(kind: ProviderKind, index: number): HTMLElement {
     try {
       const r = await api.providerTest(kind);
       result.className = r.ok ? 'result' : 'result err';
-      result.textContent = r.ok ? `ok · ${r.latencyMs ?? '—'} ms` : r.message;
+      result.textContent = r.ok ? `ok · ${r.latencyMs ?? '?'} ms` : r.message;
     } catch (e) {
       result.className = 'result err';
       result.textContent = e instanceof Error ? e.message : 'test failed';
@@ -547,8 +836,9 @@ function initModel(): void {
 /* ───────────── voice ───────────── */
 
 const STT_DEFAULT_MODEL: Record<SttProvider, string> = {
-  'on-device': 'Xenova/whisper-base.en',
-  openai: 'gpt-transcribe',
+  'on-device': DEFAULT_SETTINGS.speech.stt.model,
+  openai: 'gpt-live-transcribe',
+  deepgram: 'nova-3',
   groq: 'whisper-large-v3-turbo',
   gemini: 'gemini-3.8-flash',
   local: 'whisper-1',
@@ -582,17 +872,20 @@ function initVoice(): void {
   revealButtons(document);
 
   bindSelect(ttsProvider, () => tts().provider, (v) => ({
-    speech: { tts: { provider: v as TtsProvider, voice: v === 'openai' ? 'alloy' : '' } },
+    speech: { tts: { provider: v as TtsProvider, voice: v === 'openai' ? 'coral' : v === 'kokoro' ? 'af_heart' : '' } },
   }));
 
   const voiceSelect = $<HTMLSelectElement>('tts-voice-select');
   const voiceInput = $<HTMLInputElement>('tts-voice-input');
   const fillVoices = () => {
     const p = tts().provider;
-    if (p !== 'system' && p !== 'openai') return;
+    if (p !== 'system' && p !== 'openai' && p !== 'kokoro') return;
     const cur = tts().voice;
     voiceSelect.replaceChildren();
-    if (p === 'system') {
+    if (p === 'kokoro') {
+      for (const v of KOKORO_VOICES) voiceSelect.append(h('option', { value: v.id, text: v.label }));
+      if (cur && !KOKORO_VOICES.some((v) => v.id === cur)) voiceSelect.append(h('option', { value: cur, text: cur }));
+    } else if (p === 'system') {
       voiceSelect.append(h('option', { value: '', text: 'default voice' }));
       const vs = ('speechSynthesis' in window ? speechSynthesis.getVoices() : []).slice().sort((a, b) => a.name.localeCompare(b.name));
       for (const v of vs) voiceSelect.append(h('option', { value: v.name, text: `${v.name.toLowerCase()} · ${v.lang}` }));
@@ -601,7 +894,7 @@ function initVoice(): void {
       for (const v of OPENAI_VOICES) voiceSelect.append(h('option', { value: v, text: v }));
       if (cur && !OPENAI_VOICES.includes(cur)) voiceSelect.append(h('option', { value: cur, text: cur }));
     }
-    if (!isFocused(voiceSelect)) voiceSelect.value = cur || (p === 'openai' ? 'alloy' : '');
+    if (!isFocused(voiceSelect)) voiceSelect.value = cur || (p === 'openai' ? 'alloy' : p === 'kokoro' ? 'af_heart' : '');
   };
   voiceSelect.addEventListener('change', () => void save({ speech: { tts: { voice: voiceSelect.value } } }));
   if ('speechSynthesis' in window) speechSynthesis.addEventListener('voiceschanged', fillVoices);
@@ -624,8 +917,9 @@ function initVoice(): void {
     const sp = stt().provider;
     const tp = tts().provider;
     const hints: Record<SttProvider, string> = {
-      'on-device': 'free, private, downloads ~150mb once',
-      openai: 'audio is sent to openai',
+      'on-device': 'free and private. runs on this computer (downloads once). no key needed',
+      openai: 'streams your voice to openai while you talk: the transcript is ready right after you let go. uses your openai key',
+      deepgram: 'streams your voice to deepgram while you talk (~0.3 s after you let go). needs a deepgram key (console.deepgram.com)',
       groq: 'audio is sent to groq',
       gemini: 'audio is sent to google',
       local: 'audio goes to your own server',
@@ -639,7 +933,7 @@ function initVoice(): void {
     voiceInput.hidden = tp !== 'elevenlabs';
     $('tts-voice-label').setAttribute('for', tp === 'elevenlabs' ? 'tts-voice-input' : 'tts-voice-select');
     document.querySelector<HTMLElement>('[data-tts=speed]')!.hidden = tp === 'off';
-    document.querySelector<HTMLElement>('[data-tts=key]')!.hidden = tp === 'system' || tp === 'off';
+    document.querySelector<HTMLElement>('[data-tts=key]')!.hidden = tp === 'system' || tp === 'kokoro' || tp === 'off';
     document.querySelector<HTMLElement>('[data-tts=test]')!.hidden = tp === 'off';
     fillVoices();
   };
@@ -904,8 +1198,8 @@ function initHotkeyStatus(): void {
     if (st.backend === 'none') {
       box.append(state('not listening', true), h('span', { class: 'muted', text: 'restart clickity to try again' }), restart());
     } else if (st.backend === 'globalShortcut') {
-      if (mac && !st.accessibility) box.append(state('needs accessibility — grant, then restart clickity', true), grantAx(), restart());
-      else if (mac) box.append(state('accessibility granted — restart clickity to start listening', true), restart());
+      if (mac && !st.accessibility) box.append(state('needs accessibility: grant, then restart clickity', true), grantAx(), restart());
+      else if (mac) box.append(state('accessibility granted: restart clickity to start listening', true), restart());
       else box.append(state('listening'), h('span', { class: 'muted', text: 'basic mode: chords with a letter key, tap to toggle' }));
     } else if (mac && st.usesFn && st.fn === 'no-permission') {
       box.append(
@@ -1013,7 +1307,7 @@ function initAgentMode(): void {
   const stepsRow = $('agent-steps-row');
   const HINTS: Record<Mode, string> = {
     off: 'clickity only points; it never clicks or types.',
-    ask: 'ask it to do something — it shows the steps and waits for enter. esc stops it.',
+    ask: 'ask it to do something: it shows the steps and waits for enter. esc stops it.',
     auto: 'it clicks and types right away. esc stops it. it still never deletes, sends or buys unless you asked.',
   };
   const sync = () => {
@@ -1081,7 +1375,7 @@ function initShowCompanion(): void {
   const HINTS: Record<Show, string> = {
     always: 'the companion always sits by your cursor.',
     active: 'hidden until you talk to it; it fades in while it listens, thinks, speaks or points.',
-    never: 'no companion — replies still open at your cursor, and pointing shows just a ring and a label.',
+    never: 'no companion: replies still open at your cursor, and pointing shows just a ring and a label.',
   };
   const sync = () => {
     const m = settings.companion.show;
@@ -1174,7 +1468,7 @@ function permRows(container: HTMLElement): () => void {
       container.append(
         h('div', { class: 'row' }, h('span', { class: 'row-label', text: 'heads up' }), h('div', { class: 'row-value' }, h('p', {
           class: 'perm-note',
-          text: "you're running clickity from a terminal (npm run dev), so macos asks on behalf of that terminal — turn the switches on for terminal, iterm or vs code, not clickity. the installed app shows up as itself.",
+          text: "you're running clickity from a terminal (npm run dev), so macos asks on behalf of that terminal, turn the switches on for terminal, iterm or vs code, not clickity. the installed app shows up as itself.",
         }))),
       );
     }
@@ -1260,7 +1554,7 @@ function terminalFixRow(): HTMLElement {
       { class: 'row-value' },
       h('span', {
         class: 'muted',
-        text: 'paste this in terminal. it clears what makes macos ignore your switches, then reopens clickity — grant each permission when macos asks, then restart clickity once. (macos only lets you grant permissions in system settings, never from the terminal.) ',
+        text: 'paste this in terminal. it clears what makes macos ignore your switches, then reopens clickity, grant each permission when macos asks, then restart clickity once. (macos only lets you grant permissions in system settings, never from the terminal.) ',
       }),
       h('div', { class: 'code' }, h('code', { text: TERMINAL_FIX }), copy),
     ),
@@ -1350,11 +1644,11 @@ function renderUpdate(u: UpdateState): void {
     pill.classList.remove('busy', 'err');
     pill.title =
       u.status === 'unsupported'
-        ? `${u.error ?? 'updates are off here'} — running from source? update with git pull`
+        ? `${u.error ?? 'updates are off here'}. running from source? update with git pull`
         : u.status === 'error'
-          ? `couldn't check for updates: ${u.error ?? 'offline?'} — click to try again`
+          ? `couldn't check for updates: ${u.error ?? 'offline?'}. click to try again`
           : 'click to check for updates';
-    pill.setAttribute('aria-label', `clickity ${text} — check for updates`);
+    pill.setAttribute('aria-label', `clickity ${text}, check for updates`);
   } else {
     // "update to v1.0.42"; the " to v…" part folds away when the top bar is tight
     const [head, tail] = u.status === 'available' ? ['update', ` to v${u.latest}`] : [text, ''];
@@ -1393,7 +1687,7 @@ function renderUpdate(u: UpdateState): void {
     ok.addEventListener('click', () => void api.dismissUpdateNote());
     const mac = platform === 'darwin';
     note.replaceChildren(
-      h('span', {}, 'updated to ', h('b', { class: 'tnum', text: `v${u.current}` }), mac ? ' — if keys or the mic stop working, reset permissions.' : '.'),
+      h('span', {}, 'updated to ', h('b', { class: 'tnum', text: `v${u.current}` }), mac ? '. if keys or the mic stop working, reset permissions.' : '.'),
       ...(mac ? [reset, ok] : [ok]),
     );
   }
@@ -1482,53 +1776,59 @@ function initOnboarding(): void {
   let removePerm: (() => void) | null = null;
 
   const choose = (kind: ProviderKind) => {
-    const r = rowApi.get(kind);
-    r?.open();
     if (settings.provider !== kind) {
       settings = { ...settings, provider: kind };
       syncAll();
       void save({ provider: kind });
     }
     go(1);
-    setTimeout(() => r?.el.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' }), 60);
   };
+  // the permissions step only has something to grant on macOS
+  const steps = () => (platform === 'darwin' ? [0, 1, 2] : [0, 2]);
+  let heardTimer = 0;
 
   const render = () => {
-    $('ob-step').textContent = `step ${step + 1} of 3`;
+    const list = steps();
+    $('ob-step').textContent = `step ${list.indexOf(step) + 1} of ${list.length}`;
     body.replaceChildren();
     document.querySelector('.ob-hello')?.remove();
+    document.querySelector('.ob-dots')?.remove();
     if (removePerm) {
       permListeners.splice(permListeners.indexOf(removePerm), 1);
       removePerm = null;
     }
     back.hidden = step === 0;
     skip.hidden = step === 2;
-    label('ob-next').textContent = step === 2 ? 'start' : 'next';
+    label('ob-skip').textContent = step === 0 ? 'skip setup' : 'skip';
+    label('ob-next').textContent = step === 2 ? 'done' : 'next';
     if (step === 0) {
       $('ob-title').before(h('p', { class: 'ob-hello', text: nextGreeting('onboard', settings.userName) }));
       $('ob-title').textContent = 'Pick your brain.';
-      $('ob-sub').textContent = 'you can change this any time.';
-      const opt = (name: string, note: string, kind: ProviderKind) => {
-        const b = h('button', { class: 'ob-choice', type: 'button' }, h('b', { text: name }), h('span', { text: note }));
-        b.addEventListener('click', () => choose(kind));
+      $('ob-sub').textContent = 'what clickity thinks with. you can change it any time.';
+      const opt = (name: string, note: string, kind: ProviderKind, group: string) => {
+        const on = PROVIDER_META[settings.provider]?.group === group;
+        const b = h('button', { class: on ? 'ob-choice on' : 'ob-choice', type: 'button', 'aria-pressed': String(on) }, h('b', { text: name }), h('span', { text: note }));
+        b.addEventListener('click', () => choose(PROVIDER_META[settings.provider]?.group === group ? settings.provider : kind));
         return b;
       };
       body.append(
-        opt('a subscription', 'claude, chatgpt or gemini', 'claude-subscription'),
-        opt('an api key', 'anthropic, openai, gemini, openrouter', 'anthropic-api'),
-        opt('a local model', 'ollama, lm studio', 'local'),
+        opt('a subscription', 'claude, chatgpt or gemini', 'claude-subscription', 'subscription'),
+        opt('an api key', 'anthropic, openai, gemini, openrouter', 'anthropic-api', 'api'),
+        opt('a local model', 'ollama, lm studio', 'local', 'local'),
       );
     } else if (step === 1) {
       $('ob-title').textContent = 'A few permissions.';
-      $('ob-sub').textContent = platform === 'darwin' ? 'clickity needs these to hear and see.' : '';
+      $('ob-sub').textContent = 'so clickity can hear you and see what you see.';
       const box = h('div', { class: 'sheet' });
       body.append(box);
       removePerm = permRows(box);
       void pollPerms();
     } else {
       $('ob-title').textContent = 'Say hi.';
-      $('ob-sub').textContent = 'hold the chord, talk, let go.';
-      body.append(h('div', { class: 'ob-chord tnum', text: chordLabel(settings.hotkeys.talk, platform) }));
+      $('ob-sub').textContent = 'hold the keys, say hi, let go.';
+      const chord = h('div', { class: 'ob-chord tnum', text: chordLabel(settings.hotkeys.talk, platform) });
+      const heard = h('p', { class: 'ob-heard', id: 'ob-heard', 'aria-live': 'polite', text: 'waiting for you to try it…' });
+      body.append(h('div', { class: 'ob-test' }, chord, heard));
       const name = h('input', { class: 'ob-name', type: 'text', maxlength: NAME_MAX, placeholder: 'what should i call you? (optional)', 'aria-label': 'your name', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
       name.value = settings.userName ?? '';
       const commitName = () => {
@@ -1539,26 +1839,50 @@ function initOnboarding(): void {
       name.addEventListener('blur', commitName);
       body.append(name);
     }
+    const dots = h('div', { class: 'ob-dots', 'aria-hidden': 'true' });
+    for (const n of list) dots.append(h('i', { class: n === step ? 'on' : '' }));
+    $('ob-body').after(dots);
   };
+  // live test on the last step: the talk chord was heard
+  api.onHotkeyHeard((e) => {
+    if (!dlg.open || step !== 2 || e.which !== 'talk') return;
+    const heard = document.getElementById('ob-heard');
+    if (!heard) return;
+    heard.textContent = 'heard you ✓';
+    heard.classList.remove('on');
+    void heard.offsetWidth;
+    heard.classList.add('on');
+    document.querySelector('.ob-test .ob-chord')?.classList.add('on');
+    window.clearTimeout(heardTimer);
+    heardTimer = window.setTimeout(() => {
+      heard.textContent = 'nice. try it anywhere.';
+      heard.classList.remove('on');
+    }, 4000);
+  });
   const go = (n: number) => {
+    const list = steps();
     const prev = step;
     step = Math.max(0, Math.min(2, n));
-    // the permissions step only has something to grant on macOS
-    if (step === 1 && platform !== 'darwin') step = n >= prev ? 2 : 0;
+    if (!list.includes(step)) step = n >= prev ? 2 : 0;
     render();
   };
-  next.addEventListener('click', async () => {
-    if (step < 2) return go(step + 1);
+  const finish = async () => {
     settings = { ...settings, onboarded: true };
     await save({ onboarded: true });
     dlg.close();
+    showPage('home');
+  };
+  next.addEventListener('click', async () => {
+    if (step < 2) return go(step + 1);
+    await finish();
   });
   back.addEventListener('click', () => go(step - 1));
-  skip.addEventListener('click', () => go(step + 1));
+  skip.addEventListener('click', () => (step === 0 ? void finish() : go(step + 1)));
   // onboarding is a full page now: it closes only via "start" (or by finishing the steps)
   dlg.addEventListener('cancel', (e) => e.preventDefault());
   syncers.push(() => {
-    if (dlg.open && step === 2) render();
+    const chord = document.querySelector('.ob-test .ob-chord');
+    if (dlg.open && step === 2 && chord) chord.textContent = chordLabel(settings.hotkeys.talk, platform);
   });
   (window as any).__openOnboarding = () => {
     go(0);
@@ -1601,12 +1925,14 @@ async function boot(): Promise<void> {
   initVoice();
   initKeys();
   initCompanion();
+  initEssentials();
   // named companions + the notch panel (settings › clickys, settings › companion)
   const clickyCtx = { api, get: () => settings, save, onSync: (f: () => void) => void syncers.push(f) };
   initClickys(clickyCtx);
   initNotchSetting(clickyCtx);
   permRows($('perm-sheet'));
   initOnboarding();
+  initPages();
   initExtras({
     get: () => settings,
     set: (s) => (settings = s),
@@ -1647,9 +1973,4 @@ async function boot(): Promise<void> {
 void boot();
 
 // the chats window can open settings at a section
-api.onGoto((section) => {
-  const target = document.getElementById(section);
-  if (!target) return;
-  target.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
-  target.classList.add('is-in');
-});
+api.onGoto((section) => scrollToId(section));

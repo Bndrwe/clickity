@@ -66,3 +66,25 @@ test('userName: trimmed, single line, at most 40 characters, junk becomes empty'
   assert.equal(run(42), '');
   assert.equal(run(undefined), '');
 });
+
+test('speech upgrade: untouched defaults get the natural voice and fast whisper, choices are kept', async () => {
+  const { upgradeSpeech } = await import('../src/main/settings-validate.ts');
+  const { DEFAULT_SETTINGS } = await import('../src/shared/types.ts');
+  const d = structuredClone(DEFAULT_SETTINGS);
+  const old = structuredClone(DEFAULT_SETTINGS);
+  old.speech = { stt: { provider: 'on-device', model: 'Xenova/whisper-base.en', language: '' }, tts: { provider: 'system', voice: '', rate: 1 }, upgraded: 0 } as typeof old.speech;
+  upgradeSpeech(old, d);
+  assert.equal(old.speech.tts.provider, 'kokoro');
+  assert.equal(old.speech.stt.model, d.speech.stt.model);
+  assert.equal(old.speech.fastReplies, true);
+  assert.equal(old.speech.upgraded, 1);
+  const picked = structuredClone(DEFAULT_SETTINGS);
+  picked.speech = { stt: { provider: 'on-device', model: 'Xenova/whisper-small', language: 'nl' }, tts: { provider: 'system', voice: 'Samantha', rate: 1 }, upgraded: 0 } as typeof picked.speech;
+  upgradeSpeech(picked, d);
+  assert.equal(picked.speech.tts.provider, 'system');
+  assert.equal(picked.speech.stt.model, 'Xenova/whisper-small');
+  // runs once
+  picked.speech.tts.voice = '';
+  upgradeSpeech(picked, d);
+  assert.equal(picked.speech.tts.provider, 'system');
+});

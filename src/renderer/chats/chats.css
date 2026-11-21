@@ -337,9 +337,9 @@ kbd {
 /* .msg entrance is animated with anime.js (motion.ts) */
 .msg.user { align-items: flex-end; }
 .msg.user .bubble {
-  max-width: min(78%, 560px); padding: 11px 16px; border-radius: 18px;
+  max-width: min(78%, 34em); padding: 11px 16px 12px; border-radius: 16px;
   background: var(--surface-2); border: 1px solid var(--line);
-  color: var(--text); font-size: 15.5px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere;
+  color: var(--text); font-size: 15px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .msg-atts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .msg-att { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: rgba(255, 255, 255, 0.6); padding: 3px 8px; border-radius: 8px; background: rgba(255, 255, 255, 0.05); }
@@ -354,7 +354,7 @@ kbd {
 .avatar .mark { filter: drop-shadow(0 0 6px rgba(140, 190, 230, 0.4)); }
 .msg.assistant .col { flex: 1; min-width: 0; }
 .msg.assistant .meta { padding: 0; margin-top: 10px; }
-.body { color: var(--text-2); font-size: 15.5px; line-height: 1.65; overflow-wrap: anywhere; }
+.body { color: var(--text-2); font-size: 15px; line-height: 1.6; overflow-wrap: anywhere; max-width: 40em; }
 .body > :first-child { margin-top: 0; }
 .body > :last-child { margin-bottom: 0; }
 .body p { margin: 0 0 0.75em; }

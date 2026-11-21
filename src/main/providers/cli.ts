@@ -233,7 +233,7 @@ export function quoteCmdArg(a: string): string {
   return out + '\\'.repeat(slashes * 2) + '"';
 }
 
-function spawnOpts(bin: string, args: string[], base: SpawnOptions): { cmd: string; args: string[]; opts: SpawnOptions } {
+export function spawnOpts(bin: string, args: string[], base: SpawnOptions): { cmd: string; args: string[]; opts: SpawnOptions } {
   if (needsShell(bin)) {
     const line = [quoteCmdArg(bin), ...args.map(quoteCmdArg)].join(' ');
     return { cmd: line, args: [], opts: { ...base, shell: true, windowsHide: true } };

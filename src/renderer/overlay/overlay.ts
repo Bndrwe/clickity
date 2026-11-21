@@ -1,10 +1,11 @@
 // Overlay renderer: the cursor companion, reply bubble, pointing flight, mic capture and speech playback.
 // Talks to main only through window.overlay (see src/shared/ipc.ts).
 import type { OverlayApi } from '../../shared/ipc';
-import type { CompanionPhase, InkCommand, OverlayBusy, OverlayChoice, OverlayConfig, OverlayPoint, OverlayState, PttStopRequest, SpeakCommand } from '../../shared/types';
-import { MicRecorder, encodeWav, peakLevel, resampleTo16k } from './audio';
+import type { CompanionPhase, InkCommand, OverlayBusy, OverlayChoice, OverlayConfig, OverlayPoint, OverlayState, PttStartRequest, PttStopRequest, SpeakCommand } from '../../shared/types';
+import { MicRecorder, Resampler16k, encodeWav, peakLevel, resampleTo16k, toInt16 } from './audio';
 import { Spring2D, clamp, ease, spring } from './motion';
-import { Speaker } from './speech';
+import { Speaker, kokoro } from './speech';
+import { IncrementalStt } from './stt-incremental';
 import { createOverlayVisuals } from './visuals';
 import { ModelLoadError, localSttStatus, onLocalSttStatus, preloadLocalModel, transcribeLocal, type LocalSttStatus } from './stt-local';
 // cue pill, highlights, captions, walkthrough clicks, hands-free mic (self-contained)
@@ -76,7 +77,8 @@ const BASE_TILT = -28; // degrees: arrow leans like a cursor, tip up-left
 type Mode = 'follow' | 'flying' | 'pointing' | 'returning';
 let mode: Mode = 'follow';
 
-const follow = new Spring2D(16);
+// a touch under critical damping: alive (about 1% overshoot) but never laggy
+const follow = new Spring2D(20, 0.82);
 const bubbleSpring = new Spring2D(22);
 let posX = 0;
 let posY = 0;
@@ -172,11 +174,15 @@ new ResizeObserver((entries) => {
 
 /* ───────── audio ───────── */
 const mic = new MicRecorder();
-const speaker = new Speaker(() => {
-  api.speechDone();
+const speaker = new Speaker((utt) => {
+  api.speechDone(utt);
   scheduleAutoReturn();
   kick();
-});
+}, (t) => api.speechTiming(t));
+kokoro.onStatus = (st) => {
+  const note = st.state === 'downloading' ? `downloading ${st.progress ?? 0}%` : st.state === 'ready' ? `ready (${st.device ?? '?'})` : st.state === 'error' ? `error: ${st.message ?? ''}` : st.state;
+  api.speechTiming({ kind: 'kokoro', note });
+};
 const bands = new Float32Array(waveBars.length);
 const smoothBands = new Float32Array(waveBars.length);
 let speakLevel = 0;
@@ -282,18 +288,32 @@ function frame(now: number): void {
     pulse = 1 + speakLevel * 0.14;
   } else speakLevel = 0;
 
-  companionEl.style.transform = `translate3d(${posX.toFixed(2)}px, ${posY.toFixed(2)}px, 0)`;
+  // snap to device pixels so the arrow stays crisp at rest (sub-pixel only while it moves)
+  const dpr = window.devicePixelRatio || 1;
+  const snapPx = (v: number) => (Math.abs(velX) + Math.abs(velY) < 30 ? Math.round(v * dpr) / dpr : v);
+  companionEl.style.transform = `translate3d(${snapPx(posX).toFixed(2)}px, ${snapPx(posY).toFixed(2)}px, 0)`;
   bodyEl.style.transform = `translate3d(0, ${bob.toFixed(2)}px, 0) rotate(${angle.toFixed(2)}deg)`;
   arrowEl.style.transform = pulse === 1 ? '' : `scale(${pulse.toFixed(3)})`;
   const lift = bobAmt ? (bob / bobAmt + 1) / 2 : 0.5; // 0 = low, 1 = high
   shadowEl.style.transform = `scale(${(1.04 - lift * 0.12).toFixed(3)})`;
   shadowEl.style.opacity = (0.95 - lift * 0.25).toFixed(3);
 
-  if (phase === 'listening' && mic.active) {
-    mic.bands(bands);
-    for (let i = 0; i < waveBars.length; i++) {
-      smoothBands[i] = smoothBands[i]! + (bands[i]! - smoothBands[i]!) * (1 - Math.exp(-dt * 20));
-      waveBars[i]!.style.transform = `scaleY(${(0.18 + smoothBands[i]! * 0.82).toFixed(3)})`;
+  if (phase === 'listening') {
+    if (mic.active) mic.bands(bands);
+    else bands.fill(0);
+    const n = waveBars.length;
+    // fast attack, slower release: follows the voice without jitter
+    const up = 1 - Math.exp(-dt * 28);
+    const down = 1 - Math.exp(-dt * 9);
+    for (let i = 0; i < n; i++) {
+      // centre bars carry the most; the edges taper like a soft blob
+      const env = 0.55 + 0.45 * Math.sin(((i + 0.5) / n) * Math.PI);
+      const v = Math.min(1, bands[i]! * 1.15) * env;
+      const cur = smoothBands[i]!;
+      smoothBands[i] = cur + (v - cur) * (v > cur ? up : down);
+      // a slow idle breath so silence still looks alive
+      const idle = reducedMotion ? 0 : 0.05 * (1 + Math.sin(t * 3.2 + i * 0.9));
+      waveBars[i]!.style.transform = `scaleY(${(0.24 + Math.max(smoothBands[i]!, idle) * 0.76).toFixed(3)})`;
     }
   }
 
@@ -390,6 +410,11 @@ function clickAt(p: OverlayPoint): void {
   ripple(p.x, p.y, true);
   if (!reducedMotion) {
     arrowEl.animate([{ scale: '1' }, { scale: '0.82' }, { scale: '1' }], { duration: 260, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' });
+    // the mark's click ticks flick out once
+    companionEl.classList.remove('tick');
+    void companionEl.offsetWidth;
+    companionEl.classList.add('tick');
+    window.setTimeout(() => companionEl.classList.remove('tick'), 600);
   }
   kick();
 }
@@ -508,27 +533,84 @@ function scheduleAutoReturn(): void {
 }
 
 /* ───────── bubble content ───────── */
+/** reply text column: ~34ch of Inter 15px (keep in sync with --reply-w in overlay.css) */
+const REPLY_MAX_W = 300;
+/** six lines, then the oldest scroll away under a soft mask */
+const REPLY_MAX_H = 15 * 1.5 * 6;
+const measureCtx = document.createElement('canvas').getContext('2d');
+const measurer = document.createElement('div');
+measurer.className = 'reply-measure';
+measurer.setAttribute('aria-hidden', 'true');
+document.body.appendChild(measurer);
+let replyW = 0;
+
+/** Size the reply column for `text` up front, so streaming words never push the layout around:
+ *  the width only grows (smoothly) while one line fills, the height eases to each new line. */
+function sizeReply(text: string): void {
+  if (!text) {
+    replyW = 0;
+    replyTextEl.style.width = '';
+    replyEl.style.height = '';
+    return;
+  }
+  let w = REPLY_MAX_W;
+  if (measureCtx) {
+    measureCtx.font = getComputedStyle(replyTextEl).font;
+    let longest = 0;
+    for (const line of text.split('\n')) longest = Math.max(longest, measureCtx.measureText(line).width);
+    w = Math.min(REPLY_MAX_W, Math.ceil(longest) + 2);
+  }
+  replyW = Math.max(replyW, w);
+  measurer.style.width = `${replyW}px`;
+  measurer.textContent = text;
+  const h = measurer.offsetHeight;
+  replyTextEl.style.width = `${replyW}px`;
+  replyEl.style.height = `${Math.min(h, REPLY_MAX_H)}px`;
+  replyEl.classList.toggle('is-clipped', h > REPLY_MAX_H + 1);
+}
+
+/** append new text word by word: each word fades in a beat after the one before */
+function appendWords(text: string): void {
+  const parts = text.split(/(\s+)/);
+  let i = 0;
+  const frag = document.createDocumentFragment();
+  for (const part of parts) {
+    if (!part) continue;
+    if (/^\s+$/.test(part)) {
+      frag.appendChild(document.createTextNode(part));
+      continue;
+    }
+    const span = document.createElement('span');
+    span.textContent = part;
+    if (i) span.style.animationDelay = `${Math.min(i, 10) * 32}ms`;
+    i++;
+    frag.appendChild(span);
+  }
+  replyTextEl.appendChild(frag);
+}
+
 function setReplyText(text: string): void {
   if (text === shownReply) return;
   if (shownReply && text.startsWith(shownReply)) {
-    const span = document.createElement('span');
-    span.textContent = text.slice(shownReply.length);
-    replyTextEl.appendChild(span);
+    appendWords(text.slice(shownReply.length));
   } else {
     // shrinking (a partial tag got hidden) only trims: no fade-in replay, so it doesn't flicker
     const trimOnly = !!text && shownReply.startsWith(text);
     replyTextEl.textContent = '';
+    if (!trimOnly) replyW = 0;
     if (text) {
-      const span = document.createElement('span');
-      span.textContent = text;
-      if (trimOnly) span.className = 'still';
-      replyTextEl.appendChild(span);
+      if (trimOnly) {
+        const span = document.createElement('span');
+        span.textContent = text;
+        span.className = 'still';
+        replyTextEl.appendChild(span);
+      } else appendWords(text);
     }
   }
   shownReply = text;
+  sizeReply(text);
   // keep the latest line in view
   replyEl.scrollTop = replyEl.scrollHeight;
-  replyEl.classList.toggle('is-clipped', replyEl.scrollHeight > replyEl.clientHeight + 1);
 }
 
 function renderBubble(): void {
@@ -542,14 +624,29 @@ function renderBubble(): void {
   // agent mode lines show even with the reply bubble off: they're how the user stays in control
   const wantConfirm = !!confirmText && phase !== 'idle' && phase !== 'error' && phase !== 'listening';
   const wantStep = !!stepText && (phase === 'thinking' || phase === 'speaking' || phase === 'acting');
+  // status lines are shown even with the reply bubble turned off: they explain why nothing happens
+  const note = phase === 'listening' || phase === 'transcribing' ? localNote || serverNote : phase !== 'idle' && phase !== 'error' ? serverNote : stoppedReply && wantReply ? 'stopped' : '';
+  const wantNote = !!note;
+  // busy: a quiet "esc to stop" under whatever the bubble shows; a paused agent run always shows
+  const paused = busy?.mode === 'paused';
+  const wantStop = !!busy && phase !== 'idle' && phase !== 'error' && !wantConfirm && !wantChoice && !typeOpen && (paused || wantTranscript || wantReply || wantNote || wantStep);
+  const want = isError || wantTranscript || wantReply || wantNote || wantConfirm || wantStep || wantChoice || wantStop;
+  if (want) {
+    clearTimeout(hideTimer);
+    hideTimer = 0;
+  } else if (bubbleIn) {
+    // Going away: fade out exactly as it is (content frozen), a beat later in case the next
+    // phase brings it straight back (quick phase changes never blink).
+    if (!hideTimer) hideTimer = window.setTimeout(hideBubbleNow, hideNow ? 0 : 140);
+    hideNow = false;
+    kick();
+    return;
+  }
   confirmTextEl.textContent = wantConfirm ? confirmText : '';
   stepEl.textContent = wantStep ? stepText : '';
   bubbleEl.classList.toggle('has-confirm', wantConfirm);
   bubbleEl.classList.toggle('has-step', wantStep);
   confirmEl.setAttribute('aria-hidden', String(!wantConfirm));
-  // status lines are shown even with the reply bubble turned off: they explain why nothing happens
-  const note = phase === 'listening' || phase === 'transcribing' ? localNote || serverNote : phase !== 'idle' && phase !== 'error' ? serverNote : stoppedReply && wantReply ? 'stopped' : '';
-  const wantNote = !!note;
   noteEl.textContent = note;
   bubbleEl.classList.toggle('has-note', wantNote);
 
@@ -578,32 +675,49 @@ function renderBubble(): void {
   const wantReplyBtn = wantReply && !wantChoice && !wantConfirm && !typeOpen && (phase === 'speaking' || lingering) && !isError;
   bubbleEl.classList.toggle('has-reply-btn', wantReplyBtn);
 
-  // busy: a quiet "esc to stop" under whatever the bubble shows; a paused agent run always shows
-  const paused = busy?.mode === 'paused';
-  const wantStop = !!busy && phase !== 'idle' && phase !== 'error' && !wantConfirm && !wantChoice && !typeOpen && (paused || wantTranscript || wantReply || wantNote || wantStep);
   if (wantStop && busy) {
     stopHintEl.textContent = busy.hint;
     stopBtnText.textContent = busy.mode === 'pause' ? 'pause' : 'stop';
     stopBtn.setAttribute('aria-label', busy.mode === 'pause' ? `pause (${busy.key})` : `stop (${busy.key})`);
+    stopBtn.title = stopBtn.getAttribute('aria-label') ?? 'stop';
   }
   bubbleEl.classList.toggle('has-stop', wantStop);
   bubbleEl.classList.toggle('is-paused', wantStop && paused);
 
-  const want = isError || wantTranscript || wantReply || wantNote || wantConfirm || wantStep || wantChoice || wantStop;
-  if (want !== bubbleIn) {
-    bubbleIn = want;
-    if (want) bubbleSnap = true;
-    bubbleEl.classList.toggle('is-in', want);
-    api.bubbleVisible(want); // while a finished reply lingers, the stop key (esc) dismisses it
-    if (!want) {
-      transcriptOpen = false;
-      transcriptWrap.classList.remove('is-open');
-      bubbleAnchor = null; // next turn pins afresh
-      visuals.bubbleGone();
-      if (drag?.which === 'bubble') drag = null;
-      setHoverInteractive(false);
-    }
+  if (want && !bubbleIn) {
+    bubbleIn = true;
+    bubbleSnap = true;
+    clearTimeout(fadeTimer);
+    bubbleEl.classList.add('is-in');
+    api.bubbleVisible(true); // while a finished reply lingers, the stop key (esc) dismisses it
   }
+  kick();
+}
+
+let hideTimer = 0;
+let fadeTimer = 0;
+/** the user closed it: no grace period */
+let hideNow = false;
+function hideBubbleNow(): void {
+  hideTimer = 0;
+  if (!bubbleIn) return;
+  bubbleIn = false;
+  bubbleEl.classList.remove('is-in');
+  api.bubbleVisible(false);
+  bubbleAnchor = null; // next turn pins afresh
+  visuals.bubbleGone();
+  if (drag?.which === 'bubble') drag = null;
+  setHoverInteractive(false);
+  clearTimeout(fadeTimer);
+  // once it has faded, bring the (invisible) content up to date and drop the old words
+  fadeTimer = window.setTimeout(() => {
+    if (bubbleIn) return;
+    clearTimeout(transcriptTimer);
+    transcriptOpen = false;
+    transcriptWrap.classList.remove('is-open');
+    setReplyText('');
+    renderBubble();
+  }, 600);
   kick();
 }
 
@@ -629,7 +743,8 @@ function onState(s: OverlayState): void {
   if (phase === 'listening') {
     // new turn: clear the old reply, head home if we were pointing
     reply = '';
-    setReplyText('');
+    // a lingering reply fades out with its words; the fade's cleanup clears them
+    if (!bubbleIn) setReplyText('');
     returnToCursor();
   } else if (s.reply !== undefined || phase !== 'idle') {
     reply = s.reply ?? (phase === 'idle' ? reply : '');
@@ -646,7 +761,9 @@ function onState(s: OverlayState): void {
   } else errorText = '';
 
   clearTimeout(lingerTimer);
-  if (phase === 'idle' && prev !== 'idle' && reply) {
+  if (phase === 'idle' && reply && s.hold) {
+    startLinger(Infinity); // a lesson step: stays until "next", esc or the ×
+  } else if (phase === 'idle' && prev !== 'idle' && reply) {
     startLinger();
   } else if (phase !== 'idle') lingering = false;
 
@@ -656,7 +773,7 @@ function onState(s: OverlayState): void {
   );
   if (phase !== 'listening') {
     smoothBands.fill(0);
-    for (const b of waveBars) b.style.transform = 'scaleY(0.18)';
+    for (const b of waveBars) b.style.transform = 'scaleY(0.24)';
   }
   if (phase !== 'idle' && phase !== 'error') clearTimeout(autoReturnTimer);
   else scheduleAutoReturn();
@@ -889,11 +1006,54 @@ function errMessage(e: unknown): string {
   return (m || 'recording failed').toLowerCase();
 }
 
-function onPttStart(): void {
+/* streaming / incremental transcription while the key is held */
+let streamOut: { resampler: Resampler16k | null; batch: Int16Array[]; samples: number } | null = null;
+let incremental: IncrementalStt | null = null;
+let incrementalResampler: Resampler16k | null = null;
+/** ~100 ms batches over IPC */
+const STREAM_BATCH = 1600;
+
+function flushStream(): void {
+  if (!streamOut || !streamOut.samples) return;
+  const out = new Int16Array(streamOut.samples);
+  let o = 0;
+  for (const b of streamOut.batch) {
+    out.set(b, o);
+    o += b.length;
+  }
+  streamOut.batch = [];
+  streamOut.samples = 0;
+  api.pttAudio(out.buffer);
+}
+
+function onMicChunk(block: Float32Array, rate: number): void {
+  if (streamOut) {
+    streamOut.resampler ??= new Resampler16k(rate);
+    const pcm = toInt16(streamOut.resampler.push(block));
+    streamOut.batch.push(pcm);
+    streamOut.samples += pcm.length;
+    if (streamOut.samples >= STREAM_BATCH) flushStream();
+  }
+  if (incremental) {
+    incrementalResampler ??= new Resampler16k(rate);
+    incremental.push(incrementalResampler.push(block));
+  }
+}
+
+function onPttStart(req?: PttStartRequest): void {
+  streamOut = req?.stream ? { resampler: null, batch: [], samples: 0 } : null;
+  incremental?.cancel();
+  incremental = null;
+  incrementalResampler = null;
+  if (req?.incremental && req.stt?.provider === 'on-device' && req.stt.model) {
+    incremental = new IncrementalStt(req.stt.model, req.stt.language || undefined, (m) => log('info', `on-device stt ${m}`));
+  }
+  mic.onChunk = streamOut || incremental ? onMicChunk : null;
   pttStartedAt = performance.now();
   micNote = '';
   const st = config.stt?.provider === 'on-device' ? localSttStatus(config.stt.model) : undefined;
   if (st?.state === 'downloading') modelNote = `downloading the voice model… ${st.progress}%`;
+  if (speaker.active) log('info', 'speech cut (talk key: barge-in)');
   speaker.stop();
   // Start the mic FIRST. Loading/compiling Whisper (wasm) blocks this thread for a while, so
   // kicking it off before getUserMedia resolves delayed recording and lost the first words.
@@ -921,18 +1081,29 @@ async function onPttStop(req: PttStopRequest): Promise<void> {
   let peak: number | undefined;
   try {
     let rec: Awaited<ReturnType<MicRecorder['stop']>>;
+    const streaming = streamOut;
+    const inc = incremental;
     try {
       rec = await mic.stop();
     } catch (e) {
+      streamOut = null;
+      incremental = null;
+      mic.onChunk = null;
+      inc?.cancel();
       api.sendPttResult({ error: errMessage(e), errorKind: 'mic', durationMs });
       return;
     }
+    // the worklet's last block came through onChunk during stop(): send the tail now
+    if (streaming) flushStream();
+    streamOut = null;
+    incremental = null;
+    mic.onChunk = null;
     // a tap shorter than the first worklet/script buffer has no samples yet: that is an accidental
     // press (handled below), not a dead microphone
     if (!rec.pcm.length && durationMs >= 250) {
       const why = rec.contextState === 'suspended' ? 'the audio engine was suspended' : 'no samples arrived';
       log('error', `no audio captured after ${durationMs}ms (${why})`);
-      api.sendPttResult({ error: 'no audio from the microphone — check your input device in sound settings', errorKind: 'mic', durationMs, peak: 0 });
+      api.sendPttResult({ error: 'no audio from the microphone. check your input device in sound settings', errorKind: 'mic', durationMs, peak: 0 });
       return;
     }
     peak = peakLevel(rec.pcm);
@@ -941,6 +1112,22 @@ async function onPttStop(req: PttStopRequest): Promise<void> {
       // accidental tap or pure silence: nothing to transcribe; main explains
       api.sendPttResult({ text: '', durationMs, peak });
       return;
+    }
+    if (streaming && req.stt.provider !== 'on-device') {
+      // main already has every sample (IPC.pttAudio) and is transcribing
+      api.sendPttResult({ streamed: true, durationMs, peak });
+      return;
+    }
+    if (inc && req.stt.provider === 'on-device') {
+      const t0 = performance.now();
+      try {
+        const r = await inc.finish();
+        const done = localSttStatus(req.stt.model);
+        api.sendPttResult({ text: r.text.trim(), durationMs, peak, sttMs: Math.round(performance.now() - t0), sttDevice: r.device ?? (done?.state === 'ready' ? done.device : undefined), chunks: inc.chunks, tailMs: r.tailMs });
+        return;
+      } catch (e) {
+        log('warn', `incremental transcription failed, transcribing the whole recording: ${errMessage(e)}`);
+      }
     }
     const pcm = await resampleTo16k(rec.pcm, rec.sampleRate);
     if (req.stt.provider !== 'on-device') {
@@ -962,7 +1149,7 @@ async function onPttStop(req: PttStopRequest): Promise<void> {
       log('error', `on-device transcription failed: ${reason}`);
       if (e instanceof ModelLoadError) {
         api.sendPttResult({
-          error: `voice model failed to load — check your connection or pick another speech-to-text in settings › voice (${reason})`,
+          error: `voice model failed to load. check your connection or pick another speech-to-text in settings › voice (${reason})`,
           errorKind: 'model',
           durationMs,
           peak,
@@ -1149,6 +1336,7 @@ api.onConfig((c) => {
   if (c.companion.show === 'never' && mode !== 'follow' && currentPoint) pointAt(currentPoint);
   if (ink) inkColors = null;
   schedulePreload();
+  if (c.preloadVoice && kokoro.status.state === 'idle') window.setTimeout(() => kokoro.preload(), 3500);
   renderBubble();
   kick();
 });
@@ -1209,11 +1397,11 @@ function dismissBubble(byClick: boolean): void {
   lingering = false;
   clearTimeout(lingerTimer);
   clearTimeout(errorTimer);
-  setReplyText('');
   visuals.set(null);
   if (drag?.which === 'bubble') drag = null;
-  bubbleAnchor = null;
+  hideNow = true;
   renderBubble();
+  hideNow = false;
   if (!typeOpen) setHoverInteractive(false);
 }
 continueBtn.addEventListener('click', () => api.resume());
@@ -1222,11 +1410,15 @@ replyBtn.addEventListener('click', () => {
   api.openReply();
 });
 
-api.onPttStart(onPttStart);
+api.onPttStart((req) => onPttStart(req));
 api.onPttStop((req) => void onPttStop(req));
 api.onPttCancel(() => {
   pttStartedAt = 0;
   micNote = '';
+  streamOut = null;
+  mic.onChunk = null;
+  incremental?.cancel();
+  incremental = null;
   mic.cancel();
 });
 
@@ -1238,7 +1430,10 @@ api.onSpeak((cmd: SpeakCommand) => {
   speaker.speak(cmd);
   kick();
 });
-api.onStopSpeaking(() => speaker.stop());
+api.onStopSpeaking(() => {
+  if (speaker.active) log('info', 'speech cut (stop)');
+  speaker.stop();
+});
 api.onTextInput(setTypeBox);
 
 root.dataset.phase = phase;

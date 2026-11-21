@@ -187,3 +187,24 @@ export function parseJson(s: string): any {
 export function stripTrailingSlash(u: string): string {
   return u.replace(/\/+$/, '');
 }
+
+const preconnected = new Map<string, number>();
+/**
+ * Open (and keep warm) a TLS connection to `url`'s host while the user is still talking, so the
+ * real request doesn't pay for DNS + TCP + TLS. fetch keeps idle connections for a few seconds
+ * only, so this runs at talk-key down. Never throws.
+ */
+export function preconnect(url: string): void {
+  let origin: string;
+  try {
+    origin = new URL(url).origin;
+  } catch {
+    return;
+  }
+  const last = preconnected.get(origin) ?? 0;
+  if (Date.now() - last < 2000) return;
+  preconnected.set(origin, Date.now());
+  fetch(origin, { method: 'HEAD', signal: AbortSignal.timeout(4000) })
+    .then((r) => r.body?.cancel().catch(() => undefined))
+    .catch(() => undefined);
+}

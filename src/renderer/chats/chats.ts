@@ -656,8 +656,8 @@ function renderUpdate(u: UpdateState): void {
     const label = u.status === 'checking' ? 'checking…' : u.status === 'unsupported' ? `v${u.current} · dev` : `v${u.current}`;
     updatePill.disabled = u.status === 'checking';
     updatePill.classList.remove('busy', 'err');
-    updatePill.title = u.status === 'unsupported' ? `${u.error ?? 'updates are off here'} — running from source? update with git pull` : 'click to check for updates';
-    updatePill.setAttribute('aria-label', `clickity ${label} — check for updates`);
+    updatePill.title = u.status === 'unsupported' ? `${u.error ?? 'updates are off here'}. running from source? update with git pull` : 'click to check for updates';
+    updatePill.setAttribute('aria-label', `clickity ${label}, check for updates`);
     updatePill.replaceChildren(h('span', { text: label }));
     return;
   }

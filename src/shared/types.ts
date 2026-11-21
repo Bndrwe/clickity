@@ -178,37 +178,96 @@ export interface ChatRequest {
   messages: ChatMessage[];
   model: string;
   signal: AbortSignal;
+  /**
+   * The part of `system` that stays the same turn after turn (`system.startsWith(systemStable)`);
+   * the rest is this turn's context (screens, cursor, time, focused app). Anthropic caches the
+   * stable part (cache_control); a persistent Claude Code session is started with it and gets the
+   * rest at the top of each user message.
+   */
+  systemStable?: string;
+  /** a stored chat id: the claude-subscription provider keeps one warm Claude Code process per chat */
+  sessionKey?: string;
+  /** reasoning effort hint for voice turns ('low' = answer quickly) */
+  effort?: 'low' | 'medium' | 'high';
+  /** called with provider-side notes for the latency log ("warm claude session") */
+  onNote?: (note: string) => void;
 }
 
 /* ───────────────────────── speech ───────────────────────── */
 
 /**
- * on-device: whisper running in the overlay renderer via transformers.js (no key, works with subscriptions)
- * openai / groq: whisper over HTTPS (key reused from openai-api or set here)
+ * on-device: whisper running in the overlay (a Web Worker, transformers.js; no key, works with subscriptions)
+ * openai: realtime streaming transcription over a websocket (transcribes while you talk), or
+ *   whisper over HTTPS when `streaming` is false (key reused from openai-api or set here)
+ * deepgram: streaming websocket (nova), transcript ready right after you let go (key here)
+ * groq: whisper-large-v3-turbo over HTTPS, uploaded the instant you let go (~300 ms)
  * gemini: gemini api audio understanding (key reused from gemini-api)
  * local: any OpenAI-compatible /audio/transcriptions server (whisper.cpp, speaches…)
  */
-export type SttProvider = 'on-device' | 'openai' | 'groq' | 'gemini' | 'local';
-export type TtsProvider = 'system' | 'openai' | 'elevenlabs' | 'off';
+export type SttProvider = 'on-device' | 'openai' | 'deepgram' | 'groq' | 'gemini' | 'local';
+/**
+ * kokoro: a free natural on-device voice (Kokoro-82M, runs in the overlay; downloads once)
+ * system: the OS voice (the best installed "premium / enhanced / natural" one is picked)
+ * openai: gpt-4o-mini-tts (streamed) · elevenlabs: eleven_flash_v2_5 (streamed)
+ */
+export type TtsProvider = 'kokoro' | 'system' | 'openai' | 'elevenlabs' | 'off';
 
 export interface SpeechSettings {
   stt: {
     provider: SttProvider;
-    /** on-device: Xenova/whisper-base.en etc; openai: gpt-transcribe; groq: whisper-large-v3-turbo */
+    /** on-device: Xenova/whisper-base.en etc; openai: gpt-live-transcribe; deepgram: nova-3; groq: whisper-large-v3-turbo */
     model: string;
     apiKey?: string; // optional override (else reuse matching provider key)
     baseUrl?: string; // for 'local'
     language?: string; // ISO code or '' for auto
     /** microphone deviceId ('' / undefined = system default); falls back to the default when missing */
     micId?: string;
+    /** openai: stream audio while you talk (realtime websocket). false = upload after you let go. default true */
+    streaming?: boolean;
   };
   tts: {
     provider: TtsProvider;
-    voice: string; // system: voice name ('' = default); openai: 'alloy'…; elevenlabs: voice id
+    voice: string; // kokoro: af_heart…; system: voice name ('' = best installed); openai: 'alloy'…; elevenlabs: voice id
     model?: string; // openai: gpt-4o-mini-tts; elevenlabs: eleven_flash_v2_5
     apiKey?: string; // elevenlabs key, or override for openai
     rate: number; // 0.5 – 2
+    /** openai gpt-4o-mini-tts speaking style */
+    instructions?: string;
   };
+  /**
+   * fast replies: plain voice questions (nothing to click or type) use the provider's fastest
+   * model (haiku / gpt-6 luna / gemini flash-lite) with low effort; agent mode, typed chats and
+   * hard requests keep the chosen model. default true
+   */
+  fastReplies?: boolean;
+  /** settings migrations already applied to speech (1 = natural-voice + fast-whisper defaults) */
+  upgraded?: number;
+}
+
+/** Per-stage timing of one voice turn (ms since the talk key went up; null = stage didn't happen). */
+export interface TurnTiming {
+  turnId: number;
+  at: number; // epoch ms (talk up)
+  heldMs: number;
+  stt: string; // "deepgram (streaming)", "on-device whisper-tiny.en (wasm)"…
+  model: string; // "claude-subscription / haiku (fast)"
+  tts: string;
+  /** key up → audio ready (the overlay finished the recording) */
+  audioReady: number | null;
+  /** key up → transcript */
+  transcript: number | null;
+  /** key up → screenshots ready (captured at talk down: usually 0) */
+  screenshot: number | null;
+  /** key up → model request sent */
+  request: number | null;
+  /** key up → first model token */
+  firstToken: number | null;
+  /** key up → first audio playing */
+  firstAudio: number | null;
+  /** key up → done */
+  done: number | null;
+  /** notes: "persistent claude session (warm)", "screen changed: recaptured"… */
+  notes: string[];
 }
 
 /* ───────────────────────── hotkeys ───────────────────────── */
@@ -388,8 +447,10 @@ export const DEFAULT_SETTINGS: Settings = {
     local: { baseUrl: 'http://localhost:11434/v1' },
   },
   speech: {
-    stt: { provider: 'on-device', model: 'Xenova/whisper-base.en', language: '' },
-    tts: { provider: 'system', voice: '', rate: 1.05 },
+    stt: { provider: 'on-device', model: 'Xenova/whisper-base.en', language: '', streaming: true },
+    tts: { provider: 'kokoro', voice: 'af_heart', rate: 1.05, instructions: '' },
+    fastReplies: true,
+    upgraded: 1,
   },
   hotkeys: {
     talk: ['Control', 'Alt'],
@@ -485,6 +546,8 @@ export interface OverlayState {
   confirmAlways?: boolean;
   /** the user stopped this reply (stop key / button): the bubble keeps the text, marked "stopped" */
   stopped?: boolean;
+  /** idle with a reply: keep it up until the next turn / the × / esc (a lesson step waiting for "next") */
+  hold?: boolean;
 }
 
 /**
@@ -583,6 +646,11 @@ export interface PttResult {
   sttDevice?: string;
   /** what went wrong, when `error` is set: mic = recording, model = voice model load, stt = transcription */
   errorKind?: 'mic' | 'model' | 'stt';
+  /** the audio was streamed to main (IPC.pttAudio) while recording: no wav attached */
+  streamed?: boolean;
+  /** on-device incremental: chunks transcribed during the hold / ms left for the tail */
+  chunks?: number;
+  tailMs?: number;
 }
 
 /**
@@ -592,9 +660,41 @@ export interface PttResult {
  */
 export type InkCommand = 'start' | 'end' | 'clear';
 
-export type SpeakCommand =
+/**
+ * Something for the overlay to say. A reply is spoken sentence by sentence while it streams:
+ * every piece carries the utterance id `utt` and `more: true` until the last one (`mode: 'end'`
+ * closes an utterance without audio). The overlay reports IPC.speechDone when an utterance has
+ * ended and everything queued has played. Pieces without `utt` are one-shot (settings previews).
+ */
+export type SpeakCommand = (
   | { mode: 'system'; text: string; voice: string; rate: number }
-  | { mode: 'audio'; mime: string; data: ArrayBuffer };
+  /** encoded audio (mp3 / wav) */
+  | { mode: 'audio'; mime: string; data: ArrayBuffer }
+  /** raw 16-bit little-endian mono PCM at `sampleRate` (streamed openai / elevenlabs chunks), played gaplessly */
+  | { mode: 'pcm'; sampleRate: number; data: ArrayBuffer; text?: string }
+  /** synthesise on-device with Kokoro (falls back to the best system voice) */
+  | { mode: 'kokoro'; text: string; voice: string; rate: number }
+  /** the utterance is complete */
+  | { mode: 'end' }
+) & { utt?: string; more?: boolean };
+
+/** main → overlay on talk down. */
+export interface PttStartRequest {
+  /** stream 16 kHz PCM to main while recording (IPC.pttAudio) for cloud streaming transcription */
+  stream?: boolean;
+  /** on-device: transcribe finished chunks during the hold so only the tail is left at key up */
+  incremental?: boolean;
+  stt?: SpeechSettings['stt'];
+}
+
+/** overlay → main: one speech pipeline event for the latency breakdown. */
+export interface SpeechTiming {
+  utt?: string;
+  /** 'first-audio': the first sound of an utterance started; 'kokoro': model status */
+  kind: 'first-audio' | 'kokoro' | 'stt-chunk';
+  ms?: number;
+  note?: string;
+}
 
 /** Settings slice the overlay needs to render. */
 export interface OverlayConfig {
@@ -607,6 +707,8 @@ export interface OverlayConfig {
   stt?: SpeechSettings['stt'];
   /** this overlay should preload the on-device model in the background (one overlay does) */
   preloadStt?: boolean;
+  /** this overlay should load the on-device natural voice (Kokoro) in the background */
+  preloadVoice?: boolean;
 }
 
 /* ───────────────────────── chat history ───────────────────────── */

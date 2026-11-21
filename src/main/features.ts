@@ -1,7 +1,7 @@
 // Wiring for dictation / drafting, hands-free, routines, memory, voice previews and the dock:
 // IPC handlers, the extra chord-engine handlers, and startup. index.ts calls these three.
 import { app, ipcMain } from 'electron';
-import { IPC } from '../shared/ipc';
+import { IPC, type LatencyInfo } from '../shared/ipc';
 import type { Settings, TtsProvider } from '../shared/types';
 import { getSettings, onSettingsChanged } from './settings-store';
 import type { HotkeyHandlers } from './chord-engine';
@@ -12,7 +12,8 @@ import { checkRoutinesNow, initRoutines, runRoutineNow, stopRoutines } from './r
 import { clearFacts, listFacts, onFactsChanged, setFacts } from './memory';
 import { routineEnter, routineEscape, walkthroughEnter } from './turn-extras';
 import { synthesize } from './speech/tts';
-import { companionBusy, isListening, onType, runRoutineTurn, runUtterance, stopCurrentTurn, turnActivity } from './conversation';
+import { companionBusy, lessonEnter, isListening, latencySnapshot, onType, runRoutineTurn, runUtterance, stopCurrentTurn, testSpeak, turnActivity } from './conversation';
+import { describeSpeed } from '../shared/speed';
 import { sendToSettings } from './settings-window';
 import { log } from './log';
 
@@ -32,7 +33,7 @@ export function featureHotkeyHandlers(base: { onEnter(): void; onEscape(): void;
     },
     onAlwaysOn: () => toggleHandsFree(),
     onEnter: () => {
-      if (draftEnter() || walkthroughEnter() || routineEnter()) return;
+      if (draftEnter() || walkthroughEnter() || routineEnter() || lessonEnter()) return;
       base.onEnter();
     },
     onEscape: () => {
@@ -57,11 +58,22 @@ export function registerFeatureIpc(): void {
   });
   ipcMain.handle(IPC.voicePreview, async (_e, provider: unknown, voice: unknown) => {
     const p = String(provider) as TtsProvider;
-    if (!['system', 'openai', 'elevenlabs'].includes(p)) return null;
+    if (!['kokoro', 'system', 'openai', 'elevenlabs'].includes(p)) return null;
     const s = getSettings();
     const preview: Settings = { ...s, speech: { ...s.speech, tts: { ...s.speech.tts, provider: p, voice: String(voice ?? '') } } };
-    const name = String(voice || 'the default voice').toLowerCase();
-    return synthesize(`hi, i'm clickity. this is ${name}.`, preview);
+    const name = String(voice || 'the default voice').toLowerCase().replace(/^[ab][fm]_/, '');
+    const line = `hi, i'm clickity. this is ${name}.`;
+    // the natural voice runs in the overlay: say it next to the cursor
+    if (p === 'kokoro') {
+      void testSpeak(preview, line);
+      return null;
+    }
+    return synthesize(line, preview);
+  });
+  ipcMain.handle(IPC.latencyGet, (): LatencyInfo => {
+    const s = getSettings();
+    const { last, kokoro } = latencySnapshot();
+    return { ...describeSpeed(s), last, kokoro: s.speech.tts.provider === 'kokoro' ? kokoro || 'loading' : undefined };
   });
   onFactsChanged((facts) => sendToSettings(IPC.memoryChanged, facts));
 }

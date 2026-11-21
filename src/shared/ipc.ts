@@ -17,6 +17,9 @@ import type {
   ProviderTestResult,
   PttResult,
   PttStopRequest,
+  PttStartRequest,
+  SpeechTiming,
+  TurnTiming,
   Settings,
   SpeakCommand,
   KeyName,
@@ -93,7 +96,7 @@ export const IPC = {
   overlayCursor: 'overlay:cursor', // { x, y } global DIP, ~60 Hz
   overlayState: 'overlay:state', // OverlayState
   overlayPoint: 'overlay:point', // OverlayPoint | null  (local DIP; null = return to cursor)
-  overlayPttStart: 'overlay:ptt-start', // void — start recording mic
+  overlayPttStart: 'overlay:ptt-start', // PttStartRequest | undefined — start recording mic
   overlayPttStop: 'overlay:ptt-stop', // PttStopRequest — stop and reply with IPC.pttResult
   overlayPttCancel: 'overlay:ptt-cancel', // void — stop and discard
   overlaySpeak: 'overlay:speak', // SpeakCommand
@@ -112,7 +115,9 @@ export const IPC = {
 
   /* overlay → main (ipcRenderer.send) */
   pttResult: 'ptt:result', // PttResult
-  speechDone: 'overlay:speech-done', // void — finished playing SpeakCommand (or was stopped)
+  speechDone: 'overlay:speech-done', // string | undefined (utt) — finished playing an utterance (or was stopped)
+  pttAudio: 'ptt:audio', // ArrayBuffer — 16 kHz mono int16 PCM, streamed while recording (PttStartRequest.stream)
+  speechTiming: 'overlay:speech-timing', // SpeechTiming — first audio of an utterance, kokoro status
   textSubmit: 'overlay:text-submit', // string
   textCancel: 'overlay:text-cancel', // void
   overlayReady: 'overlay:ready', // void — renderer loaded, send it config
@@ -159,6 +164,7 @@ export const IPC = {
   memorySet: 'memory:set', // (facts: string[]) => string[] — replace the list (edit / delete)
   memoryClear: 'memory:clear', // () => void — forget everything
   voicePreview: 'speech:preview', // (provider, voice) => SpeakCommand | null — a short line in that voice (settings plays it)
+  latencyGet: 'speech:latency', // () => LatencyInfo — the last voice turn's timing + the current pipeline summary
   routineRun: 'routines:run', // (id) => void — run a routine now
 
   clickysCreate: 'clickys:create', // (description: string) => ClickyCreateResult — settings › clickys › "make a clicky"
@@ -227,7 +233,7 @@ export interface OverlayApi {
   onCursor(cb: (p: { x: number; y: number }) => void): void;
   onState(cb: (s: OverlayState) => void): void;
   onPoint(cb: (p: OverlayPoint | null) => void): void;
-  onPttStart(cb: () => void): void;
+  onPttStart(cb: (req?: PttStartRequest) => void): void;
   onPttStop(cb: (req: PttStopRequest) => void): void;
   onPttCancel(cb: () => void): void;
   onSpeak(cb: (cmd: SpeakCommand) => void): void;
@@ -269,7 +275,10 @@ export interface OverlayApi {
   /** walkthrough: the bubble was clicked */
   walkNext(): void;
   sendPttResult(r: PttResult): void;
-  speechDone(): void;
+  /** streamed recording: 16 kHz mono int16 PCM */
+  pttAudio(pcm: ArrayBuffer): void;
+  speechDone(utt?: string): void;
+  speechTiming(t: SpeechTiming): void;
   submitText(text: string): void;
   cancelText(): void;
   /** while the pointer is over the bubble, let the overlay take clicks (for dragging) */
@@ -279,6 +288,23 @@ export interface OverlayApi {
   log(entry: OverlayLogEntry): void;
   /** status while a ptt result is pending (model download %, loading…) */
   pttProgress(note: string): void;
+}
+
+/** settings › voice "speed" summary + about › diagnostics. */
+export interface LatencyInfo {
+  /** e.g. "streaming transcription · claude haiku · natural voice" */
+  pipeline: string;
+  /** rough expected key-up → first words, ms */
+  estimateMs: number;
+  /** the fastest settings available with the keys already saved (null = already fastest) */
+  fastest: DeepPartial<Settings> | null;
+  /** what "make it fast" would change, in words */
+  fastestNote: string;
+  /** keys that would make it faster ("a deepgram or groq key: transcripts in ~0.3 s") */
+  hints: string[];
+  last: TurnTiming | null;
+  /** on-device natural voice status ("ready", "downloading 42%") */
+  kokoro?: string;
 }
 
 export interface OverlayLogEntry {
@@ -328,6 +354,8 @@ export interface SettingsApi extends UpdateApi {
   onMemoryChanged(cb: (facts: string[]) => void): void;
   /** a short line in this voice (null = nothing to play) */
   voicePreview(provider: string, voice: string): Promise<SpeakCommand | null>;
+  /** settings › voice speed summary and about › diagnostics latency line */
+  latency(): Promise<LatencyInfo>;
   runRoutine(id: string): Promise<void>;
   /** settings › clickys: ask the model for up to 3 clickys that fit the quiz answers */
   suggestClickys(answers: ClickyQuizAnswers): Promise<ClickySuggestion[]>;

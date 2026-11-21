@@ -26,21 +26,23 @@
 <header class="topbar" id="topbar">
   <div class="topbar-inner">
     <a class="wordmark" href="#top" data-scroll="top"><svg class="wm-mark" viewBox="0 0 100 100" width="28" height="28" aria-hidden="true"><polygon points="40.60,38.01 82.41,68.89 50.02,89.13" fill="currentColor" stroke="currentColor" stroke-width="7.75" stroke-linejoin="round"/><g stroke="currentColor" stroke-width="4.26" stroke-linecap="round"><line x1="25.43" y1="25.98" x2="15.85" y2="22.88"/><line x1="29.68" y1="20.53" x2="23.52" y2="10.68"/><line x1="36.43" y1="19.10" x2="37.86" y2="9.13"/></g></svg><span>clickity</span></a>
-    <nav class="nav" aria-label="sections">
-      <a href="#chats" id="open-chats">chats</a>
-      <a href="#clickys" data-scroll="clickys">clickys</a>
-      <a href="#model" data-scroll="model">model</a>
-      <a href="#voice" data-scroll="voice">voice</a>
-      <a href="#keys" data-scroll="keys">keys</a>
+    <nav class="nav" aria-label="settings">
+      <a href="#chats" id="open-chats" title="open your chats">chats</a>
       <details class="nav-more" id="nav-more">
-        <summary>more</summary>
+        <summary title="all settings">more</summary>
         <div class="nav-menu" role="menu">
+          <a href="#top" data-scroll="top" role="menuitem">essentials</a>
+          <a href="#model" data-scroll="model" role="menuitem">brain</a>
+          <a href="#clickys" data-scroll="clickys" role="menuitem">clickys</a>
+          <a href="#voice" data-scroll="voice" role="menuitem">voice &amp; listening</a>
+          <a href="#keys" data-scroll="keys" role="menuitem">shortcuts</a>
           <a href="#companion" data-scroll="companion" role="menuitem">companion</a>
+          <a href="#agent" data-scroll="agent" role="menuitem">agent mode</a>
           <a href="#dictation" data-scroll="dictation" role="menuitem">dictation</a>
           <a href="#memory" data-scroll="memory" role="menuitem">memory</a>
           <a href="#routines" data-scroll="routines" role="menuitem">routines</a>
           <a href="#permissions" data-scroll="permissions" role="menuitem">permissions</a>
-          <a href="#about" data-scroll="about" role="menuitem">about</a>
+          <a href="#about" data-scroll="about" role="menuitem">about &amp; diagnostics</a>
         </div>
       </details>
       <button class="update-pill" id="update-pill" type="button" hidden><i class="update-dot" aria-hidden="true"></i><span>update</span></button>
@@ -50,7 +52,7 @@
 </header>
 
 <main class="column" id="top">
-  <section class="hero">
+  <section class="hero" data-page="home">
     <div class="float-obj" id="float-obj" aria-hidden="true">
       <div class="float-shadow"></div>
       <svg class="float-svg" viewBox="0 0 120 120" width="120" height="120">
@@ -64,7 +66,122 @@
 
   <div class="update-note" id="update-note" role="status" hidden></div>
 
-  <section class="section reveal" id="clickys" aria-labelledby="clickys-h">
+  <section class="section" id="essentials" data-page="home" aria-label="essentials">
+    <div class="sheet ess">
+      <p class="eyebrow group-eyebrow">brain</p>
+      <div class="row">
+        <label class="row-label" for="ess-provider">thinks with</label>
+        <div class="row-value">
+          <select id="ess-provider"></select>
+          <p class="hint" id="ess-brain-status" aria-live="polite"></p>
+        </div>
+      </div>
+      <div class="row">
+        <label class="row-label" for="ess-model">model</label>
+        <div class="row-value">
+          <select id="ess-model"></select>
+          <button class="text-btn" type="button" id="ess-brain-more"><span>keys, sign in &amp; more brains</span></button>
+        </div>
+      </div>
+
+      <p class="eyebrow group-eyebrow">voice</p>
+      <div class="row">
+        <span class="row-label" id="l-ess-voice">speak replies</span>
+        <div class="row-value">
+          <button class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="l-ess-voice" id="ess-voice-on"></button>
+        </div>
+      </div>
+      <div class="row" id="ess-voice-row">
+        <label class="row-label" for="ess-voice">voice</label>
+        <div class="row-value">
+          <div class="field-inline"><select id="ess-voice"></select><button class="btn" type="button" id="ess-voice-test"><span>hear it</span></button></div>
+          <p class="hint" id="ess-voice-hint" hidden></p>
+        </div>
+      </div>
+
+      <p class="eyebrow group-eyebrow">talk</p>
+      <div class="row">
+        <span class="row-label">talk key</span>
+        <div class="row-value">
+          <div class="chord-line">
+            <div class="chord-well tnum" id="chord-talk" aria-live="polite"></div>
+            <button class="btn" type="button" id="rec-talk"><span>record</span></button>
+          </div>
+        </div>
+      </div>
+      <div class="row">
+        <span class="row-label" id="mode-label">mode</span>
+        <div class="row-value">
+          <div class="seg" role="radiogroup" aria-labelledby="mode-label" id="mode-seg">
+            <button type="button" role="radio" data-mode="hold" aria-checked="false">hold to talk</button>
+            <button type="button" role="radio" data-mode="toggle" aria-checked="false">tap to toggle</button>
+          </div>
+        </div>
+      </div>
+      <div class="row">
+        <span class="row-label">try it</span>
+        <div class="row-value">
+          <div class="hk-status" id="hotkey-status" aria-live="polite"></div>
+          <p class="hint hk-try" id="hotkey-try" aria-live="polite"></p>
+        </div>
+      </div>
+
+      <p class="eyebrow group-eyebrow">look</p>
+      <div class="row">
+        <span class="row-label" id="theme-label">appearance</span>
+        <div class="row-value">
+          <div class="seg" role="radiogroup" aria-labelledby="theme-label" id="theme-seg">
+            <button type="button" role="radio" data-theme="system" aria-checked="false">system</button>
+            <button type="button" role="radio" data-theme="light" aria-checked="false">light</button>
+            <button type="button" role="radio" data-theme="dark" aria-checked="false">dark</button>
+          </div>
+        </div>
+      </div>
+      <div class="row">
+        <label class="row-label" for="scale">size</label>
+        <div class="row-value range-row">
+          <input id="scale" type="range" min="0.5" max="2.5" step="0.05">
+          <output class="tnum" id="scale-out" for="scale"></output>
+        </div>
+      </div>
+      <div class="row">
+        <span class="row-label" id="color-label">color</span>
+        <div class="row-value">
+          <div class="swatches" role="radiogroup" aria-labelledby="color-label" id="color-swatches"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="more" data-page="home" aria-labelledby="more-h">
+    <header class="section-head">
+      <p class="eyebrow">everything else</p>
+      <h2 class="h3" id="more-h">More settings.</h2>
+    </header>
+    <div class="find">
+      <svg class="find-ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 L14 14"/></svg>
+      <input id="find" type="search" placeholder="find a setting" aria-label="find a setting" spellcheck="false" autocomplete="off" aria-controls="find-results">
+    </div>
+    <div class="find-results" id="find-results" role="list" aria-live="polite" hidden></div>
+    <div class="more-list" id="more-list">
+      <p class="eyebrow group-eyebrow">yours</p>
+      <button class="more-item" type="button" data-go="clickys"><span class="mi-t">clickys</span><span class="mi-d">names, personalities, a brain and voice each</span></button>
+      <button class="more-item" type="button" data-go="memory"><span class="mi-t">memory</span><span class="mi-d">what it remembers about you</span></button>
+      <button class="more-item" type="button" data-go="routines"><span class="mi-t">routines</span><span class="mi-d">things it does on a schedule</span></button>
+      <p class="eyebrow group-eyebrow">how it works</p>
+      <button class="more-item" type="button" data-go="model"><span class="mi-t">brain</span><span class="mi-d">subscriptions, api keys, local models</span></button>
+      <button class="more-item" type="button" data-go="voice"><span class="mi-t">voice &amp; listening</span><span class="mi-d">speech to text, microphone, speed, captions</span></button>
+      <button class="more-item" type="button" data-go="keys"><span class="mi-t">shortcuts</span><span class="mi-d">type, dictate, stop, hands-free</span></button>
+      <button class="more-item" type="button" data-go="companion"><span class="mi-t">companion</span><span class="mi-d">bubble, pointing, notch panel, instructions</span></button>
+      <button class="more-item" type="button" data-go="agent"><span class="mi-t">agent mode</span><span class="mi-d">let it click and type for you</span></button>
+      <button class="more-item" type="button" data-go="dictation"><span class="mi-t">dictation</span><span class="mi-d">words, names and replacements</span></button>
+      <p class="eyebrow group-eyebrow">system</p>
+      <button class="more-item" type="button" data-go="permissions"><span class="mi-t">permissions</span><span class="mi-d">microphone, screen, accessibility</span></button>
+      <button class="more-item" type="button" data-go="about"><span class="mi-t">about &amp; diagnostics</span><span class="mi-d">version, updates, logs, welcome tour</span></button>
+    </div>
+  </section>
+
+  <section class="section" id="clickys" data-page="clickys" aria-labelledby="clickys-h">
     <header class="section-head">
       <p class="eyebrow">clickys</p>
       <h2 class="h3" id="clickys-h">Your companions.</h2>
@@ -77,28 +194,49 @@
     </div>
   </section>
 
-  <section class="section reveal" id="model" aria-labelledby="model-h">
+  <section class="section" id="model" data-page="model" aria-labelledby="model-h">
     <header class="section-head">
-      <p class="eyebrow">model</p>
+      <p class="eyebrow">brain</p>
       <h2 class="h3" id="model-h">Pick a brain.</h2>
       <p class="muted">use a plan you already pay for, an api key, or a model on your machine.</p>
     </header>
     <div id="model-list"></div>
   </section>
 
-  <section class="section reveal" id="voice" aria-labelledby="voice-h">
+  <section class="section" id="voice" data-page="voice" aria-labelledby="voice-h">
     <header class="section-head">
-      <p class="eyebrow">voice</p>
+      <p class="eyebrow">voice &amp; listening</p>
       <h2 class="h3" id="voice-h">How it listens and talks.</h2>
+      <p class="muted">turn the voice on and pick one on the main page. the rest lives here.</p>
     </header>
     <div class="sheet" id="voice-sheet">
+      <p class="eyebrow group-eyebrow">speed</p>
+      <div class="row" id="speed-row">
+        <span class="row-label">right now</span>
+        <div class="row-value">
+          <p id="speed-pipeline"></p>
+          <p class="hint tnum" id="speed-estimate"></p>
+          <button class="text-btn" type="button" id="speed-fast"><span>make it fast</span></button>
+          <p class="hint" id="speed-note"></p>
+          <p class="hint" id="speed-hints"></p>
+        </div>
+      </div>
+      <div class="row">
+        <span class="row-label" id="l-fast-replies">fast replies</span>
+        <div class="row-value">
+          <button class="switch" type="button" role="switch" aria-checked="true" aria-labelledby="l-fast-replies" id="sw-fast-replies"></button>
+          <p class="hint">quick spoken questions use your brain's fastest model (claude haiku, gpt-6 luna, gemini flash-lite). asking it to do something on screen, typed chats and harder requests keep the model you picked.</p>
+        </div>
+      </div>
+
       <p class="eyebrow group-eyebrow">listening</p>
       <div class="row">
         <label class="row-label" for="stt-provider">speech to text</label>
         <div class="row-value">
           <select id="stt-provider">
             <option value="on-device">on-device whisper</option>
-            <option value="openai">openai</option>
+            <option value="openai">openai (streams while you talk)</option>
+            <option value="deepgram">deepgram (streams while you talk)</option>
             <option value="groq">groq</option>
             <option value="gemini">gemini</option>
             <option value="local">local server</option>
@@ -143,6 +281,7 @@
         <label class="row-label" for="tts-provider">text to speech</label>
         <div class="row-value">
           <select id="tts-provider">
+            <option value="kokoro">natural voice (free, on-device)</option>
             <option value="system">system voice</option>
             <option value="openai">openai</option>
             <option value="elevenlabs">elevenlabs</option>
@@ -196,31 +335,13 @@
     </div>
   </section>
 
-  <section class="section reveal" id="keys" aria-labelledby="keys-h">
+  <section class="section" id="keys" data-page="keys" aria-labelledby="keys-h">
     <header class="section-head">
-      <p class="eyebrow">keys</p>
+      <p class="eyebrow">shortcuts</p>
       <h2 class="h3" id="keys-h">Your shortcuts.</h2>
-      <p class="muted">a chord needs a modifier or a function key, so typing is never hijacked.</p>
+      <p class="muted">the talk key is on the main page. a chord needs a modifier or a function key, so typing is never hijacked.</p>
     </header>
     <div class="sheet">
-      <div class="row">
-        <span class="row-label">push to talk</span>
-        <div class="row-value">
-          <div class="chord-line">
-            <div class="chord-well tnum" id="chord-talk" aria-live="polite"></div>
-            <button class="btn" type="button" id="rec-talk"><span>record</span></button>
-          </div>
-        </div>
-      </div>
-      <div class="row">
-        <span class="row-label" id="mode-label">mode</span>
-        <div class="row-value">
-          <div class="seg" role="radiogroup" aria-labelledby="mode-label" id="mode-seg">
-            <button type="button" role="radio" data-mode="hold" aria-checked="false">hold to talk</button>
-            <button type="button" role="radio" data-mode="toggle" aria-checked="false">tap to toggle</button>
-          </div>
-        </div>
-      </div>
       <div class="row">
         <span class="row-label">type a question</span>
         <div class="row-value">
@@ -259,7 +380,7 @@
             <div class="chord-well tnum" id="chord-stop" aria-live="polite"></div>
             <button class="btn" type="button" id="rec-stop"><span>record</span></button>
           </div>
-          <p class="hint">stops whatever clickity is doing — talking, thinking, listening, dictating. an agent run pauses first (enter continues, press again to stop). only taken while clickity is busy.</p>
+          <p class="hint">stops whatever clickity is doing: talking, thinking, listening, dictating. an agent run pauses first (enter continues, press again to stop). only taken while clickity is busy.</p>
         </div>
       </div>
       <div class="row">
@@ -271,14 +392,7 @@
             <button class="text-btn" type="button" data-off="alwaysOn"><span>off</span></button>
           </div>
           <div class="chord-line"><button class="switch" type="button" role="switch" aria-checked="false" aria-label="hands-free" id="sw-handsfree"></button><span class="muted" id="handsfree-state">always listening is off</span></div>
-          <p class="hint">always listening: just talk. it pauses while clickity speaks — use headphones so it doesn't hear itself.</p>
-        </div>
-      </div>
-      <div class="row">
-        <span class="row-label">status</span>
-        <div class="row-value">
-          <div class="hk-status" id="hotkey-status" aria-live="polite"></div>
-          <p class="hint hk-try" id="hotkey-try" aria-live="polite"></p>
+          <p class="hint">always listening: just talk. it pauses while clickity speaks, so use headphones so it doesn't hear itself.</p>
         </div>
       </div>
       <div class="row">
@@ -288,7 +402,7 @@
     </div>
   </section>
 
-  <section class="section reveal" id="companion" aria-labelledby="companion-h">
+  <section class="section" id="companion" data-page="companion" aria-labelledby="companion-h">
     <header class="section-head">
       <p class="eyebrow">companion</p>
       <h2 class="h3" id="companion-h">How it behaves.</h2>
@@ -297,16 +411,6 @@
       <div class="row">
         <label class="row-label" for="user-name">your name</label>
         <div class="row-value"><input id="user-name" type="text" maxlength="40" spellcheck="false" autocomplete="off" placeholder="optional, for greetings"></div>
-      </div>
-      <div class="row">
-        <span class="row-label" id="theme-label">appearance</span>
-        <div class="row-value">
-          <div class="seg" role="radiogroup" aria-labelledby="theme-label" id="theme-seg">
-            <button type="button" role="radio" data-theme="system" aria-checked="false">system</button>
-            <button type="button" role="radio" data-theme="light" aria-checked="false">light</button>
-            <button type="button" role="radio" data-theme="dark" aria-checked="false">dark</button>
-          </div>
-        </div>
       </div>
       <div class="row">
         <span class="row-label" id="show-label">show companion</span>
@@ -360,37 +464,6 @@
         <div class="row-value"><button class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="l-point" id="sw-point"></button></div>
       </div>
       <div class="row">
-        <span class="row-label" id="agent-label">agent mode</span>
-        <div class="row-value">
-          <div>
-            <div class="seg" role="radiogroup" aria-labelledby="agent-label" id="agent-seg">
-              <button type="button" role="radio" data-actions="off" aria-checked="false">off</button>
-              <button type="button" role="radio" data-actions="ask" aria-checked="false">ask first</button>
-              <button type="button" role="radio" data-actions="auto" aria-checked="false">automatic</button>
-            </div>
-            <p class="hint agent-hint" id="agent-hint"></p>
-            <div class="hk-status agent-status" id="agent-status" aria-live="polite"></div>
-          </div>
-        </div>
-      </div>
-      <div class="row" id="agent-steps-row">
-        <label class="row-label" for="max-steps">max steps</label>
-        <div class="row-value"><input id="max-steps" class="narrow tnum" type="number" min="1" max="20" step="1"></div>
-      </div>
-      <div class="row">
-        <label class="row-label" for="scale">size</label>
-        <div class="row-value range-row">
-          <input id="scale" type="range" min="0.5" max="2.5" step="0.05">
-          <output class="tnum" id="scale-out" for="scale"></output>
-        </div>
-      </div>
-      <div class="row">
-        <span class="row-label" id="color-label">color</span>
-        <div class="row-value">
-          <div class="swatches" role="radiogroup" aria-labelledby="color-label" id="color-swatches"></div>
-        </div>
-      </div>
-      <div class="row">
         <label class="row-label" for="instructions">custom instructions</label>
         <div class="row-value">
           <textarea id="instructions" rows="4" placeholder="e.g. keep answers short. i'm learning blender."></textarea>
@@ -411,7 +484,35 @@
     </div>
   </section>
 
-  <section class="section reveal" id="dictation" aria-labelledby="dictation-h">
+  <section class="section" id="agent" data-page="agent" aria-labelledby="agent-h">
+    <header class="section-head">
+      <p class="eyebrow">agent mode</p>
+      <h2 class="h3" id="agent-h">Let it do the clicking.</h2>
+      <p class="muted">it can click, type and scroll for you, one step at a time.</p>
+    </header>
+    <div class="sheet">
+      <div class="row">
+        <span class="row-label" id="agent-label">agent mode</span>
+        <div class="row-value">
+          <div>
+            <div class="seg" role="radiogroup" aria-labelledby="agent-label" id="agent-seg">
+              <button type="button" role="radio" data-actions="off" aria-checked="false">off</button>
+              <button type="button" role="radio" data-actions="ask" aria-checked="false">ask first</button>
+              <button type="button" role="radio" data-actions="auto" aria-checked="false">automatic</button>
+            </div>
+            <p class="hint agent-hint" id="agent-hint"></p>
+            <div class="hk-status agent-status" id="agent-status" aria-live="polite"></div>
+          </div>
+        </div>
+      </div>
+      <div class="row" id="agent-steps-row">
+        <label class="row-label" for="max-steps">max steps</label>
+        <div class="row-value"><input id="max-steps" class="narrow tnum" type="number" min="1" max="20" step="1"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="dictation" data-page="dictation" aria-labelledby="dictation-h">
     <header class="section-head">
       <p class="eyebrow">dictation</p>
       <h2 class="h3" id="dictation-h">Your words, spelled your way.</h2>
@@ -452,7 +553,7 @@
         <span class="row-label" id="dash-label">long dashes</span>
         <div class="row-value">
           <div class="seg" role="radiogroup" aria-labelledby="dash-label" id="dash-seg">
-            <button type="button" role="radio" data-dash="keep" aria-checked="false">keep —</button>
+            <button type="button" role="radio" data-dash="keep" aria-checked="false">keep them</button>
             <button type="button" role="radio" data-dash="comma" aria-checked="false">commas</button>
             <button type="button" role="radio" data-dash="hyphen" aria-checked="false">hyphens</button>
           </div>
@@ -461,7 +562,7 @@
     </div>
   </section>
 
-  <section class="section reveal" id="memory" aria-labelledby="memory-h">
+  <section class="section" id="memory" data-page="memory" aria-labelledby="memory-h">
     <header class="section-head">
       <p class="eyebrow">memory</p>
       <h2 class="h3" id="memory-h">What it remembers about you.</h2>
@@ -486,7 +587,7 @@
     </div>
   </section>
 
-  <section class="section reveal" id="routines" aria-labelledby="routines-h">
+  <section class="section" id="routines" data-page="routines" aria-labelledby="routines-h">
     <header class="section-head">
       <p class="eyebrow">routines</p>
       <h2 class="h3" id="routines-h">Things it does on a schedule.</h2>
@@ -501,7 +602,7 @@
     </div>
   </section>
 
-  <section class="section reveal" id="permissions" aria-labelledby="perm-h">
+  <section class="section" id="permissions" data-page="permissions" aria-labelledby="perm-h">
     <header class="section-head">
       <p class="eyebrow">permissions</p>
       <h2 class="h3" id="perm-h">What it needs from your system.</h2>
@@ -509,10 +610,10 @@
     <div class="sheet" id="perm-sheet"></div>
   </section>
 
-  <section class="section reveal" id="about" aria-labelledby="about-h">
+  <section class="section" id="about" data-page="about" aria-labelledby="about-h">
     <header class="section-head">
-      <p class="eyebrow">about</p>
-      <h2 class="h3" id="about-h">clickity.</h2>
+      <p class="eyebrow">about &amp; diagnostics</p>
+      <h2 class="h3" id="about-h">Clickity.</h2>
     </header>
     <div class="sheet">
       <div class="row">
@@ -552,6 +653,13 @@
       <div class="row">
         <span class="row-label">diagnostics</span>
         <div class="row-value"><div><button class="text-btn" type="button" id="open-logs"><span>open logs</span></button> <span class="muted">· attach clickity.log when something doesn't work</span></div></div>
+      </div>
+      <div class="row">
+        <span class="row-label">latency</span>
+        <div class="row-value">
+          <p class="muted tnum" id="latency-line">no voice turn yet. hold the talk key and ask something.</p>
+          <p class="hint" id="latency-what"></p>
+        </div>
       </div>
       <div class="row">
         <span class="row-label"></span>
