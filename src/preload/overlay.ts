@@ -46,6 +46,12 @@ const api: OverlayApi = {
   ready: () => ipcRenderer.send(IPC.overlayReady),
   log: (entry) => ipcRenderer.send(IPC.overlayLog, entry),
   pttProgress: (note) => ipcRenderer.send(IPC.pttProgress, note),
+  onWake: (cb) => on(IPC.overlayWake, cb),
+  wakeHeard: (h) => ipcRenderer.send(IPC.wakeHeard, h),
+  wakeStatus: (st) => ipcRenderer.send(IPC.wakeStatus, st),
+  onTip: (cb) => on(IPC.overlayTip, cb),
+  tipOpen: (id) => ipcRenderer.send(IPC.tipOpen, id),
+  tipAction: (a) => ipcRenderer.send(IPC.tipAction, a),
 };
 
 contextBridge.exposeInMainWorld('overlay', api);

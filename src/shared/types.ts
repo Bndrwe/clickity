@@ -1,6 +1,10 @@
 // Shared contract between main, preload and renderer code.
 // Every module in this app depends on these shapes. Change them only deliberately.
 import type { ChatVisual } from './visuals';
+import type { ClickyStyle } from './voices';
+import type { WakeSensitivity } from './wake';
+export type { ClickyStyle } from './voices';
+export type { WakeSensitivity } from './wake';
 
 /* ───────────────────────── providers ───────────────────────── */
 
@@ -428,6 +432,28 @@ export interface Settings {
   clickys: Clicky[];
   /** id of the clicky voice / type / chats turns talk to */
   activeClicky: string;
+  /** "hey clickity": opt-in wake word, heard on this computer only (src/main/wake-word.ts) */
+  wakeWord: WakeWordSettings;
+  /** opt-in proactive tips: a quiet dot on the companion, never spoken (src/main/tips.ts) */
+  tips: TipsSettings;
+}
+
+/** settings › voice › wake word */
+export interface WakeWordSettings {
+  enabled: boolean;
+  /** low = fewer false wakes, needs a clear "hey clickity"; high = hears quieter / sloppier speech */
+  sensitivity: WakeSensitivity;
+}
+
+/** settings › companion › tips */
+export interface TipsSettings {
+  enabled: boolean;
+  /** shows the waiting tip (grabbed only while a tip dot is showing). default control + alt + h */
+  key: KeyName[];
+  /** most tips in an hour (1–6) */
+  perHour: number;
+  /** also send a small screenshot to the cheapest model (off = app name + window title only) */
+  screenshot: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -475,6 +501,8 @@ export const DEFAULT_SETTINGS: Settings = {
   userName: '',
   clickys: [],
   activeClicky: 'clickity',
+  wakeWord: { enabled: false, sensitivity: 'medium' },
+  tips: { enabled: false, key: ['Control', 'Alt', 'KeyH'], perHour: 3, screenshot: false },
 };
 
 /* ───────────────────────── clickys (named companions) ───────────────────────── */
@@ -497,6 +525,10 @@ export interface Clicky {
   model?: string;
   /** voice override (unset = settings.speech.tts) */
   voice?: { provider: TtsProvider; voice: string };
+  /** companion cursor size override, 0.5 – 2.5 (unset = settings.companion.scale) */
+  scale?: number;
+  /** how it talks (folded into the persona prompt; unset = the usual clickity) */
+  style?: ClickyStyle;
   createdAt?: number;
 }
 
@@ -514,6 +546,9 @@ export interface ClickySuggestion {
   color: string;
   /** one short line: why this one fits the answers */
   why: string;
+  /** a suggested on-device Kokoro voice id (af_heart…) */
+  voice?: string;
+  style?: ClickyStyle;
 }
 
 /** Recursive partial used for settings patches. */
@@ -619,6 +654,58 @@ export interface HandsFreeState {
   listening: boolean;
   /** the companion is replying: with headphones the renderer keeps listening so speech interrupts it */
   bargeIn?: boolean;
+}
+
+/** main → overlay: the wake word listener ("hey clickity"). */
+export interface WakeState {
+  /** the wake word is on (and hands-free is off) */
+  on: boolean;
+  /** this overlay owns the wake mic */
+  mic: boolean;
+  /** may listen right now (false while a turn records / works, dictation holds the mic, a short echo tail) */
+  listening: boolean;
+  sensitivity: WakeSensitivity;
+  /** clickys to answer to by name, besides "clickity" */
+  targets: Array<{ id?: string; name: string }>;
+  /** on-device whisper model for the check */
+  model: string;
+  /** a bare "hey clickity" was heard: the next utterance is the question (sent whole) */
+  followUp: boolean;
+  /** how the follow-up is transcribed (the user's speech-to-text setting) */
+  stt?: SpeechSettings['stt'];
+  /** tests only (CLICKITY_TEST=1): log the transcripts of checks */
+  debug?: boolean;
+}
+
+/** overlay → main: speech the wake listener heard. */
+export interface WakeHeard {
+  /** 'wake' = a segment that matched the wake word (text = on-device transcript of all of it); 'followup' = the question after a bare wake word */
+  kind: 'wake' | 'followup';
+  text?: string;
+  wav?: ArrayBuffer;
+  durationMs: number;
+  peak?: number;
+  error?: string;
+}
+
+/** overlay → main → settings: what the wake listener is doing (settings › voice shows it). */
+export interface WakeStatus {
+  state: 'off' | 'hands-free' | 'starting' | 'loading' | 'armed' | 'paused' | 'no-mic' | 'error';
+  detail?: string;
+  /** segments transcribed / skipped by the rate cap in the last 10 minutes, and the average check time */
+  checks?: number;
+  skipped?: number;
+  avgMs?: number;
+}
+
+/** main → overlay: a proactive tip is waiting (dot) or open (bubble); null = none. */
+export interface OverlayTip {
+  id: string;
+  /** set when it should show in the tip bubble */
+  text?: string;
+  open: boolean;
+  /** the key that opens it, e.g. "ctrl + alt + h" ('' = none grabbed: click the dot) */
+  keyLabel: string;
 }
 
 /** overlay → main: one utterance heard in hands-free mode (text = on-device, else wav). */

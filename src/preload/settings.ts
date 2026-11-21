@@ -2,7 +2,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import { updateApi } from './update';
 import { IPC, type HotkeyHeard, type HotkeyStatus, type KeyRecordEvent, type SettingsApi } from '../shared/ipc';
-import type { Settings } from '../shared/types';
+import type { Settings, WakeStatus } from '../shared/types';
 
 const api: SettingsApi = {
   ...updateApi,
@@ -57,6 +57,11 @@ const api: SettingsApi = {
   voicePreview: (provider, voice) => ipcRenderer.invoke(IPC.voicePreview, provider, voice),
   latency: () => ipcRenderer.invoke(IPC.latencyGet),
   runRoutine: (id) => ipcRenderer.invoke(IPC.routineRun, id),
+  wakeStatus: () => ipcRenderer.invoke(IPC.wakeStatusGet),
+  onWakeStatus: (cb) => {
+    ipcRenderer.on(IPC.wakeStatusChanged, (_e: IpcRendererEvent, st: WakeStatus) => cb(st));
+  },
+  tipsStatus: () => ipcRenderer.invoke(IPC.tipsStatusGet),
 };
 
 contextBridge.exposeInMainWorld('clicky', api);

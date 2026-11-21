@@ -20,6 +20,7 @@ import type { HotkeyStatus, KeyRecordEvent, UpdateState } from '../../shared/ipc
 import { canonicalCode, chordLabel, orderChord, sameBinding, validateChord } from './keys';
 import { stopKeyProblem } from '../../main/stop-logic';
 import { initClickys, initNotchSetting } from './clickys';
+import { initWakeTips } from './wake-tips';
 import { KOKORO_VOICES, initExtras } from './extras';
 
 const api = window.clicky;
@@ -1930,6 +1931,8 @@ async function boot(): Promise<void> {
   const clickyCtx = { api, get: () => settings, save, onSync: (f: () => void) => void syncers.push(f) };
   initClickys(clickyCtx);
   initNotchSetting(clickyCtx);
+  // settings › voice › wake word, settings › companion › tips
+  initWakeTips({ ...clickyCtx, platform: () => platform });
   permRows($('perm-sheet'));
   initOnboarding();
   initPages();

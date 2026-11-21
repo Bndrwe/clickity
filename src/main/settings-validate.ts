@@ -44,7 +44,26 @@ export function fixEnums(s: Settings, d: Settings, platform: string): Settings {
   // be grabbed as a shortcut (fn, taps, plain letters…) falls back to esc
   if (stopKeyProblem(s.hotkeys.stop, platform)) s.hotkeys.stop = [...(d.hotkeys.stop ?? DEFAULT_STOP)];
   fixFeatures(s, d);
+  fixWakeAndTips(s, d, platform);
   upgradeSpeech(s, d);
+  return s;
+}
+
+const SENSITIVITY = ['low', 'medium', 'high'];
+
+/** settings › voice › wake word and settings › companion › tips: both opt-in, off unless set to true. */
+export function fixWakeAndTips(s: Settings, d: Settings, platform: string): Settings {
+  const dw = d.wakeWord ?? { enabled: false, sensitivity: 'medium' };
+  const w = s.wakeWord && typeof s.wakeWord === 'object' ? s.wakeWord : (s.wakeWord = { ...dw });
+  w.enabled = w.enabled === true;
+  if (!SENSITIVITY.includes(w.sensitivity)) w.sensitivity = dw.sensitivity;
+  const dt = d.tips ?? { enabled: false, key: ['Control', 'Alt', 'KeyH'], perHour: 3, screenshot: false };
+  const t = s.tips && typeof s.tips === 'object' ? s.tips : (s.tips = structuredClone(dt));
+  t.enabled = t.enabled === true;
+  t.screenshot = t.screenshot === true;
+  t.perHour = finite(t.perHour) ? Math.min(6, Math.max(1, Math.round(t.perHour))) : dt.perHour;
+  // same rules as the stop key: one non-modifier, f-keys alone, otherwise a ctrl / alt / cmd chord
+  if (!Array.isArray(t.key) || !t.key.every((k) => typeof k === 'string') || stopKeyProblem(t.key, platform)) t.key = [...dt.key];
   return s;
 }
 

@@ -3,7 +3,7 @@
 import { ipcMain } from 'electron';
 import { IPC } from '../shared/ipc';
 import { PROVIDER_META, type Clicky, type ClickyCreateResult, type ClickyQuizAnswers, type ClickySuggestion, type DeepPartial, type ProviderKind, type Settings } from '../shared/types';
-import { activeClicky, clickyById, parseSuggestions, parseSwitchCommand, CLICKY_COLORS } from '../shared/clickys';
+import { activeClicky, clickyById, kokoroVoiceMenu, parseSuggestions, parseSwitchCommand, CLICKY_COLORS } from '../shared/clickys';
 import { getSettings, onSettingsChanged, updateSettings } from './settings-store';
 import { getProvider } from './providers/index';
 import { log } from './log';
@@ -63,6 +63,10 @@ function syncColor(s: Settings, prev: Settings): void {
 
 const SUGGEST_TIMEOUT_MS = 90_000;
 
+/** each made / suggested clicky also gets a voice, a color and a speaking style that fit it */
+const LOOK_FIELDS = `"voice": "one voice id from the list below", "color": "#rrggbb from the list below", "style": "short | chatty | formal | playful"`;
+const LOOK_HELP = `Voices (on-device): ${kokoroVoiceMenu()}. Colors: ${CLICKY_COLORS.filter(Boolean).join(', ')}. Pick the voice, color and style that suit each clicky's personality, and give different clickys different colors.`;
+
 function suggestPrompt(a: ClickyQuizAnswers, existing: Clicky[]): string {
   return `The user is setting up "clickys": small AI companions that live next to their mouse cursor, see their screen and answer by voice. Each clicky has a short lowercase name and a persona (instructions for how it helps and talks).
 
@@ -74,7 +78,9 @@ Their answers to three quick questions:
 They already have: ${existing.map((c) => c.name).join(', ') || 'none'}.
 
 Propose exactly 3 new clickys that fit them, each focused on a different job (e.g. "spreadsheet helper", "study buddy", "coding sidekick"). Reply with ONLY a JSON array, no prose, no code fence:
-[{"name": "1-3 lowercase words", "persona": "2-4 sentences in second person, starting with 'You are' or 'You help', saying what it focuses on and how it talks", "why": "one short lowercase line on why it fits them"}]`;
+[{"name": "1-3 lowercase words", "persona": "2-4 sentences in second person, starting with 'You are' or 'You help', saying what it focuses on and how it talks", "why": "one short lowercase line on why it fits them", ${LOOK_FIELDS}}]
+
+${LOOK_HELP}`;
 }
 
 export async function suggestClickys(answers: ClickyQuizAnswers): Promise<ClickySuggestion[]> {
@@ -164,7 +170,9 @@ function createPrompt(description: string, existing: Clicky[]): string {
 They already have: ${existing.map((c) => c.name).join(', ') || 'none'}.
 
 Make exactly what they asked for: one clicky, or several only if they clearly asked for more than one (max 3). Keep their wording for the name if they gave one. Reply with ONLY a JSON array, no prose, no code fence:
-[{"name": "1-3 lowercase words", "persona": "2-4 sentences in second person, starting with 'You are' or 'You help', saying what it focuses on and how it talks", "why": "one short lowercase line"}]`;
+[{"name": "1-3 lowercase words", "persona": "2-4 sentences in second person, starting with 'You are' or 'You help', saying what it focuses on and how it talks", "why": "one short lowercase line", ${LOOK_FIELDS}}]
+
+${LOOK_HELP}`;
 }
 
 export async function createClickys(description: unknown): Promise<ClickyCreateResult> {

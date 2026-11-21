@@ -109,20 +109,13 @@ function initMic(ctx: ExtrasCtx): void {
   void fill();
 }
 
-/** Kokoro-82M's best english voices (the overlay plays the preview next to the cursor) */
-export const KOKORO_VOICES = [
-  { id: 'af_heart', label: 'heart (warm, female)' },
-  { id: 'af_bella', label: 'bella (bright, female)' },
-  { id: 'af_nicole', label: 'nicole (soft, female)' },
-  { id: 'am_michael', label: 'michael (calm, male)' },
-  { id: 'am_fenrir', label: 'fenrir (deep, male)' },
-  { id: 'bf_emma', label: 'emma (british, female)' },
-  { id: 'bm_george', label: 'george (british, male)' },
-];
-const OPENAI_VOICES = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer', 'verse'];
+/** Kokoro-82M's best english voices (the overlay plays the preview next to the cursor); shared with the clicky editor */
+export { KOKORO_VOICES, OPENAI_VOICES } from '../../shared/voices';
+import { KOKORO_VOICES, OPENAI_VOICES } from '../../shared/voices';
 let previewAudio: HTMLAudioElement | null = null;
 
-async function play(cmd: SpeakCommand | null): Promise<void> {
+/** play a voice preview here (system / cloud voices); kokoro previews play in the overlay */
+export async function play(cmd: SpeakCommand | null): Promise<void> {
   previewAudio?.pause();
   speechSynthesis.cancel();
   if (!cmd) return;

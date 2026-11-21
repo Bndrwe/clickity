@@ -8,6 +8,8 @@ import type { HotkeyHandlers } from './chord-engine';
 import { notifyHotkeyHeard } from './hotkey-ipc';
 import { draftEnter, draftEscape, initDictation, onDictateCancel, onDictateDown, onDictateDraft, onDictateUp } from './dictation';
 import { initHandsFree, stopHandsFree, toggleHandsFree } from './hands-free';
+import { initWakeWord, stopWakeWord, wakeTestState } from './wake-word';
+import { initTips, stopTips, testTips } from './tips';
 import { checkRoutinesNow, initRoutines, runRoutineNow, stopRoutines } from './routines';
 import { clearFacts, listFacts, onFactsChanged, setFacts } from './memory';
 import { routineEnter, routineEscape, walkthroughEnter } from './turn-extras';
@@ -92,6 +94,10 @@ export function initFeatures(): void {
   initDictation({ isRecording: isListening, stopTurn: stopCurrentTurn });
   initHandsFree({ activity: turnActivity, onUtterance: runUtterance, onBargeIn: stopCurrentTurn });
   initRoutines({ busy: companionBusy, run: runRoutineTurn });
+  // "hey clickity" (opt-in): its utterances run like hands-free ones
+  initWakeWord({ activity: turnActivity, onUtterance: runUtterance });
+  // proactive tips (opt-in): never while clickity is busy
+  initTips({ busy: companionBusy });
   applyDock(getSettings());
   onSettingsChanged((s, prev) => {
     if (s.showInDock !== prev.showInDock) applyDock(s);
@@ -101,6 +107,8 @@ export function initFeatures(): void {
 export function stopFeatures(): void {
   stopHandsFree();
   stopRoutines();
+  stopWakeWord();
+  stopTips();
 }
 
 /** CLICKITY_TEST=1 only (test-hook.ts): drive the features without real global keys. */
@@ -116,6 +124,8 @@ export function testFeatures(): Record<string, unknown> {
     listFacts,
     runRoutineNow,
     checkRoutinesNow,
+    wake: wakeTestState,
+    tips: testTips(),
     hotkeyHandlers: () => featureHotkeyHandlers({ onEnter: () => undefined, onEscape: () => undefined }),
   };
 }

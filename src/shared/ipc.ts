@@ -37,6 +37,10 @@ import type {
   ClickyCreateResult,
   CompanionPhase,
   OverlayBusy,
+  WakeState,
+  WakeHeard,
+  WakeStatus,
+  OverlayTip,
 } from './types';
 import type { ChatVisual } from './visuals';
 
@@ -112,6 +116,8 @@ export const IPC = {
   overlayWalkthrough: 'overlay:walkthrough', // boolean — a guided walkthrough is running (bubble click = next)
   overlayBusy: 'overlay:busy', // OverlayBusy | null — busy: "esc to stop" line + stop button (paused: continue / stop)
   overlayDismiss: 'overlay:dismiss', // void — hide the bubble now (the stop key over a lingering reply)
+  overlayWake: 'overlay:wake', // WakeState — the "hey clickity" listener (wake-word.ts)
+  overlayTip: 'overlay:tip', // OverlayTip | null — a proactive tip: dot on the companion / open in the tip bubble (tips.ts)
 
   /* overlay → main (ipcRenderer.send) */
   pttResult: 'ptt:result', // PttResult
@@ -132,6 +138,10 @@ export const IPC = {
   overlayStop: 'overlay:stop', // void — the bubble's stop button (same as the stop key: pauses an agent run)
   overlayContinue: 'overlay:continue', // void — paused agent run: "continue"
   overlayBubble: 'overlay:bubble', // boolean — the reply bubble is showing / gone (idle: the stop key dismisses it)
+  wakeHeard: 'wake:heard', // WakeHeard — the wake listener heard its name (or the follow-up question)
+  wakeStatus: 'wake:status', // WakeStatus — the wake listener's state (mic blocked, model loading, checks)
+  tipOpen: 'tip:open', // string (tip id) — the tip dot was clicked
+  tipAction: 'tip:action', // 'close' | 'not-now' | 'stop' — the tip bubble's buttons
 
   /* settings window → main (ipcRenderer.invoke) */
   settingsGet: 'settings:get', // () => Settings
@@ -166,6 +176,8 @@ export const IPC = {
   voicePreview: 'speech:preview', // (provider, voice) => SpeakCommand | null — a short line in that voice (settings plays it)
   latencyGet: 'speech:latency', // () => LatencyInfo — the last voice turn's timing + the current pipeline summary
   routineRun: 'routines:run', // (id) => void — run a routine now
+  wakeStatusGet: 'wake:status-get', // () => WakeStatus — settings › voice › wake word
+  tipsStatusGet: 'tips:status-get', // () => string — settings › companion › tips: a quiet line ("1 tip in the last hour")
 
   clickysCreate: 'clickys:create', // (description: string) => ClickyCreateResult — settings › clickys › "make a clicky"
   clickysSuggest: 'clickys:suggest', // (answers: ClickyQuizAnswers) => ClickySuggestion[] — settings › clickys › suggest
@@ -210,6 +222,7 @@ export const IPC = {
   hotkeyHeard: 'hotkey:heard', // HotkeyHeard — a chord fired
   hotkeyStatusChanged: 'hotkey:status-changed', // HotkeyStatus
   memoryChanged: 'memory:changed', // string[]
+  wakeStatusChanged: 'wake:status-changed', // WakeStatus
 
   /* main → settings + chats windows */
   updateChanged: 'update:changed', // UpdateState
@@ -288,6 +301,16 @@ export interface OverlayApi {
   log(entry: OverlayLogEntry): void;
   /** status while a ptt result is pending (model download %, loading…) */
   pttProgress(note: string): void;
+  /** wake word: listen / pause / follow-up (wake-word.ts) */
+  onWake(cb: (s: WakeState) => void): void;
+  /** wake word: heard the name (or the question after it) */
+  wakeHeard(h: WakeHeard): void;
+  wakeStatus(st: WakeStatus): void;
+  /** proactive tip waiting / open (null = none) */
+  onTip(cb: (t: OverlayTip | null) => void): void;
+  /** the tip dot was clicked */
+  tipOpen(id: string): void;
+  tipAction(action: 'close' | 'not-now' | 'stop'): void;
 }
 
 /** settings › voice "speed" summary + about › diagnostics. */
@@ -364,6 +387,11 @@ export interface SettingsApi extends UpdateApi {
   /** how many facts a clicky remembers / forget them */
   clickyMemoryCount(clickyId: string): Promise<number>;
   clickyForget(clickyId: string): Promise<void>;
+  /** settings › voice › wake word: what the listener is doing */
+  wakeStatus(): Promise<WakeStatus>;
+  onWakeStatus(cb: (s: WakeStatus) => void): void;
+  /** settings › companion › tips: a quiet status line */
+  tipsStatus(): Promise<string>;
 }
 
 /** Exposed as `window.chats` by src/preload/chats.ts */

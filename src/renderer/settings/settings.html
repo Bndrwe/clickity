@@ -276,6 +276,31 @@
         </div>
       </div>
 
+      <!-- wake word (src/renderer/settings/wake-tips.ts) -->
+      <p class="eyebrow group-eyebrow">wake word</p>
+      <div class="row">
+        <span class="row-label" id="l-wake">“hey clickity”</span>
+        <div class="row-value">
+          <button class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="l-wake" id="sw-wake"></button>
+          <p class="hint" id="wake-state" aria-live="polite"></p>
+          <p class="hint">say “hey clickity” — or a clicky's name — and ask. it listens on this computer only: a tiny detector waits for speech, and just the first couple of seconds of each bit of speech are transcribed here, a few times a minute at most. nothing leaves your computer until you've said its name. english only.</p>
+          <p class="hint">it costs some cpu while people talk near the mic (each check is a short on-device transcription), close to none in silence. off by default.</p>
+        </div>
+      </div>
+      <div class="row" id="wake-sens-row">
+        <span class="row-label" id="l-wake-sens">sensitivity</span>
+        <div class="row-value">
+          <div>
+            <div class="seg" role="radiogroup" aria-labelledby="l-wake-sens" id="wake-seg">
+              <button type="button" role="radio" data-sens="low" aria-checked="false">low</button>
+              <button type="button" role="radio" data-sens="medium" aria-checked="false">medium</button>
+              <button type="button" role="radio" data-sens="high" aria-checked="false">high</button>
+            </div>
+            <p class="hint agent-hint" id="wake-sens-hint"></p>
+          </div>
+        </div>
+      </div>
+
       <p class="eyebrow group-eyebrow">speaking</p>
       <div class="row">
         <label class="row-label" for="tts-provider">text to speech</label>
@@ -462,6 +487,42 @@
       <div class="row">
         <span class="row-label" id="l-point">point at things</span>
         <div class="row-value"><button class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="l-point" id="sw-point"></button></div>
+      </div>
+      <!-- proactive tips (src/renderer/settings/wake-tips.ts) -->
+      <div class="row">
+        <span class="row-label" id="l-tips">tips</span>
+        <div class="row-value">
+          <button class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="l-tips" id="sw-tips"></button>
+          <p class="hint">now and then a small dot on the companion, when it spots something genuinely useful: an error on screen, a faster shortcut. it never speaks up or interrupts, and stays quiet during calls, videos and while it's busy. press the tip key or click the dot to read it.</p>
+          <p class="hint tnum" id="tips-state" aria-live="polite"></p>
+        </div>
+      </div>
+      <div class="row" data-tips="1">
+        <span class="row-label">tip key</span>
+        <div class="row-value">
+          <div class="chord-line">
+            <div class="chord-well tnum" id="chord-tip" aria-live="polite"></div>
+            <button class="btn" type="button" id="rec-tip"><span>record</span></button>
+          </div>
+          <p class="hint" id="tip-key-hint">only taken while a tip is waiting.</p>
+        </div>
+      </div>
+      <div class="row" data-tips="1">
+        <span class="row-label" id="l-tips-rate">at most</span>
+        <div class="row-value">
+          <div class="seg" role="radiogroup" aria-labelledby="l-tips-rate" id="tips-rate-seg">
+            <button type="button" role="radio" data-rate="1" aria-checked="false">1 an hour</button>
+            <button type="button" role="radio" data-rate="3" aria-checked="false">3 an hour</button>
+            <button type="button" role="radio" data-rate="6" aria-checked="false">6 an hour</button>
+          </div>
+        </div>
+      </div>
+      <div class="row" data-tips="1">
+        <span class="row-label" id="l-tips-shot">look at the screen</span>
+        <div class="row-value">
+          <button class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="l-tips-shot" id="sw-tips-shot"></button>
+          <p class="hint">off: only the focused app's name and window title are used. on: a small screenshot also goes to the cheapest model you have set up, only when something changed, a dozen times an hour at most.</p>
+        </div>
       </div>
       <div class="row">
         <label class="row-label" for="instructions">custom instructions</label>

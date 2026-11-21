@@ -40,6 +40,11 @@ export function holdHandsFree(reason: string): () => void {
   };
 }
 
+/** Something (push-to-talk, dictation, a draft) holds the mic: the wake listener pauses too. */
+export function micHeld(): boolean {
+  return holds.size > 0;
+}
+
 export function handsFreeOn(settings: Settings = getSettings()): boolean {
   return !!settings.handsFree?.enabled;
 }
