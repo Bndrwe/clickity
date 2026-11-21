@@ -10,6 +10,9 @@ import { createOverlayVisuals } from './visuals';
 import { ModelLoadError, localSttStatus, onLocalSttStatus, preloadLocalModel, transcribeLocal, type LocalSttStatus } from './stt-local';
 // cue pill, highlights, captions, walkthrough clicks, hands-free mic (self-contained)
 import './extras';
+// "hey clickity" wake word listener + its ring on the companion; proactive tip dot / bubble
+import './wake';
+import './tips';
 
 const api: OverlayApi = window.overlay;
 

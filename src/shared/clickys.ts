@@ -1,6 +1,7 @@
 // Named companions ("clickys"): pure helpers shared by main and the renderers.
 // Type-only imports, so `node --experimental-strip-types --test` can load it (test/clickys.test.ts).
 import type { Clicky, ClickySuggestion, ProviderKind, Settings, TtsProvider } from './types';
+import { CLICKY_SCALE_MAX, CLICKY_SCALE_MIN, CLICKY_STYLE_PROMPT, KOKORO_VOICES, isClickyStyle, isKokoroVoice } from './voices.ts';
 
 /** the default clicky every install has (migrated users: their current settings) */
 export const DEFAULT_CLICKY_ID = 'clickity';
@@ -46,6 +47,8 @@ export function cleanClicky(raw: unknown): Clicky | null {
     if (model) out.model = model;
   }
   if (r.voice && typeof r.voice === 'object' && TTS.includes(r.voice.provider)) out.voice = { provider: r.voice.provider, voice: str(r.voice.voice, 200) };
+  if (typeof r.scale === 'number' && Number.isFinite(r.scale)) out.scale = Math.round(Math.min(CLICKY_SCALE_MAX, Math.max(CLICKY_SCALE_MIN, r.scale)) * 100) / 100;
+  if (isClickyStyle(r.style)) out.style = r.style;
   if (typeof r.createdAt === 'number' && Number.isFinite(r.createdAt)) out.createdAt = r.createdAt;
   return out;
 }
@@ -102,7 +105,14 @@ export function settingsForClicky(s: Settings, id?: string | null): Settings {
     if (c.model) out.models = { ...s.models, [c.provider]: c.model };
   }
   if (c.voice) out.speech = { ...s.speech, tts: { ...s.speech.tts, provider: c.voice.provider, voice: c.voice.voice } };
+  if (c.scale !== undefined) out.companion = { ...s.companion, scale: c.scale };
   return out;
+}
+
+/** The companion settings the overlay draws with: the active clicky's cursor size over the global one. */
+export function companionForClicky(s: Pick<Settings, 'clickys' | 'activeClicky' | 'companion'>): Settings['companion'] {
+  const c = clickyById(s, s.activeClicky);
+  return c.scale !== undefined && c.scale !== s.companion.scale ? { ...s.companion, scale: c.scale } : s.companion;
 }
 
 const norm = (t: string): string =>
@@ -139,7 +149,10 @@ export function parseSwitchCommand(text: string, clickys: readonly Clicky[]): Cl
 /** The identity line + persona for the system prompt. */
 export function clickyIdentity(c: Clicky): { name: string; persona: string } {
   const name = c.name.trim() || 'Clickity';
-  return { name: name === 'clickity' ? 'Clickity' : name, persona: c.persona.trim() };
+  // the speaking style rides along with the persona (WHO YOU ARE in the system prompt)
+  const style = c.style ? CLICKY_STYLE_PROMPT[c.style] : '';
+  const persona = [c.persona.trim(), style].filter(Boolean).join('\n');
+  return { name: name === 'clickity' ? 'Clickity' : name, persona };
 }
 
 /**
@@ -167,8 +180,26 @@ export function parseSuggestions(raw: string, takenNames: Iterable<string> = [])
     if (!name || !persona || taken.has(norm(name))) continue;
     taken.add(norm(name));
     const color = isColor(r.color) && r.color ? r.color.toLowerCase() : CLICKY_COLORS[1 + (out.length % (CLICKY_COLORS.length - 2))];
-    out.push({ name, persona, color, why: str(r.why, 160).trim() });
+    const sug: ClickySuggestion = { name, persona, color, why: str(r.why, 160).trim() };
+    const voice = typeof r.voice === 'string' ? r.voice.trim().toLowerCase() : '';
+    if (isKokoroVoice(voice)) sug.voice = voice;
+    const style = typeof r.style === 'string' ? r.style.trim().toLowerCase() : '';
+    if (isClickyStyle(style)) sug.style = style;
+    out.push(sug);
     if (out.length >= 3) break;
   }
   return out;
+}
+
+/** For the "make a clicky" prompt: the voices it may pick from, one per line. */
+export function kokoroVoiceMenu(): string {
+  return KOKORO_VOICES.map((v) => `${v.id} = ${v.label}`).join('; ');
+}
+
+/** A suggestion → the clicky that gets added (its suggested Kokoro voice and style included). */
+export function clickyFromSuggestion(s: ClickySuggestion, takenIds: Iterable<string>, now = Date.now()): Clicky {
+  const c: Clicky = { id: clickyIdFor(s.name, takenIds), name: s.name, color: s.color, persona: s.persona, createdAt: now };
+  if (s.voice && isKokoroVoice(s.voice)) c.voice = { provider: 'kokoro', voice: s.voice };
+  if (s.style && isClickyStyle(s.style)) c.style = s.style;
+  return c;
 }

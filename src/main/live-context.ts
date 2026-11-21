@@ -48,6 +48,22 @@ export async function activeAppName(): Promise<string> {
   return '';
 }
 
+/**
+ * The focused window's title ('' when unknown). linux: xdotool; windows: the foreground process's
+ * MainWindowTitle; macOS: '' (reading another app's window title needs an extra permission).
+ */
+export async function activeWindowTitle(): Promise<string> {
+  if (process.platform === 'linux') return (await run('xdotool', ['getactivewindow', 'getwindowname'])).trim().slice(0, 200);
+  if (process.platform === 'win32') {
+    const out = await run('powershell.exe', [
+      '-NoProfile', '-NonInteractive', '-Command',
+      'Add-Type @"\nusing System;using System.Runtime.InteropServices;public class FG{[DllImport("user32.dll")]public static extern IntPtr GetForegroundWindow();[DllImport("user32.dll")]public static extern int GetWindowThreadProcessId(IntPtr h,out int p);}\n"@;$p=0;[void][FG]::GetWindowThreadProcessId([FG]::GetForegroundWindow(),[ref]$p);(Get-Process -Id $p).MainWindowTitle',
+    ], 3000);
+    return out.trim().slice(0, 200);
+  }
+  return '';
+}
+
 /** Titles of open, titled windows (deduped, capped). */
 export async function windowTitles(): Promise<string[]> {
   let lines: string[] = [];

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { BrowserWindow, ipcMain, screen, type Display, type Point } from 'electron';
 import { IPC } from '../shared/ipc';
 import type { OverlayConfig, OverlayState } from '../shared/types';
+import { companionForClicky } from '../shared/clickys';
 import { getSettings } from './settings-store';
 import { hotkeyLabel } from './hotkey';
 import { log } from './log';
@@ -247,7 +248,7 @@ function buildConfig(win: BrowserWindow): OverlayConfig | null {
   if (!display) return null;
   const s = getSettings();
   return {
-    companion: s.companion,
+    companion: companionForClicky(s), // the active clicky's cursor size wins
     theme: s.theme,
     displayBounds: { ...display.bounds },
     hotkeyLabel: hotkeyLabel(s.hotkeys.talk, process.platform),
