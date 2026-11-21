@@ -155,7 +155,7 @@ function localY(el: SVGGraphicsElement, e: PointerEvent): number {
 /* ───────── scatter / plot (numeric x) ───────── */
 
 function numericFrame(c: ChartVisual, xlo: number, xhi: number, ylo: number, yhi: number, g: SVGGElement) {
-  const yTicks = niceTicks(ylo, yhi, 4);
+  const yTicks = niceTicks(ylo, yhi, 5);
   const f = frameFor(yTicks, !!c.x, !!c.y, false);
   const sx = (v: number): number => f.x0 + ((v - xlo) / (xhi - xlo)) * (f.x1 - f.x0);
   const sy = (v: number): number => f.y0 - ((v - ylo) / (yhi - ylo)) * (f.y0 - f.y1);
